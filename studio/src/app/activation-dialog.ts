@@ -55,6 +55,11 @@ import type {
   TriggerIntent,
 } from "./editor/state/canvas-sidecar";
 
+/** What to activate with, and the revision of the activation it replaces. */
+export interface ActivationAsk {
+  bindings: ActivationBindings;
+  replaces: number | undefined;
+}
 export interface ActivationBindings {
   connection_revision_ids: Record<string, string>;
   /** Published connector version ID → release ID, one per connector the workflow calls. */
@@ -272,7 +277,7 @@ function onceEach(api: StudioApi): StudioApi {
           role="alert"
           tabindex="-1"
         >
-          <p>{{ failed.message }}</p>
+          <p>{{ failed.code === "WV-ETAG" ? stale() : failed.message }}</p>
           @if (failed.code) {
             <small class="support-code">Support code: {{ failed.code }}</small>
           }
@@ -381,7 +386,7 @@ export class ActivationDialog implements OnInit {
   diagnostics = input<readonly Diagnostic[]>([]);
   /** The editor, whose connections port knows this computer's dev bindings. */
   connectionsHost = input<PortHost | null>(null);
-  confirm = output<ActivationBindings>();
+  confirm = output<ActivationAsk>();
   /** The activation's ID once it succeeded: the dialog then sets its triggers up. */
   activated = input("");
   /**
@@ -635,6 +640,13 @@ export class ActivationDialog implements OnInit {
       this.pinsLoading.set(false);
     }
   }
+  /** Why the platform refused to replace an activation Studio didn't name. */
+  stale(): string {
+    const refused = `${this.workflowName()} wasn't activated: the workflow`;
+    return this.steps()?.replaces() === undefined
+      ? `${refused} is active here already, and Studio couldn't read the activation to replace. Ask for permission to read the catalog here, then activate again.`
+      : `${refused} was activated here since you opened this. Close this and activate again to replace that activation.`;
+  }
   text(event: Event) {
     return (event.target as HTMLInputElement).value;
   }
@@ -749,9 +761,14 @@ export class ActivationDialog implements OnInit {
     const steps = this.steps();
     const calls = steps?.pins() ?? {};
     this.confirm.emit({
-      connection_revision_ids: connections,
-      ...pins,
-      ...(Object.keys(calls).length ? { workflow_activation_ids: calls } : {}),
+      bindings: {
+        connection_revision_ids: connections,
+        ...pins,
+        ...(Object.keys(calls).length
+          ? { workflow_activation_ids: calls }
+          : {}),
+      },
+      replaces: steps?.replaces() ?? undefined,
     });
   }
 }

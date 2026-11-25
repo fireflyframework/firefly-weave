@@ -29,6 +29,7 @@ import { stringify } from "yaml";
 import { ApiError } from "../../src/app/api";
 import { ENV, FakePlatform, type Seed } from "../event-platform";
 import { versionId } from "./activation-po";
+import { Activations, type Activated } from "./platform-activations";
 import { openEventTrigger, REFERENCE } from "./event-trigger-po";
 import { routePlatformEvent } from "./local-authoring";
 import {
@@ -72,10 +73,15 @@ const VERSIONS = [
     version: "2.0.0",
   },
 ];
-const activation = (id: string, name: string, version_id: string) => ({
+const activation = (
+  id: string,
+  name: string,
+  version_id: string,
+  revision = 1,
+): Activated => ({
   id,
   name,
-  revision: 1,
+  revision,
   retired: false,
   request: { version_id },
 });
@@ -97,6 +103,7 @@ export interface EventActivationOptions {
 }
 export interface EventActivation {
   platform: FakePlatform;
+  activations: Activations;
   /** Requests for the environment's event triggers, in order. */
   asked: { method: string; path: string; ifMatch: string | null }[];
 }
@@ -200,24 +207,20 @@ export async function openConnected(
   });
   await withLanguageFeatures(page, options.features ?? ["flow.eventTrigger"]);
   const asked = await routeEventTriggers(page, platform);
-  const activations = [
+  const activations = new Activations(
     ...(options.unlisted
       ? []
       : [activation("a-older", "notify-team", VERSIONS[2]!.id)]),
-    activation("a-old", "notify-team", VERSIONS[1]!.id),
+    activation("a-old", "notify-team", VERSIONS[1]!.id, 2),
     activation("a-other", "sync-references", VERSIONS[3]!.id),
-  ];
-  await page.route("**/environments/development/activations?*", (route) =>
-    route.fulfill({ json: { items: activations, next_cursor: null } }),
   );
-  await page.route("**/environments/development/activations", (route) => {
-    if (!activations.some((item) => item.id === "a-new"))
-      activations.push(activation("a-new", "notify-team", versionId));
-    return route.fulfill({
-      status: 201,
-      json: activation("a-new", "notify-team", versionId),
-    });
-  });
+  await page.route(
+    "**/environments/development/activations?*",
+    activations.answerList,
+  );
+  await page.route("**/environments/development/activations", (route) =>
+    route.fulfill(activations.create(route.request(), "notify-team", "a-new")),
+  );
   // One activation, or one version, by its ID: an old activation is past the
   // pages of the list the dialog reads.
   await page.route("**/environments/development/activations/*", (route) => {
@@ -225,7 +228,7 @@ export async function openConnected(
     const found =
       id === "a-unlisted"
         ? activation("a-unlisted", "notify-team", VERSIONS[2]!.id)
-        : activations.find((item) => item.id === id);
+        : activations.items.find((item) => item.id === id);
     return options.unlisted === "unreadable" || !found
       ? route.fulfill({
           status: 503,
@@ -295,7 +298,7 @@ export async function openConnected(
         ]
       : []),
   ]);
-  return { platform, asked };
+  return { platform, asked, activations };
 }
 
 /** Opens the workflow's files with these trigger choices. */
@@ -350,10 +353,13 @@ export async function showStarts(
 export const startsTab = (dialog: Locator) =>
   dialog.getByRole("tab", { name: /^Starts/ });
 
-export async function activationDialog(page: Page): Promise<Locator> {
+export async function activationDialog(
+  page: Page,
+  version = "1.2.0",
+): Promise<Locator> {
   await command(page, "Activate…");
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("Activate notify-team 1.2.0");
+  await expect(dialog).toContainText(`Activate notify-team ${version}`);
   await expect(dialog.getByRole("status")).toHaveCount(0);
   return dialog;
 }

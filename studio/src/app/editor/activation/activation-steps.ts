@@ -89,6 +89,8 @@ import {
 
 /** Pages read of each list the dialog checks (published versions, activations). */
 const MAX_PAGES = 10;
+/** Activations per page, and pages read: the list keeps no order, so the newest can be on any of them. */
+const ACTIVATIONS = { limit: 100, pages: 100 };
 
 const PLURALS: Record<ResourceKind, string> = {
   webhook: "webhooks",
@@ -342,6 +344,11 @@ export class ActivationSteps implements OnInit {
   readonly callees = signal<CalleeRow[]>([]);
   readonly triggers = signal<TriggerRow[]>([]);
   readonly failures = signal<string[]>([]);
+  /**
+   * The revision of the workflow's newest activation here, which the next one
+   * replaces; null when it has none, undefined when Studio can't read it.
+   */
+  readonly replaces = signal<number | null | undefined>(undefined);
   /** After the activation: what happened to each trigger row, by its place in the list. */
   readonly results = signal<ReadonlyMap<number, SyncResult>>(new Map());
   readonly synced = signal(false);
@@ -496,6 +503,28 @@ export class ActivationSteps implements OnInit {
     return items;
   }
 
+  /** The activations here, and whether these are all of them. */
+  private async activationsHere(): Promise<{
+    items: Record<string, unknown>[];
+    complete: boolean;
+  }> {
+    const items: Record<string, unknown>[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < ACTIVATIONS.pages; page++) {
+      const answer = await this.api().page(
+        "activations",
+        true,
+        cursor,
+        {},
+        ACTIVATIONS.limit,
+      );
+      items.push(...answer.items);
+      if (!answer.next_cursor) return { items, complete: true };
+      cursor = answer.next_cursor;
+    }
+    return { items, complete: false };
+  }
+
   /** One activation as the plan knows it: the workflow and version it runs. */
   private async activation(id: string): Promise<PlanActivation> {
     const api = this.api();
@@ -619,20 +648,37 @@ export class ActivationSteps implements OnInit {
         (item as TriggerResource<"event">).view.workflow_name === version.name,
     );
     const checked = sites.length > 0 || resourceful || mine.length > 0;
-    let versions: Record<string, unknown>[] = [];
-    let activations: Record<string, unknown>[] = [];
     let known = true;
-    try {
-      [versions, activations] = await Promise.all([
-        checked ? this.pages("workflows", false) : Promise.resolve([]),
-        checked ? this.pages("activations", true) : Promise.resolve([]),
-      ]);
-    } catch (error) {
+    const couldnt = (error: unknown) => {
+      if (known && checked)
+        failures.push(
+          `Couldn't check the called workflows and triggers: ${describeError(error).message}`,
+        );
       known = false;
-      failures.push(
-        `Couldn't check the called workflows and triggers: ${describeError(error).message}`,
+    };
+    const [versions, here] = await Promise.all([
+      checked
+        ? this.pages("workflows", false).catch((error: unknown) => {
+            couldnt(error);
+            return [];
+          })
+        : [],
+      this.activationsHere().catch((error: unknown) => {
+        couldnt(error);
+        return { items: [], complete: false };
+      }),
+    ]);
+    const activations = known ? here.items : [];
+    if (here.complete)
+      this.replaces.set(
+        here.items.reduce<number | null>(
+          (newest, item) =>
+            text(item["name"]) === version.name
+              ? Math.max(newest ?? 0, Number(item["revision"]) || 0)
+              : newest,
+          null,
+        ),
       );
-    }
     const published: CalleeVersion[] = versions
       .filter((item) => text(item["id"]) && text(item["version"]))
       .map((item) => ({

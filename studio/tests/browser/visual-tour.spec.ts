@@ -150,6 +150,7 @@ import {
 } from "./decision-grid-po";
 import { crossingOf } from "./woven-crossing";
 import {
+  activationsOf,
   platform as activationPlatform,
   revision as activationRevision,
   versionId as activationVersion,
@@ -5505,22 +5506,13 @@ spec:
           },
         }),
     );
-    await page.route("**/environments/development/activations?*", (r) =>
-      r.fulfill({
-        json: {
-          items: [
-            {
-              id: "activation-old",
-              name: "pets",
-              revision: 1,
-              retired: false,
-              request: { version_id: "22222222-2222-4222-8222-222222222222" },
-            },
-          ],
-          next_cursor: null,
-        },
-      }),
-    );
+    activationsOf(page).items.push({
+      id: "activation-old",
+      name: "pets",
+      revision: 1,
+      retired: false,
+      request: { version_id: "22222222-2222-4222-8222-222222222222" },
+    });
     await page.route("**/projects/project/workflows?*", (r) =>
       r.fulfill({
         json: {

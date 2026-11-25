@@ -24,6 +24,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { DesignerPage } from "./designer-po";
+import type { Activated } from "./platform-activations";
 import {
   openActivation,
   platform,
@@ -33,6 +34,7 @@ import {
 } from "./activation-po";
 import {
   allCapabilities,
+  command,
   connected,
   newWorkflow,
   withClassicDesigner,
@@ -229,6 +231,92 @@ test("a slot without a connection to bind says where to create one", async ({
   await expect(
     page.getByRole("heading", { name: "Connections", level: 1 }),
   ).toBeVisible();
+});
+
+/** The dialog, opened on pets with these activations in the environment. */
+async function opened(page: Page, ...items: Activated[]) {
+  const { activations } = await platform(page);
+  activations.items.push(...items);
+  await bindable(page, [PETS]);
+  return { activations, dialog: await openActivation(page, [], false) };
+}
+const active = (revision: number, name = "pets"): Activated => ({
+  id: `${name}-${String(revision).padStart(4, "0")}`,
+  name,
+  revision,
+  retired: false,
+  request: { version_id: versionId },
+});
+
+test("a first activation replaces none, and the next one names the revision it replaces", async ({
+  page,
+}) => {
+  const { activations, dialog } = await opened(page, active(7, "other"));
+  await activate(page).click();
+  await expect(dialog).toHaveCount(0);
+  await command(page, "Activate…");
+  await expect(dialog.getByRole("status")).toHaveCount(0);
+  await activate(page).click();
+  await expect(dialog).toHaveCount(0);
+  expect(activations.ifMatch).toEqual([null, '"1"']);
+  expect(activations.newest("pets")).toBe(2);
+});
+
+test("the revision it replaces is the newest one, wherever the list keeps it", async ({
+  page,
+}) => {
+  // Two pages and more of the list, the newest activation neither first nor last.
+  const { activations, dialog } = await opened(
+    page,
+    ...Array.from({ length: 1_040 }, (_, index) =>
+      active(index + 1, index % 2 ? "pets" : "other"),
+    ),
+    { ...active(1_041), id: "a-first" },
+    { ...active(1_040), id: "z-last", retired: true },
+  );
+  await activate(page).click();
+  await expect(dialog).toHaveCount(0);
+  expect(activations.ifMatch).toEqual(['"1041"']);
+});
+
+test("an activation someone made meanwhile isn't replaced unseen: the dialog says so", async ({
+  page,
+}) => {
+  const { activations, dialog } = await opened(page, active(1));
+  activations.items.push(active(2));
+  await activate(page).click();
+  const problem = dialog.locator(".activation-problem");
+  await expect(problem).toContainText(
+    "pets 1.0.0 wasn't activated: the workflow was activated here since you opened this. Close this and activate again to replace that activation.",
+  );
+  await expect(problem).toContainText("Support code: WV-ETAG");
+  await expect(problem).toBeFocused();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await command(page, "Activate…");
+  await expect(dialog.getByRole("status")).toHaveCount(0);
+  await activate(page).click();
+  await expect(dialog).toHaveCount(0);
+  expect(activations.ifMatch).toEqual(['"1"', '"2"']);
+});
+
+test("without the activations' list it says why the platform refused to replace one", async ({
+  page,
+}) => {
+  const { activations } = await platform(page);
+  activations.items.push(active(1));
+  await bindable(page, [PETS]);
+  await page.route("**/environments/development/activations?*", (r) =>
+    r.fulfill({
+      status: 403,
+      json: { status: 403, code: "WV-FORBIDDEN", message: "Access denied" },
+    }),
+  );
+  const dialog = await openActivation(page, [], false);
+  await activate(page).click();
+  await expect(dialog.locator(".activation-problem")).toContainText(
+    "pets 1.0.0 wasn't activated: the workflow is active here already, and Studio couldn't read the activation to replace. Ask for permission to read the catalog here, then activate again.",
+  );
+  expect(activations.ifMatch).toEqual([null]);
 });
 
 test("a called workflow pins its current activation", async ({ page }) => {

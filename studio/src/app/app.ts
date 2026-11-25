@@ -154,7 +154,7 @@ import {
   exportNotice,
   isDesktopShell,
 } from "./export-file";
-import { type ActivationBindings, ActivationDialog } from "./activation-dialog";
+import { type ActivationAsk, ActivationDialog } from "./activation-dialog";
 import {
   StepPicker,
   type AnchorRect,
@@ -8641,7 +8641,7 @@ export class App implements CanvasHost {
     return [...types];
   }
   /** The dialog stays open while the request runs and closes only on success. */
-  async confirmActivation(bindings: ActivationBindings) {
+  async confirmActivation({ bindings, replaces }: ActivationAsk) {
     if (!this.published || !this.profile || this.busy) return;
     this.activationError = null;
     const scope = {
@@ -8660,7 +8660,7 @@ export class App implements CanvasHost {
           artifact_digest: this.published["digest"],
           scope,
         },
-        undefined,
+        replaces,
         "Activate version",
       );
       // The dialog sets the triggers up, then this closes it (activationTriggers).

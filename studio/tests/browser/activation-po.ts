@@ -28,6 +28,7 @@ import {
   workerAction,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+import { Activations } from "./platform-activations";
 
 const digest =
   "eddfa829184f8505fd0e1bc7a84b490fc57b555a39495b9724b2728b277133d8";
@@ -109,13 +110,22 @@ export interface Platform {
   /** The account's capabilities, when not the default ones. */
   capabilities?: string[];
 }
+/** Each page's activations, as its platform keeps them. */
+const kept = new WeakMap<Page, Activations>();
+export function activationsOf(page: Page): Activations {
+  const found = kept.get(page) ?? new Activations();
+  kept.set(page, found);
+  return found;
+}
 /** The environment, project and publish mocks; returns the captured activation body. */
 export async function platform(page: Page, options: Platform = {}) {
+  const activations = activationsOf(page);
   const captured: {
     body: Record<string, unknown> | null;
     exports: number;
     contracts: string[];
-  } = { body: null, exports: 0, contracts: [] };
+    activations: Activations;
+  } = { body: null, exports: 0, contracts: [], activations };
   // Activation is driven from the classic designer here.
   await withClassicDesigner(page);
   captured.contracts = (
@@ -319,12 +329,13 @@ export async function platform(page: Page, options: Platform = {}) {
       },
     });
   });
+  await page.route(
+    "**/environments/development/activations?*",
+    activations.answerList,
+  );
   await page.route("**/environments/development/activations", (r) => {
     captured.body = r.request().postDataJSON();
-    return r.fulfill({
-      status: 201,
-      json: { id: "activation", name: "pets", revision: 1 },
-    });
+    return r.fulfill(activations.create(r.request(), "pets", "activation"));
   });
   return captured;
 }
@@ -416,22 +427,14 @@ export async function routeWebhooks(
       return r.fulfill({ json: webhookView(2) });
     },
   );
-  await page.route("**/environments/development/activations?*", (r) =>
-    r.fulfill({
-      json: {
-        items: [
-          {
-            id: "activation",
-            name: "pets",
-            revision: 1,
-            retired: false,
-            request: { version_id: versionId },
-          },
-        ],
-        next_cursor: null,
-      },
-    }),
-  );
+  // The workflow is active already: the next activation replaces this one.
+  activationsOf(page).items.push({
+    id: "activation",
+    name: "pets",
+    revision: 1,
+    retired: false,
+    request: { version_id: versionId },
+  });
   await page.route("**/projects/project/workflows?*", (r) =>
     r.fulfill({
       json: {
