@@ -1502,6 +1502,23 @@ def test_test_data_of_a_phase_a_step_no_longer_has_is_refused_by_its_key(fields,
     assert refused.value.message == f"This workflow has no {named} of add; remove its test data"
 
 
+@pytest.mark.parametrize(
+    "workflow, key, named",
+    [
+        (looped(), "add[9]#undo", "add[9]"),
+        (looped(), "add[9]#confirm", "add"),
+        (move(), "add[0]#undo", "add[0]"),
+    ],
+    ids=["an item past the limit", "a phase the step doesn't have", "an item of a step outside of loops"],
+)
+def test_test_data_of_an_item_that_cant_be_names_the_item_when_its_step_has_the_phase(workflow, key, named):
+    phase = key.partition("#")[2]
+    with pytest.raises(SimulationRefused) as refused:
+        run_move(workflow, input=THREE, mocks={f"node:{key}": {}})
+    assert refused.value.paths == [f"/mocks/node:{key}"]
+    assert refused.value.message == f"This workflow has no {phase} of {named}; remove its test data"
+
+
 def test_test_data_of_a_phase_a_called_workflow_no_longer_has_is_refused_by_its_key():
     mocks = {"node:hold": {"holdId": "h-1"}, "node:add": {"id": "a-1"}, "node:add#confirm": {}}
     with pytest.raises(SimulationRefused) as refused:

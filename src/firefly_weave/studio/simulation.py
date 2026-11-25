@@ -781,6 +781,7 @@ def _refuse_stale_phases(
     """Refuses test data of a confirm, release or undo its step doesn't declare (anymore), by its key."""
     from firefly_weave.compiler.api import import_artifact
     from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.contracts.transactions import PHASE_SEGMENTS
     from firefly_weave.operations.debug.transactions import phase_target
     from firefly_weave.runtime.kernel import prepare
 
@@ -797,7 +798,10 @@ def _refuse_stale_phases(
             instance = key.removeprefix("node:")
             phase = _phase_of(instance)
             if key != instance and phase is not None and phase_target(prepared, instance) is None:
-                said = f"{owner} has no {_PHASE_NAMES[phase]} of {node_of(instance)}; remove its test data"
+                # A step that still has the phase has no such item: an index past its loop's limit, say.
+                step, forward = node_of(instance), instance.partition("#")[0]
+                has = phase_target(prepared, f"{step}#{PHASE_SEGMENTS[phase]}") is not None
+                said = f"{owner} has no {_PHASE_NAMES[phase]} of {forward if has else step}; remove its test data"
                 stale.append((said, _pointer(*prefix, key)))
     if stale:
         raise SimulationRefused(422, "WV-DEBUG-MOCK-KEY", stale[0][0], [path for _, path in stale])
