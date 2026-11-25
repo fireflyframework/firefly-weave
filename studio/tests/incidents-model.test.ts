@@ -19,13 +19,16 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  bandsView,
   checkResolution,
   defaultIncidentFilters,
+  inDoubt,
   incidentFilterCount,
   incidentFiltersFromQuery,
   incidentFiltersToQuery,
   incidentFromQuery,
   incidentQuery,
+  incidentStep,
   incidentSuggestions,
   incidentStatusLabel,
   incidentTone,
@@ -218,6 +221,39 @@ describe("incident filters", () => {
     expect(
       new URLSearchParams(incidentQuery(filters, null)).has("priority"),
     ).toBe(false);
+  });
+
+  it("shows bands for active incidents of any code, whatever the other filters; a code or another status shows one list", () => {
+    const banded = {
+      ...defaultIncidentFilters,
+      workflow: "parent-move",
+      nodeId: "move",
+      openedAfter: "2026-11-22T10:00:00.000Z",
+      openedBefore: "2026-11-23T10:00:00.000Z",
+      includeTest: true,
+      order: "opened_asc" as const,
+    };
+    expect(bandsView(defaultIncidentFilters)).toBe(true);
+    expect(bandsView(banded)).toBe(true);
+    expect(bandsView({ ...banded, code: "WV-TXN-UNDO-STUCK" })).toBe(false);
+    for (const status of ["resolved", "closed", "all"] as const)
+      expect(bandsView({ ...banded, status }), status).toBe(false);
+  });
+
+  it("names an incident's step without its undo, and none for a run held whole", () => {
+    expect(incidentStep("add#undo")).toBe("add");
+    expect(incidentStep("charge")).toBe("charge");
+    expect(incidentStep("@join")).toBe("@join");
+    expect(incidentStep("@transactions")).toBeNull();
+    expect(incidentStep(null)).toBeNull();
+  });
+
+  it("calls an incident in doubt while it is active and high priority", () => {
+    expect(inDoubt(incident({ priority: "high" }))).toBe(true);
+    expect(inDoubt(incident())).toBe(false);
+    expect(inDoubt(incident({ priority: "high", status: "resolved" }))).toBe(
+      false,
+    );
   });
 
   it("counts the filters that differ from active, newest first", () => {

@@ -18,10 +18,13 @@ SPDX-License-Identifier: Apache-2.0
 // Operate › Incidents: active incidents, newest opened first, filtered by the
 // platform; the address keeps the filters and the open incident
 // ("?incident=ID"), which opens from incidents.read even when no loaded page
-// lists it. A drawer says what happened, and the Resolve incident dialog
-// decides on the revision the person looked at. The server checks
-// incident.resolve, the revision and the receipt on every decision. Reloads
-// every 15 s while visible, except while a decision is being made.
+// lists it. Transactions in doubt come first, in their own band, each case of
+// them one group; a code or status filter shows one list. A drawer says what
+// happened, and the Resolve incident dialog decides on the revision the
+// person looked at. The server checks incident.resolve, the revision and the
+// receipt on every decision. Reloads every 15 s while visible, except while a
+// decision is being made.
+import { NgTemplateOutlet } from "@angular/common";
 import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
@@ -55,18 +58,30 @@ import { RefreshStatus } from "../refresh-status";
 import { IncidentDrawer, type RecentEvents } from "./incident-drawer";
 import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
 import {
+  caseLabel,
+  inboxRows,
+  linkPlace,
+  missingText,
+  rowGroups,
+  type RowGroup,
+} from "./incident-cases";
+import {
+  bandsView,
   defaultIncidentFilters,
+  inDoubt,
   incidentFilterCount,
   incidentFiltersFromQuery,
   incidentFiltersToQuery,
   incidentFromQuery,
   incidentQuery,
   incidentStatusLabel,
+  incidentStep,
   incidentSuggestions,
   incidentTone,
   isUnavailableIncident,
   lastEvents,
   type IncidentFilters,
+  type IncidentLink,
   type IncidentRecord,
   type IncidentView,
   type ResolutionRequest,
@@ -84,11 +99,34 @@ const noEvents: RecentEvents = {
   problem: null,
 };
 
+/** One list of incidents: what was read, the cursor after it and how many pages that is. */
+interface IncidentList {
+  items: IncidentRecord[];
+  next: string | null;
+  pages: number;
+  appending: boolean;
+}
+const emptyList = (): IncidentList => ({
+  items: [],
+  next: null,
+  pages: 1,
+  appending: false,
+});
+/** A band on screen: its heading, its count and its rows. */
+interface Band {
+  id: "high" | "other";
+  title: string;
+  count: string;
+  groups: RowGroup[];
+  list: IncidentList;
+}
+
 @Component({
   selector: "weave-incidents-page",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [
+    NgTemplateOutlet,
     Icon,
     ModalSheet,
     OperateState,
@@ -334,137 +372,165 @@ const noEvents: RecentEvents = {
                 </button>
               </weave-operate-state>
             }
+          } @else if (bands(); as shown) {
+            @for (band of shown; track band.id) {
+              <section
+                class="incident-band"
+                [class.high]="band.id === 'high'"
+                [attr.aria-labelledby]="'incident-band-' + band.id"
+              >
+                <div class="band-heading">
+                  <h2 [id]="'incident-band-' + band.id">
+                    @if (band.id === "high") {
+                      <weave-icon name="critical" [size]="16" />
+                    }
+                    {{ band.title }}
+                  </h2>
+                  <span class="band-count">{{ band.count }}</span>
+                </div>
+                @if (band.id === "high") {
+                  <p class="band-note">
+                    Transactions in doubt. Other systems may not match Weave
+                    until someone resolves them.
+                  </p>
+                }
+                <div
+                  class="resource-table incident-table"
+                  role="table"
+                  [attr.aria-labelledby]="'incident-band-' + band.id"
+                >
+                  <ng-container [ngTemplateOutlet]="tableHead" />
+                  @for (group of band.groups; track group.key) {
+                    @if (group.case; as value) {
+                      <div
+                        class="case"
+                        role="rowgroup"
+                        [attr.aria-labelledby]="'incident-case-' + value.key"
+                      >
+                        <div class="case-head" role="row">
+                          <span role="cell" [attr.aria-colspan]="6"
+                            ><weave-icon name="callWorkflow" [size]="16" /><span
+                              class="case-words"
+                              ><strong [id]="'incident-case-' + value.key">{{
+                                caseLabel(value)
+                              }}</strong>
+                              @if (value.resolveFirst; as first) {
+                                <span
+                                  >Resolve first: <code>{{ first.code }}</code>
+                                  in run
+                                  <code>{{ short(first.run_id) }}</code></span
+                                >
+                              }
+                            </span></span
+                          >
+                        </div>
+                        @for (member of value.members; track member.id) {
+                          <ng-container
+                            [ngTemplateOutlet]="incidentRow"
+                            [ngTemplateOutletContext]="{
+                              $implicit: member,
+                              banded: true,
+                              first: value.resolveFirst?.id === member.id,
+                            }"
+                          />
+                        }
+                        @for (link of value.missing; track link.id) {
+                          <div class="resource-row not-listed" role="row">
+                            <span role="cell" class="row-text"
+                              ><strong>{{ link.code }}</strong
+                              ><small>{{ missingText(link) }}</small></span
+                            ><span role="cell" class="badges"
+                              ><span
+                                class="status-pill"
+                                [attr.data-tone]="tone(link)"
+                                >{{ label(link) }}</span
+                              >
+                              @if (value.resolveFirst?.id === link.id) {
+                                <span class="tag">Resolve first</span>
+                              }</span
+                            ><span role="cell" data-wide class="row-text"
+                              ><span
+                                class="cell-line"
+                                [attr.title]="link.workflow?.name ?? null"
+                                >{{ link.workflow?.name ?? "Unknown" }}</span
+                              ></span
+                            ><span
+                              role="cell"
+                              data-wide
+                              class="cell-line"
+                              [attr.title]="stepOf(link)"
+                              >{{ stepOf(link) }}</span
+                            ><span role="cell" class="open-cell"
+                              ><button
+                                type="button"
+                                class="sm"
+                                [attr.aria-label]="
+                                  'Open incident ' +
+                                  link.code +
+                                  ', ' +
+                                  linkPlace(link)
+                                "
+                                (click)="openLink(link)"
+                              >
+                                Open
+                              </button></span
+                            ><span role="cell" data-wider
+                              ><code [attr.title]="link.run_id">{{
+                                short(link.run_id)
+                              }}</code></span
+                            >
+                          </div>
+                        }
+                      </div>
+                    } @else {
+                      <div role="rowgroup">
+                        @for (item of group.items; track item.id) {
+                          <ng-container
+                            [ngTemplateOutlet]="incidentRow"
+                            [ngTemplateOutletContext]="{
+                              $implicit: item,
+                              banded: true,
+                              first: false,
+                            }"
+                          />
+                        }
+                      </div>
+                    }
+                  }
+                </div>
+                <ng-container
+                  [ngTemplateOutlet]="more"
+                  [ngTemplateOutletContext]="{
+                    $implicit: band.list,
+                    of: 'incident-band-' + band.id,
+                  }"
+                />
+              </section>
+            }
           } @else {
             <div
               class="resource-table incident-table"
               role="table"
               aria-label="Incidents"
             >
+              <ng-container [ngTemplateOutlet]="tableHead" />
               <div role="rowgroup">
-                <div class="table-head" role="row">
-                  <span role="columnheader">Incident</span
-                  ><span role="columnheader">Status</span
-                  ><span role="columnheader" data-wide>Workflow</span
-                  ><span role="columnheader" data-wide>Step</span
-                  ><span role="columnheader" data-wide>Opened</span
-                  ><span role="columnheader" data-wider>Run</span>
-                </div>
-              </div>
-              <div role="rowgroup">
-                @for (item of incidents; track item.id) {
-                  @if (unavailable(item)) {
-                    <div class="resource-row" role="row">
-                      <span role="cell" class="row-text"
-                        ><strong>Unavailable incident</strong
-                        ><small>Studio can't show this incident.</small></span
-                      ><span role="cell"></span
-                      ><span role="cell" data-wide></span
-                      ><span role="cell" data-wide></span
-                      ><span role="cell" data-wide></span
-                      ><span role="cell" data-wider
-                        ><code [attr.title]="item.id">{{
-                          short(item.id)
-                        }}</code></span
-                      >
-                    </div>
-                  } @else {
-                    @let i = view(item);
-                    <div
-                      class="resource-row"
-                      role="row"
-                      [class.selected]="selected?.id === i.id"
-                    >
-                      <span role="cell" class="row-text"
-                        ><button
-                          type="button"
-                          class="row-open"
-                          [attr.aria-current]="
-                            selected?.id === i.id ? 'true' : null
-                          "
-                          [attr.aria-label]="
-                            'Open incident ' + i.code + ' at ' + stepOf(i)
-                          "
-                          (click)="open(i)"
-                        >
-                          {{ i.code }}</button
-                        ><small>
-                          @if (i.origin_code !== i.code) {
-                            First reported as {{ i.origin_code }}
-                          } @else {
-                            {{ stepOf(i) }}
-                          }
-                        </small></span
-                      ><span role="cell" class="badges"
-                        ><span class="status-pill" [attr.data-tone]="tone(i)">{{
-                          label(i)
-                        }}</span>
-                        @if (i.test) {
-                          <span class="tag">Test</span>
-                        }
-                        @if (i.external_effects_may_continue) {
-                          <span class="effects" title="Effects may continue"
-                            ><weave-icon name="warning" [size]="16" /><span
-                              class="sr-only"
-                              >Effects may continue</span
-                            ></span
-                          >
-                        }</span
-                      ><span
-                        role="cell"
-                        data-wide
-                        class="row-text"
-                        [attr.title]="workflowText(i)"
-                        ><span
-                          class="cell-line"
-                          [attr.title]="i.workflow?.name ?? null"
-                          >{{ i.workflow?.name ?? "Unknown" }}</span
-                        >
-                        @if (i.workflow) {
-                          <small>{{ i.workflow.version }}</small>
-                        }</span
-                      ><span
-                        role="cell"
-                        data-wide
-                        class="cell-line"
-                        [attr.title]="stepOf(i)"
-                        >{{ stepOf(i) }}</span
-                      ><span role="cell" data-wide>
-                        @if (i.opened_at) {
-                          <time
-                            [attr.datetime]="iso(i.opened_at)"
-                            [attr.title]="absolute(i.opened_at)"
-                            >{{ relative(i.opened_at) }}</time
-                          >
-                          @if (i.opened_at_estimated) {
-                            <small class="estimated">estimated</small>
-                          }
-                        } @else {
-                          Unknown
-                        }</span
-                      ><span role="cell" data-wider
-                        ><code [attr.title]="i.run_id">{{
-                          short(i.run_id)
-                        }}</code></span
-                      >
-                    </div>
-                  }
+                @for (item of rest.items; track item.id) {
+                  <ng-container
+                    [ngTemplateOutlet]="incidentRow"
+                    [ngTemplateOutletContext]="{
+                      $implicit: item,
+                      banded: false,
+                      first: false,
+                    }"
+                  />
                 }
               </div>
             </div>
-          }
-          @if (canLoadMore) {
-            <button
-              type="button"
-              class="load-more"
-              [disabled]="appending"
-              (click)="loadMore()"
-            >
-              Load more incidents
-            </button>
-          } @else if (nextCursor) {
-            <p class="list-limit" role="status">
-              Showing the first 500 incidents. Narrow the filters to see others.
-            </p>
+            <ng-container
+              [ngTemplateOutlet]="more"
+              [ngTemplateOutletContext]="{ $implicit: rest, of: null }"
+            />
           }
         </div>
         @if (selected) {
@@ -500,6 +566,132 @@ const noEvents: RecentEvents = {
         (reload)="reloadIncident()"
       />
     }
+    <ng-template #tableHead>
+      <div role="rowgroup">
+        <div class="table-head" role="row">
+          <span role="columnheader">Incident</span
+          ><span role="columnheader">Status</span
+          ><span role="columnheader" data-wide>Workflow</span
+          ><span role="columnheader" data-wide>Step</span
+          ><span role="columnheader" data-wide>Opened</span
+          ><span role="columnheader" data-wider>Run</span>
+        </div>
+      </div>
+    </ng-template>
+    <ng-template #incidentRow let-item let-banded="banded" let-first="first">
+      @if (unavailable(item)) {
+        <div class="resource-row" role="row">
+          <span role="cell" class="row-text"
+            ><strong>Unavailable incident</strong
+            ><small>Studio can't show this incident.</small></span
+          ><span role="cell"></span><span role="cell" data-wide></span
+          ><span role="cell" data-wide></span><span role="cell" data-wide></span
+          ><span role="cell" data-wider
+            ><code [attr.title]="item.id">{{ short(item.id) }}</code></span
+          >
+        </div>
+      } @else {
+        @let i = view(item);
+        @let key = i.transaction?.business_key;
+        <div
+          class="resource-row"
+          role="row"
+          [class.selected]="selected?.id === i.id"
+        >
+          <span role="cell" class="row-text"
+            ><button
+              type="button"
+              class="row-open"
+              [attr.aria-current]="selected?.id === i.id ? 'true' : null"
+              [attr.aria-label]="'Open incident ' + i.code + ' at ' + stepOf(i)"
+              (click)="open(i)"
+            >
+              {{ i.code }}</button
+            ><small>
+              @if (inDoubt(i) && (key || !banded)) {
+                {{ doubtText(banded, !!key) }}
+                @if (key) {
+                  <span class="business-key">{{ key }}</span>
+                }
+              } @else if (i.origin_code !== i.code) {
+                First reported as {{ i.origin_code }}
+              } @else {
+                {{ stepOf(i) }}
+              }
+            </small></span
+          ><span role="cell" class="badges"
+            ><span class="status-pill" [attr.data-tone]="tone(i)">{{
+              label(i)
+            }}</span>
+            @if (inDoubt(i) && !banded) {
+              <span class="status-pill" data-tone="danger">High priority</span>
+            }
+            @if (first) {
+              <span class="tag">Resolve first</span>
+            }
+            @if (i.test) {
+              <span class="tag">Test</span>
+            }
+            @if (i.external_effects_may_continue) {
+              <span class="effects" title="Effects may continue"
+                ><weave-icon name="warning" [size]="16" /><span class="sr-only"
+                  >Effects may continue</span
+                ></span
+              >
+            }</span
+          ><span
+            role="cell"
+            data-wide
+            class="row-text"
+            [attr.title]="workflowText(i)"
+            ><span class="cell-line" [attr.title]="i.workflow?.name ?? null">{{
+              i.workflow?.name ?? "Unknown"
+            }}</span>
+            @if (i.workflow) {
+              <small>{{ i.workflow.version }}</small>
+            }</span
+          ><span
+            role="cell"
+            data-wide
+            class="cell-line"
+            [attr.title]="stepOf(i)"
+            >{{ stepOf(i) }}</span
+          ><span role="cell" data-wide>
+            @if (i.opened_at) {
+              <time
+                [attr.datetime]="iso(i.opened_at)"
+                [attr.title]="absolute(i.opened_at)"
+                >{{ relative(i.opened_at) }}</time
+              >
+              @if (i.opened_at_estimated) {
+                <small class="estimated">estimated</small>
+              }
+            } @else {
+              Unknown
+            }</span
+          ><span role="cell" data-wider
+            ><code [attr.title]="i.run_id">{{ short(i.run_id) }}</code></span
+          >
+        </div>
+      }
+    </ng-template>
+    <ng-template #more let-list let-of="of">
+      @if (canLoadMore(list)) {
+        <button
+          type="button"
+          class="load-more"
+          [attr.aria-describedby]="of"
+          [disabled]="list.appending"
+          (click)="loadMore(list)"
+        >
+          Load more incidents
+        </button>
+      } @else if (list.next) {
+        <p class="list-limit" role="status">
+          Showing the first 500 incidents. Narrow the filters to see others.
+        </p>
+      }
+    </ng-template>
   `,
 })
 export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
@@ -537,8 +729,12 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     browserEnvironment,
     () => this.resolving,
   );
-  incidents: IncidentRecord[] = [];
-  nextCursor: string | null = null;
+  /** The default view's transactions in doubt; empty while one list shows. */
+  high = emptyList();
+  /** Every other incident, or the one list a code or status filter shows. */
+  rest = emptyList();
+  /** What was read is the two bands, not one list. */
+  private banded = false;
   loaded = false;
   forbidden = false;
   error: PlainError | null = null;
@@ -559,12 +755,16 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
    * it, so the platform replays the first answer; anything else gets a new one.
    */
   private pending = new Map<string, { key: string; receipt: string }>();
-  private pages = 1;
   private readonly listReads = new ListReads();
-  appending = false;
 
-  get canLoadMore() {
-    return !!this.nextCursor && this.pages < MAX_PAGES;
+  /** Every incident loaded, transactions in doubt first. */
+  get incidents(): IncidentRecord[] {
+    return this.high.items.length
+      ? [...this.high.items, ...this.rest.items]
+      : this.rest.items;
+  }
+  canLoadMore(list: IncidentList) {
+    return !!list.next && list.pages < MAX_PAGES;
   }
   private scopeKey = "";
   /** Bumped when the platform, environment or person changes. */
@@ -596,8 +796,9 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.scopeKey = key;
     this.generation++;
     this.listGeneration++;
-    this.incidents = [];
-    this.nextCursor = null;
+    this.high = emptyList();
+    this.rest = emptyList();
+    this.banded = false;
     this.loaded = false;
     this.forbidden = false;
     this.error = null;
@@ -608,8 +809,6 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.resolving = false;
     this.failure = null;
     this.pending.clear();
-    this.pages = 1;
-    this.appending = false;
     this.rangeProblem = "";
     this.filters = incidentFiltersFromQuery(location.search);
     if (this.scope && this.host.identity && this.readable) {
@@ -635,36 +834,51 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       if (this.selected && !this.resolving) this.close(false);
     } else if (this.selected?.id !== id) void this.openFromAddress();
   }
-  /** Reads as many pages as are on screen, with the filters' query. */
+  /**
+   * Reads as many pages as are on screen, with the filters' query: the band in
+   * doubt and then the rest, or one list.
+   */
   private async load() {
     const scope = this.scope;
     if (!scope || !this.host.identity || !this.readable) return false;
     const generation = this.generation;
     const listGeneration = this.listGeneration;
     const filters = this.filters;
+    const banded = bandsView(filters);
     const current = () =>
       generation === this.generation && listGeneration === this.listGeneration;
+    /** A list's pages again; null once the answer is no longer wanted. */
+    const read = async (list: IncidentList, priority?: "high" | "normal") => {
+      const items: IncidentRecord[] = [];
+      let next: string | null = null;
+      let pages = 0;
+      do {
+        const page: Page<IncidentRecord> = await this.host.api.request(
+          `${scope}/incidents?${incidentQuery(filters, next, priority)}`,
+        );
+        if (!current()) return null;
+        items.push(...page.items);
+        next = page.next_cursor;
+      } while (next && ++pages < list.pages);
+      return { items, next };
+    };
     return this.listReads.run(async () => {
       if (!current()) return false;
       try {
-        const items: IncidentRecord[] = [];
-        let cursor: string | null = null;
-        let read = 0;
-        do {
-          const page: Page<IncidentRecord> = await this.host.api.request(
-            `${scope}/incidents?${incidentQuery(filters, cursor)}`,
-          );
-          if (!current()) return false;
-          items.push(...page.items);
-          cursor = page.next_cursor;
-        } while (cursor && ++read < this.pages);
-        this.incidents = items;
-        this.nextCursor = cursor;
+        const high = banded
+          ? await read(this.high, "high")
+          : { items: [], next: null };
+        if (!high) return false;
+        const rest = await read(this.rest, banded ? "normal" : undefined);
+        if (!rest) return false;
+        Object.assign(this.high, high);
+        Object.assign(this.rest, rest);
+        this.banded = banded;
         this.loaded = true;
         this.forbidden = false;
         this.error = null;
         const fresh = this.selected
-          ? items.find((item) => item.id === this.selected!.id)
+          ? this.incidents.find((item) => item.id === this.selected!.id)
           : undefined;
         if (fresh && !isUnavailableIncident(fresh) && !this.resolving)
           this.selected = fresh;
@@ -678,37 +892,42 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       }
     });
   }
-  /** Continues the list with the same filters. */
-  async loadMore() {
+  /** Continues one list with the same filters; the other's cursor stays. */
+  async loadMore(list: IncidentList) {
     const scope = this.scope;
     if (
       !scope ||
       !this.host.identity ||
       !this.readable ||
-      !this.canLoadMore ||
-      this.appending
+      !this.canLoadMore(list) ||
+      list.appending
     )
       return;
     const generation = this.generation;
     const listGeneration = this.listGeneration;
     const filters = this.filters;
+    const priority = !this.banded
+      ? undefined
+      : list === this.high
+        ? "high"
+        : "normal";
     const current = () =>
       generation === this.generation && listGeneration === this.listGeneration;
-    this.appending = true;
+    list.appending = true;
     try {
       await this.listReads.run(async () => {
-        if (!current() || !this.canLoadMore) return;
+        if (!current() || !this.canLoadMore(list)) return;
         const page: Page<IncidentRecord> = await this.host.api.request(
-          `${scope}/incidents?${incidentQuery(filters, this.nextCursor)}`,
+          `${scope}/incidents?${incidentQuery(filters, list.next, priority)}`,
         );
         if (!current()) return;
-        const seen = new Set(this.incidents.map((item) => item.id));
-        this.incidents = [
-          ...this.incidents,
+        const seen = new Set(list.items.map((item) => item.id));
+        list.items = [
+          ...list.items,
           ...page.items.filter((item) => !seen.has(item.id)),
         ];
-        this.nextCursor = page.next_cursor;
-        this.pages++;
+        list.next = page.next_cursor;
+        list.pages++;
         this.forbidden = false;
         this.error = null;
       });
@@ -716,9 +935,61 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       if (current())
         ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
     } finally {
-      if (current()) this.appending = false;
+      if (current()) list.appending = false;
       if (this.alive) this.cdr.markForCheck();
     }
+  }
+  /** The rows last drawn, kept while the incidents they come from are the same. */
+  private drawn: {
+    high: IncidentRecord[];
+    rest: IncidentRecord[];
+    groups: { high: RowGroup[]; rest: RowGroup[] };
+  } | null = null;
+  private groups() {
+    const high = this.high.items;
+    const rest = this.rest.items;
+    if (this.drawn?.high !== high || this.drawn.rest !== rest) {
+      const rows = inboxRows(high, rest);
+      this.drawn = {
+        high,
+        rest,
+        groups: { high: rowGroups(rows.high), rest: rowGroups(rows.normal) },
+      };
+    }
+    return this.drawn.groups;
+  }
+  /** The bands on screen; null while nothing is in doubt, or one list shows. */
+  bands(): Band[] | null {
+    const groups = this.groups();
+    if (!groups.high.length) return null;
+    const band = (
+      id: Band["id"],
+      title: string,
+      list: IncidentList,
+      rows: RowGroup[],
+    ): Band => ({
+      id,
+      title,
+      count: this.bandCount(rows, list),
+      groups: rows,
+      list,
+    });
+    return [
+      band("high", "High priority", this.high, groups.high),
+      ...(groups.rest.length || this.rest.next
+        ? [band("other", "Other incidents", this.rest, groups.rest)]
+        : []),
+    ];
+  }
+  /** "4 incidents", or "50 shown" while more follow. */
+  private bandCount(groups: RowGroup[], list: IncidentList) {
+    const count = groups.reduce(
+      (total, group) =>
+        total + (group.case ? group.case.members : group.items).length,
+      0,
+    );
+    if (list.next) return `${count} shown`;
+    return `${count} ${count === 1 ? "incident" : "incidents"}`;
   }
   suggestions() {
     return incidentSuggestions(this.incidents);
@@ -730,7 +1001,9 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   countText() {
     const count = this.incidents.length;
     const noun = count === 1 ? "incident" : "incidents";
-    return this.nextCursor ? `${count} ${noun} loaded` : `${count} ${noun}`;
+    return this.high.next || this.rest.next
+      ? `${count} ${noun} loaded`
+      : `${count} ${noun}`;
   }
   setFilters(change: Partial<IncidentFilters>) {
     const next = { ...this.filters, ...change } as IncidentFilters;
@@ -773,9 +1046,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   /** New filters: the first page again; Load more pages and older answers go. */
   private changed() {
     this.listGeneration++;
-    this.pages = 1;
-    this.nextCursor = null;
-    this.appending = false;
+    for (const list of [this.high, this.rest])
+      Object.assign(list, { next: null, pages: 1, appending: false });
     if (this.scope && this.host.identity && this.readable)
       void this.poller.refresh();
   }
@@ -795,6 +1067,16 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.failure = null;
     this.syncAddress();
     void this.loadEvents(incident);
+  }
+  /** Opens another incident of a case: the one loaded, or through the address when no page lists it. */
+  openLink(link: IncidentLink) {
+    const loaded = this.incidents.find((item) => item.id === link.id);
+    if (loaded && !isUnavailableIncident(loaded)) this.open(loaded);
+    else
+      void this.router.navigateByUrl(
+        viewPath("incidents") + incidentFiltersToQuery(this.filters, link.id),
+        { replaceUrl: true },
+      );
   }
   close(sync = true) {
     this.selected = null;
@@ -939,9 +1221,10 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       const listed =
         this.filters.status === "all" ||
         resolved.status === this.filters.status;
-      this.incidents = this.incidents.flatMap((item) =>
-        item.id !== resolved.id ? [item] : listed ? [resolved] : [],
-      );
+      for (const list of [this.high, this.rest])
+        list.items = list.items.flatMap((item) =>
+          item.id !== resolved.id ? [item] : listed ? [resolved] : [],
+        );
       // Not while the person decides on another incident: reading the list
       // would change the revision that decision is sent with.
       if (!this.resolving) void this.poller.refresh();
@@ -1009,9 +1292,10 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
         };
       else {
         this.selected = fresh;
-        this.incidents = this.incidents.map((item) =>
-          item.id === fresh.id ? fresh : item,
-        );
+        for (const list of [this.high, this.rest])
+          list.items = list.items.map((item) =>
+            item.id === fresh.id ? fresh : item,
+          );
       }
     } catch (error) {
       if (
@@ -1040,13 +1324,25 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   view(item: IncidentRecord) {
     return item as IncidentView;
   }
-  stepOf(incident: IncidentView) {
-    return incident.node_id || "the run";
+  readonly inDoubt = inDoubt;
+  readonly caseLabel = caseLabel;
+  readonly linkPlace = linkPlace;
+  readonly missingText = missingText;
+  stepOf(incident: Pick<IncidentView, "node_id">) {
+    return incidentStep(incident.node_id) ?? "the run";
   }
-  label(incident: IncidentView) {
+  /** What a row in doubt says under its code: a band already says it is in doubt. */
+  doubtText(banded: boolean, key: boolean) {
+    const said = [
+      ...(banded ? [] : ["In doubt"]),
+      ...(key ? ["Business key"] : []),
+    ];
+    return said.join(" · ");
+  }
+  label(incident: Pick<IncidentView, "status">) {
     return incidentStatusLabel(incident.status);
   }
-  tone(incident: IncidentView) {
+  tone(incident: Pick<IncidentView, "status">) {
     return toneAttribute(incidentTone(incident.status));
   }
   workflowText(incident: IncidentView) {

@@ -5071,8 +5071,14 @@ spec:
       workflow: { name: "order-fulfillment", version: "2.4.0" },
       run_status: "blocked",
     }));
+    // None of them is a transaction in doubt: the High priority read is empty.
     await page.route(`${environment}/incidents?*`, (r) =>
-      r.fulfill({ json: { items: incidents, next_cursor: null } }),
+      r.fulfill({
+        json: {
+          items: r.request().url().includes("priority=high") ? [] : incidents,
+          next_cursor: null,
+        },
+      }),
     );
     await page.route(`${environment}/runs/${run}/history?*`, (r) =>
       r.fulfill({

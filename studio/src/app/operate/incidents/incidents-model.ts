@@ -21,7 +21,10 @@ SPDX-License-Identifier: Apache-2.0
 import type { TransactionState } from "../../editor/transactions/transaction-words";
 import type { Tone } from "../../status-labels";
 import { REASON_LIMIT, tooLongMessage } from "../operate-limits";
-import type { TransactionParticipantView } from "../transactions/transaction-contracts";
+import {
+  stepName,
+  type TransactionParticipantView,
+} from "../transactions/transaction-contracts";
 
 export type IncidentStatus = "active" | "closed" | "resolved";
 /** `accept_reconciled_failure` is a transaction's "It didn't happen"; the dialog offers the other three. */
@@ -109,6 +112,16 @@ export const isUnavailableIncident = (
   incident: IncidentRecord,
 ): incident is UnavailableIncident =>
   "unavailable" in incident && !!incident.unavailable;
+/** The step the platform names for a run held whole: it is no step of the workflow. */
+const HELD_STEP = "@transactions";
+/** An incident's step as people read it, without its undo, release or confirm; null when it isn't tied to one. */
+export function incidentStep(nodeId: string | null): string | null {
+  return nodeId && nodeId !== HELD_STEP ? stepName(nodeId) : null;
+}
+/** Whether an incident holds a transaction that waits for a person: a decided one no longer does. */
+export const inDoubt = (
+  incident: Pick<IncidentView, "priority" | "status">,
+): boolean => incident.priority === "high" && incident.status === "active";
 
 const statuses: Record<IncidentStatus, [string, Tone]> = {
   active: ["Active", "danger"],
@@ -255,6 +268,15 @@ export function incidentQuery(
   if (priority) query.set("priority", priority);
   if (cursor) query.set("cursor", cursor);
   return query.toString();
+}
+/**
+ * Whether the inbox shows its two bands: active incidents of any code,
+ * whatever the other filters. A code or another status shows one list.
+ */
+export function bandsView(
+  filters: Pick<IncidentFilters, "status" | "code">,
+): boolean {
+  return filters.status === "active" && !filters.code;
 }
 /** How many filters differ from the defaults ("Clear filters" shows from one). */
 export function incidentFilterCount(filters: IncidentFilters): number {

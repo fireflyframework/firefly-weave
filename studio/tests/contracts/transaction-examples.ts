@@ -264,7 +264,7 @@ export const transactionPage: RunTransactionPage = {
       state: "in_doubt",
       business_key: "T-1052",
       cause: {
-        code: "WV-TXN-UNDO-STUCK",
+        code: "UNAVAILABLE",
         instance_key: "elsewhere[3]",
         effect: "none",
       },

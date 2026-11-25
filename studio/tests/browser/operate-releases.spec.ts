@@ -346,8 +346,14 @@ async function incidentList(page: Page) {
       workflow: undefined,
     }),
   ];
+  // None of them is a transaction in doubt: the High priority read is empty.
   await page.route(`${environment}/incidents?*`, (r) =>
-    r.fulfill({ json: { items, next_cursor: null } }),
+    r.fulfill({
+      json: {
+        items: r.request().url().includes("priority=high") ? [] : items,
+        next_cursor: null,
+      },
+    }),
   );
   await page.route(`${environment}/incidents/*`, (r) => {
     const id = new URL(r.request().url()).pathname.split("/").pop();

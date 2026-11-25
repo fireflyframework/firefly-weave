@@ -17,7 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Studio's mirrors of a run's transactions, in-doubt incidents with their
 // case links, and the summary's transactions section: the read, and the
-// examples in tests/contracts/transaction-examples.ts parsed by the platform.
+// examples in tests/contracts/transaction-examples.ts and the inbox's fixture
+// (tests/transaction-incidents-fixture.ts) parsed by the platform.
 import { execFileSync } from "node:child_process";
 import { delimiter, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -27,6 +28,7 @@ import {
 } from "../src/app/operate/transactions/transaction-contracts";
 import { runViewQuery } from "../src/app/operate/run-contracts";
 import * as examples from "./contracts/transaction-examples";
+import { held, highPriority, others } from "./transaction-incidents-fixture";
 import {
   python,
   pythonAvailable as pythonFound,
@@ -134,6 +136,9 @@ describe.skipIf(!pythonAvailable)("the platform's transaction answers", () => {
         examples.undoStuck,
         examples.withheldLinks,
         examples.decided,
+        ...highPriority,
+        held,
+        ...others,
       ],
       RunTransactionPage: [examples.transactionPage],
       RunSummary: [examples.runInDoubt],

@@ -16,13 +16,24 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Operate › Incidents: active incidents first, a drawer with the run's last
-// engine events, and the Resolve incident dialog with its error paths. The
-// server checks incident.resolve, the revision and the receipt.
+// engine events, and the Resolve incident dialog with its error paths; and
+// transactions in doubt first, as one case with the called runs they wait
+// for. The server checks incident.resolve, the revision and the receipt.
+import { mkdirSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import { test, expect, Page, Route } from "@playwright/test";
+import {
+  called,
+  caller,
+  held,
+  ids,
+  loop,
+  others,
+  unknown,
+} from "../transaction-incidents-fixture";
+import { environment, incidentPlatform } from "./incidents-po";
 import { connected, pauseClock } from "./support";
 
-const environment =
-  "**/studio/api/api/v1/tenants/tenant/projects/project/environments/development";
 const active = "91111111-1111-4111-8111-111111111111";
 const resolved = "92222222-2222-4222-8222-222222222222";
 const runId = "5e6f7a8b-0000-4000-8000-000000000001";
@@ -66,16 +77,19 @@ async function inbox(page: Page, capabilities: string[]) {
   let lists = 0;
   const queries: URLSearchParams[] = [];
   await page.route(`${environment}/incidents?*`, (r) => {
-    lists++;
     const query = new URL(r.request().url()).searchParams;
     queries.push(query);
-    // As the platform does: the status, code and test filters apply here.
+    // One load reads incidents in doubt first, then every other one.
+    const priority = query.get("priority");
+    if (priority !== "high") lists++;
+    // As the platform does: the status, code, test and priority filters apply here.
     const statuses = query.getAll("status");
     const listed = items.filter(
       (item) =>
         (!statuses.length || statuses.includes(String(item.status))) &&
         (!query.get("code") || item.code === query.get("code")) &&
-        (query.get("include_test") === "true" || !item.test),
+        (query.get("include_test") === "true" || !item.test) &&
+        (!priority || (item.priority ?? "normal") === priority),
     );
     return r.fulfill({ json: { items: listed, next_cursor: null } });
   });
@@ -109,6 +123,13 @@ async function inbox(page: Page, capabilities: string[]) {
     });
   });
   return { items, lists: () => lists, queries: () => queries };
+}
+/** Answers the read of incidents in doubt with none, as a platform without any; false for every other read. */
+function noneInDoubt(r: Route): boolean {
+  if (new URL(r.request().url()).searchParams.get("priority") !== "high")
+    return false;
+  void r.fulfill({ json: { items: [], next_cursor: null } });
+  return true;
 }
 /** Narrow screens fold the filters behind "Filters (n)": open them. */
 async function openFilters(page: Page) {
@@ -161,6 +182,7 @@ test("a filter asks the platform for its first page, so a match beyond the loade
   const queries: URLSearchParams[] = [];
   // Without a code filter, the failed incident sits on the third page.
   await page.route(`${environment}/incidents?*`, (r) => {
+    if (noneInDoubt(r)) return;
     const query = new URL(r.request().url()).searchParams;
     queries.push(query);
     if (query.get("code") === "WV-TASK-FAILED")
@@ -294,6 +316,7 @@ test("incidents stop at the page limit and explain remaining records", async ({
   await inbox(page, ["incident.read"]);
   let reads = 0;
   await page.route(`${environment}/incidents?*`, (r) => {
+    if (noneInDoubt(r)) return;
     reads++;
     return r.fulfill({
       json: {
@@ -331,6 +354,7 @@ test("incidents discard an append queued after the page closes", async ({
   let reads = 0;
   let appends = 0;
   await page.route(`${environment}/incidents?*`, (r) => {
+    if (noneInDoubt(r)) return;
     const cursor = new URL(r.request().url()).searchParams.get("cursor");
     if (cursor) appends++;
     if (!cursor && ++reads === 2) {
@@ -918,6 +942,7 @@ for (const viewport of [
     test("a refused next page shows the access it needs", async ({ page }) => {
       await connected(page, { capabilities: ["incident.read"] });
       await page.route(`${environment}/incidents?*`, (r) => {
+        if (noneInDoubt(r)) return;
         const cursor = new URL(r.request().url()).searchParams.get("cursor");
         return cursor
           ? r.fulfill({
@@ -1399,11 +1424,13 @@ test.describe("platform filters, direct links and opening times", () => {
     expect(queries().length).toBe(sent);
     await page.getByRole("button", { name: /^Clear filters/ }).click();
     await expect(page).toHaveURL(/\/operate\/incidents$/);
+    await expect.poll(() => queries().at(-1)?.get("priority")).toBe("normal");
     expect(Object.fromEntries(queries().at(-1)!)).toEqual({
       limit: "50",
       order: "opened_desc",
       include_test: "false",
       status: "active",
+      priority: "normal",
     });
   });
 
@@ -1579,5 +1606,461 @@ for (const size of [
       });
       expect(Math.abs(run.button - run.pill)).toBeLessThanOrEqual(0.5);
       if (target === 44) expect(run.height).toBeGreaterThanOrEqual(43.5);
+    });
+  });
+
+// ------------------------------------------------- transactions in doubt
+
+const band = (page: Page, name: string) => page.getByRole("region", { name });
+const high = (page: Page) => band(page, "High priority");
+const other = (page: Page) => band(page, "Other incidents");
+/** The codes a table's rows name, in order. */
+const codes = (scope: ReturnType<typeof band>) =>
+  scope.locator(".resource-row > .row-text:first-child > :first-child");
+const caseOf = (page: Page) =>
+  page.getByRole("rowgroup", {
+    name: "Case: move is waiting for a called run in doubt",
+  });
+const captures = resolvePath(
+  process.env["STUDIO_OPERATE_CAPTURES"]?.trim() || "test-results/operate",
+);
+mkdirSync(captures, { recursive: true });
+
+test.describe("transactions in doubt", () => {
+  test.use({ viewport: { width: 1440, height: 900 }, timezoneId: "UTC" });
+
+  test("come first, in a High priority band above the other incidents, each read by its priority", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    const heading = high(page).getByRole("heading", { level: 2 });
+    await expect(heading).toHaveText("High priority");
+    await expect(heading.locator("weave-icon")).toHaveAttribute(
+      "name",
+      "critical",
+    );
+    await expect(high(page).locator(".band-count")).toHaveText("4 incidents");
+    await expect(high(page)).toContainText(
+      "Transactions in doubt. Other systems may not match Weave until someone resolves them.",
+    );
+    await expect(
+      other(page).getByRole("heading", { level: 2, name: "Other incidents" }),
+    ).toBeVisible();
+    await expect(other(page).locator(".band-count")).toHaveText("4 incidents");
+    await expect(codes(other(page))).toHaveText([
+      "WV-TASK-AMBIGUOUS",
+      "WV-TASK-FAILED",
+      "WV-TASK-LOST",
+      "WV-TASK-AMBIGUOUS",
+    ]);
+    expect(
+      (await high(page).boundingBox())!.y +
+        (await high(page).boundingBox())!.height,
+    ).toBeLessThanOrEqual((await other(page).boundingBox())!.y);
+    // The first load reads the band in doubt, then the rest, with the same filters.
+    expect(platform.queries.map((query) => query.get("priority"))).toEqual([
+      "high",
+      "normal",
+    ]);
+    const [first, second] = platform.queries.map((query) => {
+      const rest = new URLSearchParams(query);
+      rest.delete("priority");
+      return rest.toString();
+    });
+    expect(first).toBe(second);
+    await page.screenshot({ path: `${captures}/inbox-bands-1440.png` });
+  });
+
+  test("a row in the High priority band shows its business key, and neither the pill nor the words the band says", async ({
+    page,
+  }) => {
+    await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    const row = high(page)
+      .locator(".resource-row")
+      .filter({ hasText: "WV-TXN-PIVOT-UNKNOWN" });
+    await expect(row.locator(".row-text").first()).toContainText(
+      "Business key T-1034",
+    );
+    await expect(row.locator(".status-pill")).toHaveText(["Active"]);
+    await expect(row).not.toContainText("In doubt");
+    await expect(row).not.toContainText("High priority");
+    // The key stays whole: it never breaks.
+    await expect(row.locator(".business-key")).toHaveCSS(
+      "white-space",
+      "nowrap",
+    );
+  });
+
+  test("a run held whole is in the band too, tied to no step", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, { items: [held] });
+    await page.goto("/operate/incidents");
+    await expect(
+      high(page).getByRole("button", {
+        name: "Open incident WV-TXN-RUN-OVERSIZED at the run",
+      }),
+    ).toBeVisible();
+    await expect(high(page)).not.toContainText("@transactions");
+    // Nothing else is open: the band stands alone.
+    await expect(other(page)).toHaveCount(0);
+  });
+
+  for (const [address, sent] of [
+    ["?code=WV-TXN-PIVOT-UNKNOWN", { code: "WV-TXN-PIVOT-UNKNOWN" }],
+    ["?status=all", {}],
+  ] as const)
+    test(`one list at ${address} says High priority and In doubt on each row in doubt`, async ({
+      page,
+    }) => {
+      const platform = await incidentPlatform(page);
+      await page.goto(`/operate/incidents${address}`);
+      const row = rows(page).filter({ hasText: "WV-TXN-PIVOT-UNKNOWN" });
+      await expect(row.locator(".row-text").first()).toContainText(
+        "In doubt · Business key T-1034",
+      );
+      await expect(row.locator(".status-pill")).toHaveText([
+        "Active",
+        "High priority",
+      ]);
+      await expect(high(page)).toHaveCount(0);
+      await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+      expect(platform.queries).toHaveLength(1);
+      expect(platform.queries[0].has("priority")).toBe(false);
+      for (const [key, value] of Object.entries(sent))
+        expect(platform.queries[0].get(key)).toBe(value);
+    });
+
+  test("a decided incident is no longer in doubt: one list shows it as any other", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, {
+      items: [{ ...unknown, status: "resolved" }],
+    });
+    await page.goto("/operate/incidents?status=resolved");
+    const row = rows(page).first();
+    await expect(row).toContainText("WV-TXN-PIVOT-UNKNOWN");
+    await expect(row.locator(".status-pill")).toHaveText(["Resolved"]);
+    await expect(row.locator(".row-text").first()).toContainText("submit");
+    await expect(row).not.toContainText("In doubt");
+  });
+
+  test("a caller's settle timeout and its called run's incident are one case, aligned with the columns", async ({
+    page,
+  }) => {
+    await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    const group = caseOf(page);
+    await expect(group).toBeVisible();
+    await expect(group.locator(".case-head")).toContainText(
+      "Resolve first: WV-TXN-UNDO-STUCK in run 9a01c7d2",
+    );
+    await expect(codes(group)).toHaveText([
+      "WV-TXN-SETTLE-TIMEOUT",
+      "WV-TXN-UNDO-STUCK",
+    ]);
+    // Only the one to resolve first says so.
+    await expect(
+      group.locator(".resource-row").nth(0).locator(".tag"),
+    ).toHaveCount(0);
+    await expect(
+      group.locator(".resource-row").nth(1).locator(".tag"),
+    ).toHaveText("Resolve first");
+    // The case sits between the rows before and after it, and nothing shows twice.
+    await expect(codes(high(page))).toHaveText([
+      "WV-TXN-PIVOT-UNKNOWN",
+      "WV-TXN-SETTLE-TIMEOUT",
+      "WV-TXN-UNDO-STUCK",
+      "WV-TXN-CANCEL-STUCK",
+    ]);
+    const edges = await high(page)
+      .getByRole("table")
+      .evaluate((table) => {
+        const lefts = (row: Element) =>
+          [...row.children].map((cell) => cell.getBoundingClientRect().left);
+        return {
+          head: lefts(table.querySelector(".table-head")!),
+          members: [...table.querySelectorAll(".case .resource-row")].map(
+            lefts,
+          ),
+        };
+      });
+    expect(edges.members).toHaveLength(2);
+    for (const member of edges.members)
+      for (const [column, left] of member.entries())
+        expect(
+          Math.abs(left - edges.head[column]),
+          `column ${column}`,
+        ).toBeLessThanOrEqual(1);
+    // The incident's words sit indented inside its own column.
+    const indent = await group
+      .locator(".resource-row .row-open")
+      .first()
+      .evaluate(
+        (button) =>
+          button.getBoundingClientRect().left -
+          button.closest("[role=cell]")!.getBoundingClientRect().left,
+      );
+    expect(indent).toBeCloseTo(22, 0);
+  });
+
+  test("a case member that isn't in the list says where it is, and opens", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, {
+      items: [called, ...others],
+    });
+    await page.goto("/operate/incidents");
+    const group = caseOf(page);
+    await expect(codes(group)).toHaveText([
+      "WV-TXN-UNDO-STUCK",
+      "WV-TXN-SETTLE-TIMEOUT",
+    ]);
+    const missing = group.locator(".resource-row").nth(1);
+    await expect(missing).toContainText(
+      "Not in this list · move in run 6d18b3f0",
+    );
+    await expect(missing.locator(".tag")).toHaveCount(0);
+    await expect(
+      group.locator(".resource-row").nth(0).locator(".tag"),
+    ).toHaveText("Resolve first");
+    await page.screenshot({ path: `${captures}/inbox-case-missing-1440.png` });
+    // The platform holds it, on another page: Open reads it.
+    platform.items.push(caller);
+    await missing
+      .getByRole("button", {
+        name: "Open incident WV-TXN-SETTLE-TIMEOUT, move in run 6d18b3f0",
+      })
+      .click();
+    await expect(
+      page.locator("weave-incident-drawer #incident-detail-title"),
+    ).toHaveText("Incident WV-TXN-SETTLE-TIMEOUT");
+    expect(platform.reads).toEqual([ids.caller]);
+    await expect(page).toHaveURL(
+      new RegExp(`/operate/incidents\\?incident=${ids.caller}$`),
+    );
+  });
+
+  test("each band loads more with its own cursor, and a refresh reads each band's own pages", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, { pageSize: 3 });
+    await page.goto("/operate/incidents");
+    // Three of four in each band: the case's called run is on the first page.
+    await expect(high(page).locator(".band-count")).toHaveText("3 shown");
+    await expect(other(page).locator(".band-count")).toHaveText("3 shown");
+    await expect(page.getByText("6 incidents loaded")).toBeVisible();
+    await other(page)
+      .getByRole("button", { name: "Load more incidents" })
+      .click();
+    await expect(codes(other(page))).toHaveCount(4);
+    await expect(other(page).locator(".band-count")).toHaveText("4 incidents");
+    await expect(
+      other(page).getByRole("button", { name: "Load more incidents" }),
+    ).toHaveCount(0);
+    await expect(codes(high(page))).toHaveCount(3);
+    await expect(high(page).locator(".band-count")).toHaveText("3 shown");
+    const asked = () =>
+      platform.queries.map(
+        (query) =>
+          `${query.get("priority")} ${query.get("cursor") ?? "from the start"}`,
+      );
+    expect(asked()).toEqual([
+      "high from the start",
+      "normal from the start",
+      "normal normal:3",
+    ]);
+    const before = platform.queries.length;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect
+      .poll(() => asked().slice(before))
+      .toEqual([
+        "high from the start",
+        "normal from the start",
+        "normal normal:3",
+      ]);
+    await high(page)
+      .getByRole("button", { name: "Load more incidents" })
+      .click();
+    await expect(codes(high(page))).toHaveCount(4);
+    expect(asked().at(-1)).toBe("high high:3");
+    await expect(codes(other(page))).toHaveCount(4);
+    await expect(page.getByText("8 incidents", { exact: true })).toBeVisible();
+  });
+
+  test("a code turns the bands into one list that loads more without a priority, and clearing it brings them back", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, {
+      items: [unknown, { ...unknown, id: ids.loop }, caller, ...others],
+      pageSize: 1,
+    });
+    await page.goto("/operate/incidents");
+    await expect(codes(high(page))).toHaveCount(1);
+    await page.getByLabel("Code", { exact: true }).fill("WV-TXN-PIVOT-UNKNOWN");
+    await page.getByLabel("Code", { exact: true }).press("Enter");
+    await expect(high(page)).toHaveCount(0);
+    await expect(rows(page)).toHaveCount(1);
+    await page.getByRole("button", { name: "Load more incidents" }).click();
+    await expect(rows(page)).toHaveCount(2);
+    const last = platform.queries.at(-1)!;
+    expect(last.get("cursor")).toBe("every:1");
+    expect(last.has("priority")).toBe(false);
+    await page.getByRole("button", { name: /^Clear filters/ }).click();
+    await expect(codes(high(page))).toHaveCount(1);
+    await expect(codes(other(page))).toHaveCount(1);
+  });
+
+  test("nothing in doubt: no band and no Other incidents, the list as it was", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, { items: others });
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveCount(4);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+    await expect(page.locator(".band-note")).toHaveCount(0);
+  });
+
+  test("the address keeps the incident and never its business key or the band", async ({
+    page,
+  }) => {
+    await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    const title = await page.title();
+    await high(page)
+      .getByRole("button", {
+        name: "Open incident WV-TXN-PIVOT-UNKNOWN at submit",
+      })
+      .click();
+    await expect(page).toHaveURL(
+      new RegExp(`/operate/incidents\\?incident=${ids.unknown}$`),
+    );
+    await page.getByLabel("Include test runs").check();
+    await expect(page).toHaveURL(/include_test=true/);
+    expect(page.url()).not.toContain("T-1034");
+    expect(page.url()).not.toContain("priority");
+    expect(await page.title()).toBe(title);
+  });
+
+  test("a refresh keeps the open drawer on its incident, whichever band holds it", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    await caseOf(page)
+      .getByRole("button", { name: "Open incident WV-TXN-UNDO-STUCK at add" })
+      .click();
+    const drawer = page.locator("weave-incident-drawer");
+    await expect(drawer.locator("#incident-detail-title")).toHaveText(
+      "Incident WV-TXN-UNDO-STUCK",
+    );
+    platform.items = platform.items.map((item) =>
+      item.id === ids.called ? { ...called, revision: 9 } : item,
+    );
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(drawer.locator("details dd").last()).toHaveText("9");
+    await expect(drawer.locator("#incident-detail-title")).toHaveText(
+      "Incident WV-TXN-UNDO-STUCK",
+    );
+    await expect(caseOf(page).locator(".resource-row.selected")).toHaveCount(1);
+    await page.screenshot({ path: `${captures}/inbox-case-open-1440.png` });
+  });
+
+  test("a decided incident leaves its band at once", async ({ page }) => {
+    const platform = await incidentPlatform(page, {
+      items: [loop, unknown, ...others],
+    });
+    let hold = false;
+    await page.route(`${environment}/incidents?*`, (route) =>
+      hold ? undefined : route.fallback(),
+    );
+    await page.route(
+      `${environment}/incidents/${ids.loop}/resolve`,
+      (route) => {
+        hold = true;
+        platform.items = platform.items.filter((item) => item.id !== ids.loop);
+        return route.fulfill({
+          json: { ...loop, status: "resolved", revision: 2 },
+        });
+      },
+    );
+    await page.goto(`/operate/incidents?incident=${ids.loop}`);
+    await expect(codes(high(page))).toHaveCount(2);
+    await page
+      .locator("weave-incident-drawer")
+      .getByRole("button", { name: "Resolve incident", exact: true })
+      .click();
+    await endTheRun(page);
+    // The reload after it is still on its way: the band already left it out.
+    await expect(codes(high(page))).toHaveText(["WV-TXN-PIVOT-UNKNOWN"]);
+    await expect(codes(other(page))).toHaveCount(4);
+  });
+
+  test("a failed band keeps what was on screen and says so", async ({
+    page,
+  }) => {
+    await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    await expect(codes(high(page))).toHaveCount(4);
+    await page.route(`${environment}/incidents?*priority=normal*`, (route) =>
+      route.fulfill({
+        status: 503,
+        json: { code: "WV-UNAVAILABLE", message: "Unavailable" },
+      }),
+    );
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(page.getByText("Support code: WV-UNAVAILABLE")).toBeVisible();
+    await expect(codes(high(page))).toHaveCount(4);
+    await expect(codes(other(page))).toHaveCount(4);
+  });
+});
+
+for (const size of [
+  { name: "a phone at 360x640", width: 360, height: 640 },
+  { name: "a window at 600x500", width: 600, height: 500 },
+])
+  test.describe(`transactions in doubt on ${size.name}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: size.width < 400,
+      timezoneId: "UTC",
+    });
+
+    test("one column of bands, the case and its missing member's Open within the screen", async ({
+      page,
+    }) => {
+      await incidentPlatform(page, { items: [unknown, called, ...others] });
+      await page.goto("/operate/incidents");
+      const group = caseOf(page);
+      await expect(group).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth - window.innerWidth,
+        ),
+      ).toBeLessThanOrEqual(0);
+      const open = group.getByRole("button", {
+        name: "Open incident WV-TXN-SETTLE-TIMEOUT, move in run 6d18b3f0",
+      });
+      await expect(open).toBeVisible();
+      const box = (await open.boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(43.5);
+      expect(box.x + box.width).toBeLessThanOrEqual(size.width);
+      // No code or key is cut: every cell's text fits its cell.
+      const cut = await high(page).evaluate((section) =>
+        [
+          ...section.querySelectorAll<HTMLElement>(
+            ".row-open, .row-text small, .business-key, .case-head strong, .tag, .status-pill",
+          ),
+        ]
+          .filter((node) => node.scrollWidth > node.clientWidth + 1)
+          .map((node) => node.textContent),
+      );
+      expect(cut).toEqual([]);
+      await page.screenshot({
+        path: `${captures}/inbox-bands-${size.width}.png`,
+        fullPage: true,
+      });
     });
   });
