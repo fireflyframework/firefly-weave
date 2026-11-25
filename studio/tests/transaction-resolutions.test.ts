@@ -609,6 +609,20 @@ describe("Mark as reconciled", () => {
     });
   });
 
+  it("refuses a result that would be sent as another one", () => {
+    const problem = (blockOutput: string) =>
+      checkReconcile(draft({ as: "completed", blockOutput }), rows());
+    expect(problem('{"order": 12345678901234567890}')).toMatchObject({
+      missing: [],
+      problems: {
+        blockOutput: expect.stringMatching(/can't be sent exactly as typed/),
+      },
+    });
+    expect(problem('{"order": 1, "order": 2}')).toMatchObject({
+      problems: { blockOutput: expect.stringMatching(/the same key twice/) },
+    });
+  });
+
   it("refuses a reason or an evidence reference the platform doesn't take", () => {
     const long = "x".repeat(REASON_LIMIT + 1);
     expect(
@@ -746,6 +760,15 @@ describe("the step that can't be undone", () => {
       missing: [],
       problems: {
         output: 'Enter the result as JSON, for example {"quantity": 40}.',
+      },
+    });
+  });
+
+  it("happened with a result that would be sent as another one says so", () => {
+    expect(checkStepOutcome({ ...said, output: "1e999" })).toMatchObject({
+      missing: [],
+      problems: {
+        output: expect.stringMatching(/can't be sent exactly as typed/),
       },
     });
   });

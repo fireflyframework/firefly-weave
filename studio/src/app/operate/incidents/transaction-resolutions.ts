@@ -41,6 +41,7 @@ import {
   type ResolutionKind,
   type ResolutionRequest,
 } from "./incidents-model";
+import { typedJson } from "./typed-json";
 
 const RETRIES: Readonly<Record<string, string>> = {
   "WV-TXN-UNDO-STUCK": RETRY_LABELS.undo,
@@ -277,13 +278,6 @@ const field = (
   label: Extract<MissingPart, { kind: "field" }>["label"],
 ): MissingPart => ({ kind: "field", label });
 const NOT_JSON = 'Enter the result as JSON, for example {"quantity": 40}.';
-function json(text: string): { value: unknown } | null {
-  try {
-    return { value: JSON.parse(text) as unknown };
-  } catch {
-    return null;
-  }
-}
 /** The reason and the evidence every decision but a retry and Force end asks for. */
 function checkSaid(
   draft: { reason: string; evidence?: string },
@@ -323,9 +317,9 @@ export function checkReconcile(
     });
   const finished = draft.as === "completed";
   const typed = draft.blockOutput.trim();
-  const result = finished && typed ? json(typed) : null;
+  const result = finished && typed ? typedJson(typed, NOT_JSON) : null;
   if (finished && !typed) missing.push(field("Result of the transaction"));
-  else if (finished && !result) problems.blockOutput = NOT_JSON;
+  else if (result && "problem" in result) problems.blockOutput = result.problem;
   else if (draft.as === "compensated" && typed)
     problems.blockOutput = "A transaction that was undone has no result.";
   checkSaid(draft, missing, problems);
@@ -341,7 +335,7 @@ export function checkReconcile(
           instance_key: row.instanceKey,
           outcome: row.outcomes[0],
         })),
-        ...(result ? { blockOutput: result.value } : {}),
+        ...(result && "value" in result ? { blockOutput: result.value } : {}),
       },
     },
   };
@@ -377,9 +371,9 @@ export function checkStepOutcome(draft: {
   const problems: Partial<Record<"output" | "reason" | "evidence", string>> =
     {};
   const typed = draft.output.trim();
-  const result = draft.happened && typed ? json(typed) : null;
+  const result = draft.happened && typed ? typedJson(typed, NOT_JSON) : null;
   if (draft.happened && !typed) missing.push(field("Result of the step"));
-  else if (draft.happened && !result) problems.output = NOT_JSON;
+  else if (result && "problem" in result) problems.output = result.problem;
   checkSaid(draft, missing, problems);
   if (lacks(missing, problems)) return { missing, problems };
   return {
@@ -389,7 +383,7 @@ export function checkStepOutcome(draft: {
         : "accept_reconciled_failure",
       reason: draft.reason,
       evidence_reference: draft.evidence.trim(),
-      ...(result ? { output: result.value } : {}),
+      ...(result && "value" in result ? { output: result.value } : {}),
     },
   };
 }

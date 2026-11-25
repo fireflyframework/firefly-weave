@@ -26,6 +26,7 @@ import {
   stepName,
   type TransactionParticipantView,
 } from "../transactions/transaction-contracts";
+import { typedJson } from "./typed-json";
 
 export type IncidentStatus = "active" | "closed" | "resolved";
 /** `accept_reconciled_failure` is a transaction's "It didn't happen"; the dialog offers the other three. */
@@ -213,12 +214,12 @@ export function checkResolution(
   if (draft.kind === "accept_reconciled_result") {
     if (!evidence)
       problems.evidence = "Enter where the verified result can be checked.";
-    try {
-      output = JSON.parse(draft.output);
-    } catch {
-      problems.output =
-        'Enter the verified result as JSON, for example {"approved": true}.';
-    }
+    const typed = typedJson(
+      draft.output,
+      'Enter the verified result as JSON, for example {"approved": true}.',
+    );
+    if ("problem" in typed) problems.output = typed.problem;
+    else output = typed.value;
   }
   if (Object.keys(problems).length) return { problems };
   return {

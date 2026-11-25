@@ -141,6 +141,19 @@ describe("Resolve incident checks", () => {
         output: { rows: [1] },
       },
     });
+    // Nor is another result sent than the one typed.
+    expect(
+      checkResolution({
+        ...accept,
+        evidence: "ticket-9",
+        output: '{"order": 12345678901234567890}',
+      }),
+    ).toEqual({
+      problems: {
+        output:
+          "A number in the result can't be sent exactly as typed. Use a shorter or smaller one, or text in quotes if the result takes text.",
+      },
+    });
     // JSON null is a result too.
     expect(
       checkResolution({ ...accept, evidence: "ticket-9", output: "null" }),
