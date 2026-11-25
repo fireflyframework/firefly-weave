@@ -32,6 +32,7 @@ from stuck_transactions import (
     failed_beside,
     reconcile,
     resolve,
+    stuck,
     two_stuck,
 )
 from transaction_platform import add, build, hold, submit, transaction, workflow
@@ -238,6 +239,18 @@ async def test_the_revision_of_an_open_incident_rises_with_its_transactions_reco
     [now] = (await by_key(platform, run.id)).values()
     record = {"as": "completed", "participants": [{"instance_key": "hold2", "outcome": "confirmed"}]}
     await reconcile(platform, now, reconciler, {**record, "blockOutput": "moved"})
+
+
+async def test_the_revision_of_an_incident_rises_when_only_the_one_beside_it_closes(platform):
+    """A read beside the step that can't be undone is no step a record names: it changes nothing else of the doubt."""
+    run, read = await failed_beside(platform)
+    await stuck(platform, run.id, "hold#confirm")
+    before = await platform.record(run.id)
+    held = await by_key(platform, run.id)
+    await resolve(platform, held[read["incident_key"]], "retry_safe")
+    assert await revision(platform, "hold#confirm:1", run) == held["hold#confirm:1"]["revision"] + 1
+    after = await platform.record(run.id)
+    assert (after["state"], after["participants"]) == (before["state"], before["participants"])
 
 
 async def test_an_incident_that_opens_again_raises_the_one_beside_it_and_itself_once(platform):

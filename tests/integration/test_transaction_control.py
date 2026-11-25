@@ -249,6 +249,39 @@ async def test_a_stop_of_a_withheld_run_records_who_stopped_it(platform, reconci
     assert (await stop_audited(platform, run.id))["closed"] == closed
 
 
+async def test_a_doubt_of_another_run_refuses_no_stop(platform, reconciler):
+    doubtful, held = await two_stuck(platform)
+    run = await platform.start(await platform.publish(workflow("move-b", [transaction(hold(), add())])), "M-2")
+    await platform.complete(await platform.lease("hold"))
+    await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert await by_key(platform, doubtful.id) == held
+    assert "closed" not in await stop_audited(platform, run.id)
+
+
+async def test_force_end_of_a_held_run_the_kernel_takes_again_ends_all_of_it(platform, reconciler, monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    other = {**transaction(hold("hold3", holdSeconds=600), add("add3")), "id": "other"}
+    run = await platform.start(await platform.publish(workflow("move", [beside(transaction(hold(), submit()), other)])))
+    await platform.complete(await platform.lease("hold"))
+    await platform.complete(platform.leased.pop("hold3"))
+    await platform.complete(await platform.lease("submit"))
+    await stuck(platform, run.id, "hold#confirm")
+    await due(platform, run.id, "other#hold", "transactions", "other", "hold_by")
+    with monkeypatch.context() as large:
+        large.setattr(kernel, "STATE_BYTES", 1)
+        await platform.scan()
+    rows = await by_key(platform, run.id)
+    await resolve(platform, rows[HELD_INCIDENT], "terminate", actor=reconciler)
+    ended = await by_key(platform, run.id, "resolved")
+    assert {key: row["actor_id"] for key, row in ended.items()} == dict.fromkeys(rows, reconciler.id)
+    # Each names its own incident, if it had one: the hold was about no one transaction.
+    records = [await platform.record(run.id, key) for key in ("move", "other")]
+    assert [record["state"] for record in records] == ["force_ended"] * 2
+    assert [record["incident_key"] for record in records] == ["hold#confirm:1", None]
+
+
 async def test_a_doubt_no_row_shows_refuses_no_stop_without_undoing(platform, reconciler):
     run, incident = await confirm_stuck(platform)
     # An earlier version left the state with an incident no row showed.

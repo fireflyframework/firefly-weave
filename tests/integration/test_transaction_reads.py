@@ -160,6 +160,15 @@ async def shown(platform, run) -> dict[str, dict]:
     return listed
 
 
+async def owners(platform, run, *status) -> dict:
+    """The transaction each incident of the run shows, by its key."""
+    query = IncidentQuery(status=list(status))
+    page = await platform.incidents.list_all(
+        platform.actor, platform.scope, run_id=run.id, query=query, context=AuditContext()
+    )
+    return {item["incident_key"]: item.get("transaction", {}).get("instance_key") for item in page["items"]}
+
+
 async def test_each_incident_of_a_transaction_shows_it(platform):
     run, held = await two_stuck(platform)
     found = await shown(platform, run)
@@ -332,12 +341,36 @@ async def test_an_incident_of_two_possible_transactions_shows_none(platform):
         await platform.complete(lease)
     held = await stuck(platform, run.id, "hold#confirm", "hold3#confirm")
     assert set(held) == {"lookup:1", "hold#confirm:1", "hold3#confirm:1"}
+    # The record that names it says whose it is; without one, either could be.
+    assert await owners(platform, run) == {"lookup:1": "move", "hold#confirm:1": "move", "hold3#confirm:1": "other"}
     await platform.execute("UPDATE run_transactions SET incident_key=NULL WHERE run_id=:run", run=run.id)
-    page = await platform.incidents.list_all(
-        platform.actor, platform.scope, run_id=run.id, query=IncidentQuery(), context=AuditContext()
-    )
-    found = {item["incident_key"]: item.get("transaction", {}).get("instance_key") for item in page["items"]}
-    assert found == {"lookup:1": None, "hold#confirm:1": "move", "hold3#confirm:1": "other"}
+    assert await owners(platform, run) == {"lookup:1": None, "hold#confirm:1": "move", "hold3#confirm:1": "other"}
+
+
+async def test_a_transaction_with_nothing_left_to_do_is_no_candidate(platform):
+    moves = transaction(hold(), beside(submit(), LOOKUP))
+    other = {**transaction(hold("hold3"), {**submit(), "id": "submit3"}), "id": "aa"}
+    run = await platform.start(await platform.publish(workflow("move", [beside(moves, other, identifier="fork")])))
+    for key in ("hold", "hold3"):
+        await platform.complete(await platform.lease(key))
+    deciding, deciding3 = await platform.lease("submit"), platform.leased.pop("submit3")
+    await platform.complete(deciding3)
+    await platform.complete(await platform.lease("hold3#confirm"))
+    assert (await platform.record(run.id, "aa"))["state"] == "completed"
+    await platform.fail(platform.leased.pop("lookup"), "REJECTED", outcome="failed")
+    await platform.scan()
+    await platform.complete(deciding)
+    await platform.execute("UPDATE run_transactions SET incident_key=NULL WHERE run_id=:run", run=run.id)
+    assert await owners(platform, run) == {"lookup:1": "move"}
+
+
+async def test_an_incident_that_ended_shows_its_transaction_however_that_one_ended(platform):
+    run, incident = await failed_beside(platform)
+    await resolve(platform, incident, "retry_safe")
+    await platform.complete(await platform.lease("hold#confirm"))
+    await platform.complete(await platform.lease("lookup"))
+    assert (await platform.record(run.id))["state"] == "completed"
+    assert await owners(platform, run, "resolved") == {"lookup:1": "move"}
 
 
 async def test_each_incident_shows_the_transaction_of_its_own_iteration(platform):

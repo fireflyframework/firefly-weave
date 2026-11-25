@@ -616,6 +616,24 @@ async def everything(platform, run_id) -> dict[str, list[dict[str, Any]]]:
     return stored | await work(platform, run_id)
 
 
+async def test_a_decision_changes_no_other_run_with_the_same_incidents(platform, reconciler):
+    run, held = await two_stuck(platform, PAUSE)
+    other = await platform.start(await platform.publish(workflow("move-b", [transaction(*STEPS)])), "M-2")
+    for key in ("hold", "hold2", "add", "submit"):
+        await platform.complete(await platform.lease(key))
+    assert (await stuck(platform, other.id, "hold#confirm", "hold2#confirm")).keys() == held.keys()
+    before = await everything(platform, other.id)
+    # A revision that rises with the record, then a decision that closes two incidents.
+    await resolve(platform, held[CONFIRMS[0]], "retry_safe")
+    await platform.complete(await platform.lease("hold#confirm"))
+    [left] = (await by_key(platform, run.id)).values()
+    assert left["revision"] > held[CONFIRMS[1]]["revision"]
+    record = {**FINISHED, "participants": FINISHED["participants"][1:]}
+    await reconcile(platform, left, reconciler, record)
+    assert (await platform.record(run.id))["state"] == "reconciled"
+    assert await everything(platform, other.id) == before
+
+
 @pytest.mark.parametrize("paused", [False, True])
 async def test_a_decision_is_checked_against_what_fell_due_before_it(platform, reconciler, paused):
     run, incident = await stuck_beside_a_called_confirm_that_ended(platform)
