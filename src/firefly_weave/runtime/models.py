@@ -107,7 +107,8 @@ class IncidentState(ContractModel):
     node_id: str
     generation: int = Field(default=0, ge=0)
     code: str
-    # The failure that put a transaction in doubt, when the incident's own code is a transaction code.
+    # The failure that put a transaction in doubt, when the incident's own code is a transaction code; or the model's
+    # own code, when an AI step's task failed for good because its model couldn't run.
     origin_code: str | None = Field(default=None, exclude_if=lambda v: v is None)
 
 

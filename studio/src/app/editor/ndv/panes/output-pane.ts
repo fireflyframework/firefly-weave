@@ -46,6 +46,25 @@ import { pathRows, type PathRow } from "../../state/run-summary";
 import { branchVariables } from "../../state/last-results";
 import { tableCount } from "./table-view";
 import { PinnedBanner } from "./pinned-banner";
+import { FailureBanner } from "./failure-banner";
+import { ErrorBanner } from "./error-banner";
+import { relativeTime } from "../../../format";
+import {
+  SimulateFailureDialog,
+  type FailureChoice,
+} from "./simulate-failure-dialog";
+import {
+  codeSuggestions,
+  failureKey,
+  simulateBlock,
+  simulatedOutcome,
+} from "./simulate-failure";
+import { RowMenu, type RowMenuItem } from "../../../row-menu";
+import { actionSideEffect } from "../kinds/forms/action-forms";
+import { failureOf } from "../../state/test-data-ops";
+import { errorResultSource } from "../../step-blocks";
+import { untakenPath } from "../../state/execute-gate";
+import type { ErrorEntry } from "../../state/test-data";
 import { OutputEditor } from "./output-editor";
 import {
   countLabel,
@@ -62,7 +81,10 @@ import {
 } from "./views";
 import type { FormSession } from "../params/form-session";
 import { usageLine } from "../kinds/ai-task-model";
-import { CANT_SAMPLE } from "../step-details-controller";
+import {
+  CANT_SAMPLE,
+  type StepDetailsController,
+} from "../step-details-controller";
 import { ndvRegistry, type Json } from "../registry";
 import {
   asRunViewsApi,
@@ -134,6 +156,52 @@ import { downloadFile } from "../../../forms/core/file-transfer";
 import { fileValue } from "./file-value";
 import { describeError } from "../../../errors";
 
+/**
+ * What Simulate a failure opens with for a step: the key it writes (the
+ * item picked inside a loop's body), that item ("3") and the innermost loop
+ * for its words, whether the step changes data, and the codes it suggests;
+ * null when the step is gone. Execute step's "Simulate a failure of submit
+ * first" opens it for another step than the one shown.
+ */
+export function simulateOpening(
+  controller: StepDetailsController,
+  stepId: string,
+): {
+  key: string;
+  item: string | null;
+  loop: string;
+  changesData: boolean;
+  /** The outcome its failure takes without asking; null when the dialog asks. */
+  outcome: "not_started" | null;
+  suggestions: ReturnType<typeof codeSuggestions>;
+} | null {
+  const step = controller.step(stepId);
+  if (!step) return null;
+  const uses = step["uses"];
+  const contract =
+    typeof uses === "string"
+      ? (controller.kindContext().actionContract(uses) ?? null)
+      : null;
+  const key = controller.pinKey(stepId);
+  return {
+    key,
+    item:
+      key === stepId
+        ? null
+        : [...key.matchAll(/\[(\d+)\]/g)]
+            .map((match) => (Number(match[1]) + 1).toLocaleString("en-US"))
+            .join(" › "),
+    loop:
+      loopRows(controller.iterations, stepId, (id) => controller.step(id)).find(
+        (row) => row.role === "Loop",
+      )?.loopId ?? "",
+    changesData:
+      actionSideEffect(step, controller.kindContext()) === "non_idempotent",
+    outcome: simulatedOutcome(step),
+    suggestions: codeSuggestions(step, contract),
+  };
+}
+
 @Component({
   selector: "weave-output-pane",
   standalone: true,
@@ -144,6 +212,10 @@ import { describeError } from "../../../errors";
     DataTable,
     PathList,
     PinnedBanner,
+    FailureBanner,
+    ErrorBanner,
+    SimulateFailureDialog,
+    RowMenu,
     OutputEditor,
     ScriptEditor,
     RunStepLogs,
@@ -151,6 +223,8 @@ import { describeError } from "../../../errors";
   ],
   template: `@let none = noOutput();
     @let pin = pinned();
+    @let failing = failure();
+    @let went = handledRun();
     @let canPin = pinnable();
     @let kept = !pin && answerKept();
     @let keepsAnswer = !pin && aiTask();
@@ -202,94 +276,145 @@ import { describeError } from "../../../errors";
     @let recorded = runView();
     @let real = recorded ? null : realOf();
     @let stop = recorded ? null : stoppedHere();
-    <div class="pane-sub">
-      @if (stop) {
-        <span class="pill" data-tone="warning"
-          ><weave-icon name="schedule" [size]="16" />Stopped here</span
-        >
-        @if (stop.missing) {
-          <span class="pane-stopped-why">{{ stop.step }} needs test data</span>
+    <!-- What the data is (pills and the count) wraps; Pin, Edit and More
+         output actions stay together at the end of the first row. -->
+    <div class="pane-sub pane-output-sub">
+      <div class="pane-sub-info">
+        @if (stop) {
+          <span class="pill" data-tone="warning"
+            ><weave-icon name="schedule" [size]="16" />Stopped here</span
+          >
+          @if (stop.missing) {
+            <span class="pane-stopped-why"
+              >{{ stop.step }} needs test data</span
+            >
+          }
+        } @else if (recorded) {
+          <span class="pill" [attr.data-tone]="recorded.tone">
+            @if (recorded.handled) {
+              <weave-icon name="degraded" [size]="16" />
+            }
+            {{
+              calledRunFailed(recorded)
+                ? "Finished · the called run failed"
+                : recorded.pill
+            }}</span
+          >
+          <span class="pill pane-source-tag" data-tone="info">{{
+            recorded.tag
+          }}</span>
+        } @else if (went) {
+          <!-- It failed in the last execution and its On error went on. -->
+          <span class="pill" data-tone="warning"
+            ><weave-icon name="degraded" [size]="16" />Failed, continued</span
+          >
+          <span class="pill pane-source-tag"
+            >{{ simulatedWords() }} · {{ went.when }}</span
+          >
+        } @else if (failing) {
+          <span class="pill" data-tone="warning">{{
+            failing.leftOut ? "Failure left out" : "Fails when executed"
+          }}</span>
+        } @else if (pin) {
+          <span class="pill" data-tone="info">{{ pinWords(pin.key) }}</span>
+        } @else if (real) {
+          <button
+            type="button"
+            class="pill pane-source-tag pane-real-tag"
+            data-tone="info"
+            [attr.aria-label]="
+              'From ' +
+              real.environmentName +
+              ', run ' +
+              real.runId +
+              '. Open it in Operate'
+            "
+            (click)="openRun(real.runId)"
+          >
+            <span class="pane-real-text"
+              >From {{ real.environmentName }} · run
+              <span class="pane-real-run">{{ short(real.runId) }}</span></span
+            ><weave-icon name="external" [size]="16" />
+          </button>
+        } @else if (ran) {
+          <span class="pill pane-source-tag">{{ simulatedWords() }}</span>
+        } @else if (event() !== undefined && value() === undefined) {
+          <span class="pill" data-tone="info">Sample</span>
         }
-      } @else if (recorded) {
-        <span class="pill" [attr.data-tone]="recorded.tone">{{
-          calledRunFailed(recorded)
-            ? "Finished · the called run failed"
-            : recorded.pill
+        @let paths = this.paths();
+        <span class="pane-count">{{
+          none ||
+          stop ||
+          detachedCall() ||
+          (recorded && recorded.output.kind !== "value")
+            ? ""
+            : paths
+              ? paths.took
+              : event() !== undefined && view() === "table"
+                ? tableCountOf()
+                : event() !== undefined && view() !== "schema"
+                  ? sampleCount(event()) + skippedText()
+                  : countLabel(rows.length, query() ? shown.length : undefined)
         }}</span>
-        <span class="pill pane-source-tag" data-tone="info">{{
-          recorded.tag
-        }}</span>
-      } @else if (pin) {
-        <span class="pill" data-tone="info">{{ pinWords(pin.key) }}</span>
-      } @else if (real) {
-        <button
-          type="button"
-          class="pill pane-source-tag pane-real-tag"
-          data-tone="info"
-          [attr.aria-label]="
-            'From ' +
-            real.environmentName +
-            ', run ' +
-            real.runId +
-            '. Open it in Operate'
-          "
-          (click)="openRun(real.runId)"
-        >
-          <span class="pane-real-text"
-            >From {{ real.environmentName }} · run
-            <span class="pane-real-run">{{ short(real.runId) }}</span></span
-          ><weave-icon name="external" [size]="16" />
-        </button>
-      } @else if (ran) {
-        <span class="pill pane-source-tag">{{ simulatedWords() }}</span>
-      } @else if (event() !== undefined && value() === undefined) {
-        <span class="pill" data-tone="info">Sample</span>
-      }
-      @let paths = this.paths();
-      <span class="pane-count">{{
-        none ||
-        stop ||
-        detachedCall() ||
-        (recorded && recorded.output.kind !== "value")
-          ? ""
-          : paths
-            ? paths.took
-            : event() !== undefined && view() === "table"
-              ? tableCountOf()
-              : event() !== undefined && view() !== "schema"
-                ? sampleCount(event()) + skippedText()
-                : countLabel(rows.length, query() ? shown.length : undefined)
-      }}</span>
-      @if (canPin) {
-        <button
-          type="button"
-          class="icon-button pane-pin"
-          [attr.aria-pressed]="!!pin || kept"
-          [attr.aria-label]="
-            keepsAnswer
-              ? 'Keep as test data'
-              : pin
-                ? 'Unpin output'
-                : 'Pin output'
-          "
-          [attr.aria-disabled]="pin || kept || realPinnable() ? null : 'true'"
-          [title]="pinTitle(!!pin)"
-          (click)="togglePin()"
-        >
-          <weave-icon [name]="pin || kept ? 'unpin' : 'pin'" [size]="16" />
-        </button>
-        <button
-          type="button"
-          class="icon-button pane-edit"
-          aria-label="Edit output"
-          title="Edit output"
-          [attr.aria-pressed]="editing()"
-          (click)="setOutput()"
-        >
-          <weave-icon name="edit" [size]="16" />
-        </button>
+      </div>
+      @let actions = moreActions();
+      @if (canPin || actions) {
+        <div class="pane-actions" role="group" aria-label="Output actions">
+          @if (canPin) {
+            <button
+              type="button"
+              class="icon-button pane-pin"
+              [attr.aria-pressed]="!!pin || kept"
+              [attr.aria-label]="
+                keepsAnswer
+                  ? 'Keep as test data'
+                  : pin
+                    ? 'Unpin output'
+                    : 'Pin output'
+              "
+              [attr.aria-disabled]="
+                pin || kept || realPinnable() ? null : 'true'
+              "
+              [title]="pinTitle(!!pin)"
+              (click)="togglePin()"
+            >
+              <weave-icon [name]="pin || kept ? 'unpin' : 'pin'" [size]="16" />
+            </button>
+            <button
+              type="button"
+              class="icon-button pane-edit"
+              aria-label="Edit output"
+              title="Edit output"
+              [attr.aria-pressed]="editing()"
+              (click)="setOutput()"
+            >
+              <weave-icon name="edit" [size]="16" />
+            </button>
+          }
+          @if (actions) {
+            <weave-row-menu
+              class="pane-more"
+              label="More output actions"
+              [items]="actions"
+              [iconSize]="16"
+            />
+          }
+        </div>
       }
     </div>
+    @if (simulating(); as open) {
+      <weave-simulate-failure-dialog
+        [step]="session().target"
+        [suggestions]="open.suggestions"
+        [item]="open.item"
+        [loop]="open.loop"
+        [changesData]="open.changesData"
+        [fixedOutcome]="open.outcome"
+        [initial]="open.initial"
+        (chosen)="simulate($event)"
+        (closed)="closeSimulate()"
+      />
+    }
     @if (usage(); as line) {
       <!-- An AI task's model use, on a row of its own: the source and the
            controls above keep their room. -->
@@ -338,7 +463,29 @@ import { describeError } from "../../../errors";
             <p class="pane-empty-text">Opening the editor…</p>
           }
         } @else {
-          @if (pin) {
+          @if (recorded?.handled; as failed) {
+            <!-- A run that happened: what failed and how the run went on. -->
+            <weave-error-banner [failure]="failed" />
+          } @else if (went) {
+            <!-- One banner: what happened first, then that the failure is simulated. -->
+            <weave-error-banner
+              [failure]="went.failure"
+              [simulated]="!!failing"
+              [overPin]="!!failing && !!pin"
+              (remove)="failing && removeFailure(failing.key)"
+              (edit)="openSimulate()"
+            />
+          } @else if (failing) {
+            <weave-failure-banner
+              [failure]="failing.entry"
+              [scope]="failing.scope"
+              [leftOut]="failing.leftOut"
+              [overPin]="!!pin"
+              [sessionOnly]="session().controller.testData.failuresInSession()"
+              (remove)="removeFailure(failing.key)"
+              (edit)="openSimulate()"
+            />
+          } @else if (pin) {
             <weave-pinned-banner
               [item]="pickedItem()"
               [forEveryItem]="pin.key === session().target"
@@ -575,6 +722,14 @@ import { describeError } from "../../../errors";
               </p>
             }
           }
+          @let handling = went?.failure?.policy ?? recorded?.handled?.policy;
+          @if (handling === "errorOutput") {
+            <!-- What later steps read: the error path's result. -->
+            @let from = resultFrom();
+            <p class="pane-result-caption">
+              Result on error{{ from ? " · from " + from : "" }}
+            </p>
+          }
           @if (loadingRun(); as run) {
             <p class="pane-empty-text pane-loading-run" role="status">
               <span class="loading-spinner small" aria-hidden="true"></span
@@ -586,6 +741,15 @@ import { describeError } from "../../../errors";
             <!-- What the run recorded says it all. -->
           } @else if (none) {
             <p class="pane-empty-text">{{ none }}</p>
+          } @else if (returnedNull() && handling === "continue") {
+            <p class="pane-result-caption">Output</p>
+            <pre class="pane-json" tabindex="0" aria-label="Output data">
+null</pre
+            >
+            <p class="pane-empty-text pane-result-note">
+              Later steps read null here and can read
+              {{ session().target }}'s error.
+            </p>
           } @else if (returnedNull()) {
             <p class="pane-empty-text">This step returned no data (null).</p>
           } @else if (event() !== undefined && view() !== "schema") {
@@ -644,15 +808,22 @@ import { describeError } from "../../../errors";
                     ><weave-icon name="execute" [size]="20"
                   /></span>
                   <h4>No output yet</h4>
+                  @let owner = untakenOwner();
                   <p>
                     {{
                       callStep()
                         ? "Execute the workflow to see this step's output."
                         : "Execute this step to see its output."
                     }}{{
-                      canPin
-                        ? " You can also set test output, or generate a sample."
-                        : ""
+                      owner
+                        ? " It runs only after " +
+                          owner +
+                          " fails, so simulate a failure of " +
+                          owner +
+                          " first."
+                        : canPin
+                          ? " You can also set test output, or generate a sample."
+                          : ""
                     }}
                   </p>
                   <div class="pane-empty-actions">
@@ -984,6 +1155,8 @@ export class OutputPane {
     const several = run.iterations(target).length > 1;
     const state = run.state(key);
     const code = state === "failed" ? run.failure(target) : null;
+    // It failed and its On error went on: the banner says how, over its result.
+    const handled = state === "handled" ? run.handled(key) : null;
     const canvas = host.canvasRun?.() ?? null;
     const item = /\[(\d+)\]$/.exec(key);
     return {
@@ -992,8 +1165,10 @@ export class OutputPane {
       iteration: several ? key : null,
       scope: `${host.stepDataScope ?? ""}|${host.profile?.environmentId ?? ""}`,
       tag: `From ${run.label()}${several && item ? `, item ${Number(item[1]) + 1}` : ""}`,
-      pill:
-        state === "failed"
+      handled,
+      pill: handled
+        ? "Failed, continued"
+        : state === "failed"
           ? "Failed in this run"
           : output.kind === "omitted"
             ? "Not shown"
@@ -1002,8 +1177,9 @@ export class OutputPane {
               : state === "not-reached"
                 ? "Not reached"
                 : "Finished in this run",
-      tone:
-        state === "failed"
+      tone: handled
+        ? "warning"
+        : state === "failed"
           ? "danger"
           : output.kind === "omitted" || state === "not-reached"
             ? null
@@ -1200,6 +1376,26 @@ export class OutputPane {
   toggleAnswer(text: string) {
     this.answerOpen.set(this.answerOpen() === text ? null : text);
   }
+  /**
+   * After an execution in which this step (the item picked, in a loop)
+   * failed and its On error went on: the failure, how long ago, and the
+   * step whose output is the error path's result; null otherwise.
+   */
+  handledRun() {
+    const { controller, target } = this.session();
+    if (target.startsWith("$")) return null;
+    const found = controller.handledResult(target);
+    if (!found) return null;
+    return { failure: found.failure, when: relativeTime(found.at) };
+  }
+  /** The step whose output is the error path's result ("flag-request"); null when it reads none. */
+  resultFrom(): string | null {
+    const { controller, target } = this.session();
+    // A run shows the result its own version took, never the draft's.
+    const recorded = this.runView();
+    if (recorded) return recorded.handled?.from ?? null;
+    return errorResultSource(controller.step(target));
+  }
   /** What the step returned in the last execution, when no pin stands for it. */
   simulated(): boolean {
     const { controller, target } = this.session();
@@ -1331,6 +1527,138 @@ export class OutputPane {
     }
     this.unpin();
   }
+  /**
+   * The failure simulated for this step, or the item picked: the item's
+   * own first, else every item's. None on the Runs tab.
+   */
+  failure(): {
+    key: string;
+    entry: ErrorEntry;
+    scope: "step" | "item" | "every";
+    /** Why Execute leaves it out under the step's current setting; null when it fails the step. */
+    leftOut: string | null;
+  } | null {
+    const { controller, target } = this.session();
+    if (controller.viewingRuns() || target.startsWith("$")) return null;
+    const data = controller.testData;
+    data.version();
+    const key = controller.pinKey(target);
+    const found = failureOf(data.data(), key);
+    if (!found) return null;
+    const scope =
+      key === target ? "step" : found.key === target ? "every" : "item";
+    // The step changed since (its On error back to Stop the run, a call
+    // that no longer waits): the failure stays, and Execute doesn't send it.
+    const step = controller.step(target);
+    const block = step ? simulateBlock(step, false) : undefined;
+    const leftOut =
+      block === null
+        ? null
+        : `Execute leaves this failure out. ${block ?? "This step can't fail in a simulation."}`;
+    // A transform's or a decision table's failure didn't start, whatever
+    // outcome the test data holds: the platform reports it so.
+    const fixed = step ? simulatedOutcome(step) : null;
+    const entry = fixed ? { ...found.entry, outcome: fixed } : found.entry;
+    return { ...found, entry, scope, leftOut };
+  }
+  /**
+   * Inside an error path whose step won't fail with this test data: that
+   * step ("submit"), whose failure to simulate first; null otherwise.
+   */
+  untakenOwner(): string | null {
+    const { controller, target, host } = this.session();
+    if (controller.viewingRuns() || target.startsWith("$")) return null;
+    const data = controller.testData;
+    data.version();
+    return (
+      untakenPath(
+        host.model.definition.spec.steps ?? [],
+        target,
+        (owner) => !!failureOf(data.data(), controller.pinKey(owner)),
+        (owner) => simulateBlock(owner, false) === null,
+      )?.owner ?? null
+    );
+  }
+  /** The "⋯" menu after Pin and Edit: Simulate a failure…, where it applies. */
+  moreActions(): RowMenuItem[] | null {
+    const { controller, target } = this.session();
+    const step = controller.step(target);
+    if (!step || controller.viewingRuns() || target.startsWith("$"))
+      return null;
+    // Step details open this workflow's own steps, never a called one's.
+    const reason = simulateBlock(step, false);
+    if (reason === undefined) return null;
+    return [
+      {
+        label: "Simulate a failure…",
+        detail: reason ?? undefined,
+        disabled: reason !== null,
+        run: () => this.openSimulate(),
+      },
+    ];
+  }
+  /** Open while the dialog is: what it was opened for, kept as it was then. */
+  readonly simulating = signal<{
+    key: string;
+    item: string | null;
+    loop: string;
+    changesData: boolean;
+    outcome: "not_started" | null;
+    suggestions: ReturnType<typeof codeSuggestions>;
+    initial: FailureChoice | null;
+    /** The failure being edited, to replace when Which items changes. */
+    editing: string | null;
+  } | null>(null);
+  openSimulate() {
+    const { controller, target } = this.session();
+    const opening = simulateOpening(controller, target);
+    if (!opening) return;
+    const current = this.failure();
+    this.simulating.set({
+      ...opening,
+      initial: current && {
+        code: current.entry.code,
+        outcome: current.entry.outcome ?? "failed",
+        every: current.scope === "every",
+      },
+      editing: current?.key ?? null,
+    });
+  }
+  async simulate(choice: FailureChoice) {
+    const open = this.simulating();
+    if (!open) return;
+    const { controller, target } = this.session();
+    // The answer is for the item picked when the dialog opened.
+    if (controller.pinKey(target) !== open.key) {
+      this.problem.set(
+        "The picked item changed while the dialog was open, so nothing was simulated.",
+      );
+      return;
+    }
+    const key = failureKey(open.key, choice.every);
+    // "failed" is the platform's default: it isn't written. An edit that
+    // changes Which items replaces the failure it opened on, in one change.
+    const written = await controller.setFailure(
+      key,
+      {
+        code: choice.code,
+        ...(choice.outcome !== "failed" ? { outcome: choice.outcome } : {}),
+      },
+      open.editing,
+    );
+    this.problem.set(written.ok ? "" : written.message);
+  }
+  closeSimulate() {
+    this.simulating.set(null);
+    // Back to the menu that opened it (its item is gone with the menu).
+    this.element.nativeElement
+      .querySelector<HTMLElement>(".pane-more .row-menu-toggle")
+      ?.focus();
+  }
+  async removeFailure(key: string) {
+    const removed = await this.session().controller.setFailure(key, null);
+    this.problem.set(removed.ok ? "" : removed.message);
+  }
   unpin() {
     this.problem.set("");
     const { controller, target } = this.session();
@@ -1450,7 +1778,18 @@ export class OutputPane {
       return schemaRows(session.host.model.definition.spec["inputSchema"]);
     if (target === "$end")
       return schemaRows(session.host.model.definition.spec["outputSchema"]);
-    const step = session.controller.step(target);
+    // After its error path ran, the step's output is the path's result: the
+    // fields of the step that result reads, never the step's own; in a run
+    // that happened as in one Studio executed.
+    const policy =
+      this.handledRun()?.failure.policy ?? this.runView()?.handled?.policy;
+    const from = policy === "errorOutput" ? this.resultFrom() : null;
+    const step =
+      policy === "errorOutput"
+        ? from
+          ? session.controller.step(from)
+          : null
+        : session.controller.step(target);
     const schema = step
       ? ndvRegistry
           .kind(step.kind)

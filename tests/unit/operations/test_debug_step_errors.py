@@ -26,9 +26,9 @@ from firefly_weave.cli.debug import simulate
 from firefly_weave.compiler.api import CompiledArtifact, compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.contracts.definitions import load_definition
-from firefly_weave.contracts.step_errors import STEP_ERROR_MESSAGES
-from firefly_weave.operations.debug.models import DebugError, ScriptedError
-from firefly_weave.operations.debug.simulator import Simulator
+from firefly_weave.contracts.step_errors import STEP_ERROR_MESSAGES, step_error_message
+from firefly_weave.operations.debug.models import CalledWorkflow, DebugError, ScriptedError
+from firefly_weave.operations.debug.simulator import Simulator, frame_run_id
 
 NOW = datetime(2026, 10, 26, tzinfo=UTC)
 STATUS = {
@@ -42,8 +42,8 @@ ACTIONS = {"look": "idempotent", "submit": "non_idempotent"}
 OK = {"status": "ok"}
 
 
-def catalog() -> CatalogSnapshot:
-    contracts, definitions = [], []
+def catalog(called=()) -> CatalogSnapshot:
+    contracts, definitions = [], [load_definition(document) for document in called]
     for name, effect in ACTIONS.items():
         contract = {"inputSchema": {}, "outputSchema": STATUS, "sideEffect": effect, "timeoutSeconds": 30}
         contracts.append({"taskType": name, "taskVersion": "1.0.0", **contract})
@@ -63,16 +63,43 @@ def catalog() -> CatalogSnapshot:
     return CatalogSnapshot.from_definitions(definitions, tasks=contracts)
 
 
-def compiled(*steps, output=None) -> CompiledArtifact:
+def compiled(*steps, output=None, called=()) -> CompiledArtifact:
     document = {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
         "metadata": {"name": "scripted-failures", "version": "1.0.0"},
         "spec": {"inputSchema": {}, "outputSchema": {}, "steps": list(steps), "output": output or {"literal": None}},
     }
-    result = compile_source(json.dumps(document), format="json", catalog=catalog())
+    result = compile_source(json.dumps(document), format="json", catalog=catalog(called))
     assert result.ok, result.to_bytes()
     return result.artifact
+
+
+# A workflow other workflows call, whose run always fails.
+REFUSE = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Workflow",
+    "metadata": {"name": "refuse", "version": "1.0.0"},
+    "spec": {
+        "inputSchema": {},
+        "outputSchema": {},
+        "callable": {},
+        "steps": [{"id": "stop", "kind": "fail", "code": "REQUEST_REFUSED", "message": "Nobody may submit this."}],
+        "output": {"literal": None},
+    },
+}
+
+
+def error_object(code, key, *, outcome="failed", attempts=1, message=None, **extra) -> dict:
+    """The error object later steps read for a handled failure of the step instance ``key``."""
+    return {
+        "code": code,
+        "message": message or step_error_message(code),
+        "outcome": outcome,
+        "attempts": attempts,
+        "instanceKey": key,
+        **extra,
+    }
 
 
 def action(identifier, uses="look", value=None, **settings) -> dict:
@@ -224,6 +251,90 @@ def test_a_session_with_scripted_failures_restores_and_one_without_keeps_its_byt
     assert '"errors"' in scripted.serialize()
     assert Simulator.restore(scripted.serialize()).continue_until_breakpoint().status == "succeeded"
     assert '"errors"' not in session(artifact, mocks={"node:lookup": OK}).serialize()
+
+
+def test_a_session_records_the_failure_a_step_that_continues_handled():
+    artifact = compiled(action("lookup", onError="continue"), action("notify-team"))
+    simulator = session(artifact, mocks={"node:notify-team": OK}, errors={"node:lookup": {"code": "RATE_LIMITED"}})
+    assert simulator.continue_until_breakpoint().status == "succeeded"
+    assert simulator.data.failures == {"lookup": error_object("RATE_LIMITED", "lookup")}
+    assert simulator.data.outputs["notify-team"] == OK
+
+
+def test_a_handled_failure_of_one_iteration_is_recorded_under_its_instance_key():
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input"},
+        "maxItems": 10,
+        "body": {"steps": [action("send", onError="continue")], "output": {"ref": "/steps/send/output"}},
+    }
+    simulator = session(
+        compiled(each, output={"ref": "/steps/each/output"}),
+        mocks={"node:send": OK},
+        errors={"node:send[1]": {"code": "RATE_LIMITED", "outcome": "not_started", "attempts": 3}},
+        value=[1, 2, 3],
+    )
+    assert simulator.continue_until_breakpoint().status == "succeeded"
+    expected = error_object("RATE_LIMITED", "send[1]", outcome="not_started", attempts=3)
+    assert simulator.data.failures == {"send[1]": expected}
+
+
+def test_a_failure_an_error_path_handles_is_recorded_and_its_path_reads_the_error():
+    note = {"id": "note", "kind": "transform", "value": {"ref": "/steps/lookup/error/code"}}
+    artifact = compiled(action("lookup", onError="errorOutput", errorPath=recover([note])))
+    simulator = session(artifact, errors={"node:lookup": {"code": "REQUEST_REFUSED"}})
+    assert simulator.continue_until_breakpoint().status == "succeeded"
+    assert simulator.data.failures == {"lookup": error_object("REQUEST_REFUSED", "lookup")}
+    assert simulator.data.outputs["note"] == "REQUEST_REFUSED"
+
+
+def test_a_failure_the_barrier_stops_is_not_recorded_as_handled():
+    artifact = compiled(action("submit", uses="submit", onError="continue"))
+    simulator = session(artifact, errors={"node:submit": {"code": "TIMEOUT", "outcome": "unknown"}})
+    assert simulator.continue_until_breakpoint().status == "suspended"
+    assert simulator.data.failures == {}
+
+
+def test_a_failure_of_evaluating_a_step_is_recorded_like_a_scripted_one():
+    shape = {"id": "shape", "kind": "transform", "value": {"ref": "/input/missing"}, "onError": "continue"}
+    simulator = session(compiled(shape), value={})
+    assert simulator.continue_until_breakpoint().status == "succeeded"
+    assert simulator.data.failures == {"shape": error_object("WV-EXPR-MISSING", "shape", outcome="not_started")}
+
+
+def test_a_call_that_handles_its_called_run_failing_records_the_called_run():
+    call = {
+        "id": "notify",
+        "kind": "callWorkflow",
+        "uses": "refuse@1.0.0",
+        "with": {"literal": {}},
+        "onError": "errorOutput",
+        "errorPath": recover(),
+    }
+    workflows = {"refuse@1.0.0": CalledWorkflow(artifact=json.loads(compiled_callee().to_bytes()))}
+    simulator = Simulator(compiled(call, called=[REFUSE]), mocks={}, input=None, now=NOW, workflows=workflows)
+    assert simulator.continue_until_breakpoint().status == "succeeded"
+    expected = error_object(
+        "REQUEST_REFUSED", "notify", message="Nobody may submit this.", childRunId=str(frame_run_id("notify"))
+    )
+    assert simulator.data.failures == {"notify": expected}
+
+
+def compiled_callee() -> CompiledArtifact:
+    result = compile_source(json.dumps(REFUSE), format="json", catalog=catalog())
+    assert result.ok, result.to_bytes()
+    return result.artifact
+
+
+def test_a_session_without_handled_failures_keeps_its_bytes_and_one_with_them_restores_them():
+    artifact = compiled(action("lookup", onError="continue"))
+    handled = session(artifact, errors={"node:lookup": {"code": "TIMEOUT"}})
+    handled.continue_until_breakpoint()
+    assert Simulator.restore(handled.serialize()).data.failures == {"lookup": error_object("TIMEOUT", "lookup")}
+    clean = session(artifact, mocks={"node:lookup": OK})
+    clean.continue_until_breakpoint()
+    assert '"failures"' not in clean.serialize()
 
 
 def test_the_local_simulation_accepts_error_options(tmp_path):

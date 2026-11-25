@@ -234,6 +234,11 @@ person resending the same request with the original revision gets the original
 receipt; a different request with that receipt ID conflicts; two competing
 receipts for one revision cannot both win. Authority is checked before a resend
 is honored, so removing a grant also stops resends.
+Two decisions sent at once on one incident queue: the later one waits up to 2
+seconds for the earlier one, then answers HTTP 409 `WV-INCIDENT-REVISION` (or
+429 `WV-OPERATION-CAPACITY` if the wait runs out). A caller without
+`incident.resolve` is refused with HTTP 403 `WV-FORBIDDEN` at once and never
+waits.
 
 **`retry_safe`** may allow one attempt beyond the exhausted automatic budget, with
 the original operation key and the remaining original action and run deadlines.
@@ -327,7 +332,7 @@ ended.
 | --- | --- | --- | --- |
 | The agent | `WV-AGENT-BUDGET` | A turn crossed the step's `maxTotalTokens` or the run's 2,000,000 tokens. The calls that turn asked for didn't run | `retry_safe` grants one forced final turn, under the next turn's key, in which the model must answer without tools (a tool call then fails the agent with `WV-AGENT-ITERATIONS`); or `terminate` |
 | The agent | `WV-AGENT-ITERATIONS`, `WV-AGENT-TIMEOUT`, `WV-AGENT-TOOL-FAILED` | The agent used its turns, passed its `timeoutSeconds`, or a tool failed with `onToolError: incident` | `terminate` only; then change the workflow or its limits and start a linked retry |
-| A turn | `WV-TASK-RETRIES-EXHAUSTED` | The turn failed for good: with a code that isn't retried, such as `LLM_MODEL_NOT_FOUND`, or after its last attempt | Fix the cause, then `retry_safe`, which runs the turn again with the same input within its 600 seconds; or `terminate`. `accept_reconciled_result` takes an output that fits the [turn's output](worker-protocol.md#ai-agent-turn-tasks) |
+| A turn | `WV-TASK-RETRIES-EXHAUSTED` | The turn failed for good: with a code that isn't retried, such as `LLM_MODEL_NOT_FOUND`, or after its last attempt. The incident's `origin_code` is the model's own code, such as `LLM_NO_TOOL_SUPPORT`, `LLM_CONTEXT_LIMIT` or `LLM_UNREACHABLE`, and the turn's row in the agent log shows it too | Fix the cause, then `retry_safe`, which runs the turn again with the same input within its 600 seconds; or `terminate`. `accept_reconciled_result` takes an output that fits the [turn's output](worker-protocol.md#ai-agent-turn-tasks) |
 | A tool call | `WV-TASK-AMBIGUOUS` | A call of a `non_idempotent` Action may have applied: its attempt ended with an unknown outcome, or it was still running when the agent ended | Check the other system, then `accept_reconciled_result` with the Action's output, or `accept_reconciled_failure` with your evidence; or `terminate`. `retry_safe` is refused |
 
 When the agent is still running, the model reads a reconciled call's result on

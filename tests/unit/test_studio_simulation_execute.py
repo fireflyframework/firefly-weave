@@ -22,7 +22,9 @@ from typing import Any
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
+from firefly_weave.contracts.step_errors import step_error_message
 from firefly_weave.studio.local_contracts import ExecuteRequest
 from firefly_weave.studio.simulation import CatalogConflict, SimulationRefused, execute
 
@@ -390,6 +392,46 @@ def test_a_person_s_task_that_expires_fails_the_step_and_the_run():
     assert [d["message"] for d in answer["diagnostics"]] == ["The task approval expired before anyone decided."]
 
 
+HANDLED_WAITS = [
+    (
+        PAID,
+        {"signals": {"paid": {"outcome": "timeout"}}},
+        "WV-SIGNAL-TIMEOUT",
+        "The signal did not arrive in time.",
+    ),
+    (
+        APPROVAL | {"expirySeconds": 3600},
+        {"humans": {"approval": {"outcome": "expire"}}},
+        "WV-HUMAN-EXPIRED",
+        "Nobody completed the human task before it expired.",
+    ),
+]
+
+
+@pytest.mark.parametrize(("step", "scripts", "code", "message"), HANDLED_WAITS, ids=["signal", "person"])
+@pytest.mark.parametrize("policy", ["continue", "errorOutput"])
+def test_a_wait_that_times_out_or_expires_is_handled_by_its_on_error_and_the_run_goes_on(
+    policy: str, step: dict[str, Any], scripts: dict[str, Any], code: str, message: str
+):
+    path = {"errorPath": {"steps": [], "output": {"literal": "late"}}} if policy == "errorOutput" else {}
+    answer = run(workflow(step | {"onError": policy} | path, AFTER), scripts=scripts)
+    assert (answer["status"], answer["diagnostics"]) == ("completed", [])
+    waited = entries(answer)[step["id"]]
+    assert (waited["status"], waited["handled"], waited.get("output")) == (
+        "failed",
+        policy,
+        "late" if path else None,
+    )
+    assert waited["error"] == {
+        "code": code,
+        "message": message,
+        "outcome": "not_started",
+        "attempts": 1,
+        "instanceKey": step["id"],
+    }
+    assert entries(answer)["after"]["status"] == "completed"
+
+
 CALL = {"id": "enrich", "kind": "callWorkflow", "uses": "enrich@1.0.0", "mode": "wait", "with": {"literal": {}}}
 
 
@@ -551,6 +593,294 @@ def test_test_data_too_large_to_check_is_refused_as_too_large():
 def test_the_answer_keeps_only_the_paths_decisions_took():
     answer = run(workflow(CHECK, SHAPE), mocks={"node:check": {"eligible": True}})
     assert set(answer.get("variables", {})) <= {"branches"}
+
+
+# --- simulated step failures ------------------------------------------------------------------------------------
+
+REFUSED = {"code": "REQUEST_REFUSED"}
+NOTE = {"id": "note", "kind": "transform", "value": {"literal": "noted"}}
+NOTIFY_TEAM = {"id": "notify-team", "kind": "transform", "value": {"ref": "/steps/check/error/code"}}
+SUBMIT_ACTION = {
+    **ACTION,
+    "metadata": {"name": "orders.submit", "version": "1.0.0"},
+    "spec": {
+        **{name: value for name, value in ACTION["spec"].items() if name != "retry"},
+        "implementation": {"kind": "worker", "taskType": "orders.submit", "taskVersion": "1.0.0"},
+        "sideEffect": "non_idempotent",
+    },
+}
+SUBMIT = CHECK | {"id": "submit", "uses": "orders.submit@1.0.0"}
+
+
+def refused(key: str, **fields: Any) -> dict[str, Any]:
+    """The error object later steps read when the step instance ``key`` fails with REQUEST_REFUSED."""
+    return {
+        "code": "REQUEST_REFUSED",
+        "message": step_error_message("REQUEST_REFUSED"),
+        "outcome": "failed",
+        "attempts": 1,
+        "instanceKey": key,
+        **fields,
+    }
+
+
+def entries(answer: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {entry["instanceKey"] or entry["nodeId"]: entry for entry in answer["trace"] if "frame" not in entry}
+
+
+def test_a_failure_a_step_continues_after_is_reported_as_handled_and_the_run_goes_on():
+    answer = run(workflow(CHECK | {"onError": "continue"}, NOTE), errors={"node:check": REFUSED})
+    assert answer["status"] == "completed"
+    check = entries(answer)["check"]
+    assert (check["status"], check["handled"], check["error"]) == ("failed", "continue", refused("check"))
+    assert entries(answer)["note"]["status"] == "completed"
+
+
+@pytest.mark.parametrize("outcome", ["failed", "unknown"])
+def test_an_action_reports_the_outcome_and_attempts_its_failure_was_simulated_with(outcome: str):
+    # check only reads data, so an unknown outcome is handled like any other.
+    answer = run(
+        workflow(CHECK | {"onError": "continue"}, NOTE),
+        errors={"node:check": REFUSED | {"outcome": outcome, "attempts": 2}},
+    )
+    check = entries(answer)["check"]
+    assert (check["handled"], check["error"]["outcome"], check["error"]["attempts"]) == ("continue", outcome, 2)
+
+
+def test_a_transform_reports_its_simulated_failure_as_not_started_whatever_the_outcome():
+    # A transform does nothing outside the run, so it fails before it does anything.
+    for outcome in ("failed", "unknown", "not_started"):
+        answer = run(workflow(NOTE | {"onError": "continue"}), errors={"node:note": REFUSED | {"outcome": outcome}})
+        assert entries(answer)["note"]["error"]["outcome"] == "not_started", outcome
+
+
+def test_a_failure_an_error_path_handles_runs_the_path_and_gives_the_step_the_path_output():
+    path = {"steps": [NOTIFY_TEAM], "output": {"ref": "/steps/notify-team/output"}}
+    answer = run(workflow(CHECK | {"onError": "errorOutput", "errorPath": path}), errors={"node:check": REFUSED})
+    assert answer["status"] == "completed"
+    check, notified = entries(answer)["check"], entries(answer)["notify-team"]
+    assert (check["status"], check["handled"], check["output"]) == ("failed", "errorOutput", "REQUEST_REFUSED")
+    assert check["error"] == refused("check")
+    assert (notified["status"], notified["output"]) == ("completed", "REQUEST_REFUSED")
+
+
+def test_a_failure_that_stops_the_run_carries_its_error_and_is_not_handled():
+    answer = run(workflow(CHECK, NOTE), errors={"node:check": REFUSED})
+    assert answer["status"] == "failed"
+    check = entries(answer)["check"]
+    assert (check["status"], check["error"]) == ("failed", refused("check"))
+    assert "handled" not in check and "note" not in entries(answer)
+
+
+def test_an_unknown_outcome_on_a_step_that_changes_data_still_stops_the_run_whatever_its_setting():
+    answer = run(
+        workflow(SUBMIT | {"onError": "continue"}, NOTE),
+        definitions=[ACTION, SUBMIT_ACTION],
+        errors={"node:submit": REFUSED | {"outcome": "unknown"}},
+    )
+    assert answer["status"] == "failed"
+    submit = entries(answer)["submit"]
+    assert submit["status"] == "failed" and "handled" not in submit
+    assert "WV-TASK-AMBIGUOUS" in [d["code"] for d in answer["diagnostics"]]
+    assert "note" not in entries(answer)
+
+
+def test_one_iteration_fails_and_is_handled_while_the_others_go_on():
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input/ids"},
+        "maxItems": 10,
+        "body": {
+            "steps": [CHECK | {"with": {"object": {"customerId": {"ref": "/item"}}}, "onError": "continue"}],
+            "output": {"ref": "/steps/check/output"},
+        },
+    }
+    ids = {"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}}}
+    answer = run(
+        workflow(each, input_schema=ids),
+        input={"ids": ["c-1", "c-2", "c-3"]},
+        mocks={"node:check": {"eligible": True}},
+        errors={"node:check[1]": REFUSED},
+    )
+    assert answer["status"] == "completed"
+    found = entries(answer)
+    statuses = [found[key]["status"] for key in ("check[0]", "check[1]", "check[2]")]
+    assert statuses == ["completed", "failed", "completed"]
+    assert (found["check[1]"]["handled"], found["check[1]"]["error"]) == ("continue", refused("check[1]"))
+    assert "handled" not in found["check[0]"] and "error" not in found["check[2]"]
+    assert [loop["status"] for loop in answer["loops"]] == ["completed"]
+
+
+def test_one_iteration_runs_its_error_path_and_gets_its_own_output_while_the_others_go_on():
+    path = {"steps": [NOTIFY_TEAM], "output": {"ref": "/steps/notify-team/output"}}
+    item = {"object": {"customerId": {"ref": "/item"}}}
+    guarded = CHECK | {"with": item, "onError": "errorOutput", "errorPath": path}
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input/ids"},
+        "maxItems": 10,
+        "body": {"steps": [guarded], "output": {"ref": "/steps/check/output"}},
+    }
+    ids = {"type": "object", "properties": {"ids": {"type": "array", "items": {"type": "string"}}}}
+    answer = run(
+        workflow(each, input_schema=ids),
+        input={"ids": ["c-1", "c-2", "c-3"]},
+        mocks={"node:check": {"eligible": True}},
+        errors={"node:check[1]": REFUSED},
+    )
+    assert answer["status"] == "completed"
+    found = entries(answer)
+    handled = found["check[1]"]
+    # The path's output comes from the join of item 1's error path, never from another item's.
+    assert (handled["status"], handled["handled"], handled["output"]) == ("failed", "errorOutput", "REQUEST_REFUSED")
+    assert handled["error"] == refused("check[1]")
+    assert [(found[key]["status"], found[key]["output"]) for key in ("check[0]", "check[2]")] == [
+        ("completed", {"eligible": True}),
+        ("completed", {"eligible": True}),
+    ]
+    assert "handled" not in found["check[0]"] and "error" not in found["check[2]"]
+    assert [key for key in found if key.startswith("notify-team")] == ["notify-team[1]"]
+    assert [loop["status"] for loop in answer["loops"]] == ["completed"]
+
+
+def test_a_step_that_stops_the_run_with_nothing_scripted_carries_the_incident_as_its_error():
+    broken = {"id": "broken", "kind": "transform", "value": {"ref": "/input/missing"}}
+    answer = run(workflow(broken))
+    assert answer["status"] == "failed"
+    [diagnostic] = [d for d in answer["diagnostics"] if d["code"] == "WV-EXPR-MISSING"]
+    stopped = entries(answer)["broken"]
+    assert stopped["status"] == "failed" and "handled" not in stopped
+    # An evaluation failure happens before the step does anything.
+    assert stopped["error"] == {
+        "code": "WV-EXPR-MISSING",
+        "message": diagnostic["message"],
+        "outcome": "not_started",
+        "attempts": 1,
+        "instanceKey": "broken",
+    }
+
+
+def test_a_call_that_waits_handles_its_called_run_failing_with_its_error_path():
+    failing = callee_definition()
+    failing["spec"]["steps"] = [{"id": "stop", "kind": "fail", "code": "REQUEST_REFUSED", "message": "No."}]
+    failing["spec"]["output"] = {"literal": None}
+    path = {"steps": [], "output": {"literal": "recovered"}}
+    answer = run(
+        workflow(CALL | {"onError": "errorOutput", "errorPath": path}),
+        definitions=[ACTION, failing],
+        workflows={"enrich@1.0.0": {"mocks": {}}},
+    )
+    assert answer["status"] == "completed", answer
+    enrich = entries(answer)["enrich"]
+    assert (enrich["status"], enrich["handled"], enrich["output"]) == ("failed", "errorOutput", "recovered")
+    assert (enrich["error"]["code"], enrich["error"]["message"]) == ("REQUEST_REFUSED", "No.")
+    assert "childRunId" in enrich["error"]
+
+
+def test_a_failure_scripted_on_a_call_that_waits_is_handled_by_its_setting():
+    answer = run(
+        workflow(CALL | {"onError": "continue"}, NOTE),
+        definitions=[ACTION, callee_definition()],
+        workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
+        errors={"node:enrich": REFUSED},
+    )
+    assert answer["status"] == "completed"
+    enrich = entries(answer)["enrich"]
+    assert (enrich["status"], enrich["handled"], enrich["error"]) == ("failed", "continue", refused("enrich"))
+
+
+def test_an_ai_task_takes_a_scripted_failure():
+    document = json.loads(ai_workflow())
+    document["spec"]["steps"][0]["onError"] = "continue"
+    answer = run(json.dumps(document), definitions=[], errors={"node:summarize": REFUSED})
+    assert answer["status"] == "completed"
+    summarize = entries(answer)["summarize"]
+    assert (summarize["handled"], summarize["error"]) == ("continue", refused("summarize"))
+
+
+def continuing_ai_workflow() -> str:
+    document = json.loads(ai_workflow())
+    document["spec"]["steps"][0]["onError"] = "continue"
+    return json.dumps(document)
+
+
+SAVED_TURNS = {"summarize": {"turns": [{"final": "Two sentences."}], "source": "manual"}}
+
+
+@pytest.mark.parametrize(
+    ("source", "key", "fields", "code"),
+    [
+        (
+            workflow(CHECK | {"onError": "continue"}),
+            "node:check",
+            {"mocks": {"node:check": {"eligible": True}}},
+            "WV-DEBUG-MOCK-CONFLICT",
+        ),
+        (
+            continuing_ai_workflow(),
+            "node:summarize",
+            {"definitions": [], "scripts": {"aiTurns": SAVED_TURNS}},
+            "WV-DEBUG-MOCK-CONFLICT",
+        ),
+        (workflow(SHAPE | {"value": {"literal": 1}}), "node:shape", {}, "WV-DEBUG-MOCK-KEY"),
+    ],
+    ids=[
+        "a pin and a failure on the same key",
+        "an AI task's saved turns and a failure on the same key",
+        "a step that can't fail this way",
+    ],
+)
+def test_a_failure_the_simulation_cannot_apply_is_refused_with_its_code(source, key, fields, code):
+    with pytest.raises(SimulationRefused) as refusal:
+        run(source, errors={key: REFUSED}, **fields)
+    assert (refusal.value.status, refusal.value.code) == (422, code)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [{"code": "request-refused"}, {"code": "E" * 129}, REFUSED | {"attempts": 1001}, REFUSED | {"outcome": "maybe"}],
+    ids=["a lowercase code", "a code longer than 128 characters", "more than 1000 attempts", "an unknown outcome"],
+)
+def test_a_failure_outside_the_limits_is_refused_before_the_simulation(failure):
+    at_the_limit = request(workflow(NOTE), errors={"node:note": REFUSED | {"attempts": 1000}})
+    assert at_the_limit.errors["node:note"].attempts == 1000
+    with pytest.raises(ValidationError):
+        request(workflow(NOTE), errors={"node:note": failure})
+
+
+def test_simulated_failures_never_reach_a_real_run():
+    from firefly_weave.contracts.step_tests import DraftTestActivationRequest, DraftTestRunRequest, StepTestRequest
+
+    errors = {"node:check": REFUSED}
+    assert request(workflow(CHECK), errors=errors).errors["node:check"].code == "REQUEST_REFUSED"
+    draft = {"draft_id": "0f8f2a10-3c4d-4e5f-8a9b-1c2d3e4f5a6b", "draft_revision": 1}
+    real_runs = [
+        (StepTestRequest, {**draft, "kind": "action", "step_id": "check", "input": {}, "timeout_seconds": 30}),
+        (DraftTestActivationRequest, draft),
+        (DraftTestRunRequest, {"input": {}}),
+    ]
+    for model, body in real_runs:
+        assert model.model_validate_json(json.dumps(body))
+        with pytest.raises(ValidationError):
+            model.model_validate_json(json.dumps({**body, "errors": errors}))
+
+
+def test_executing_a_step_in_an_error_path_its_step_did_not_take_says_why():
+    path = {"steps": [NOTIFY_TEAM], "output": {"literal": None}}
+    answer = run(
+        workflow(CHECK | {"onError": "errorOutput", "errorPath": path}),
+        mocks={"node:check": {"eligible": True}},
+        target={"mode": "step", "stepId": "notify-team"},
+    )
+    assert answer["status"] == "blocked"
+    assert answer["blocked"] == {
+        "reason": "path",
+        "nodeId": "notify-team",
+        "instanceKey": "",
+        "message": "With this test data, check succeeds, so notify-team isn't reached.",
+    }
 
 
 def test_a_project_schema_under_the_platform_event_name_wins_and_is_refused_by_the_compile():

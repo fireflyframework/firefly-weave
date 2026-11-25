@@ -25,17 +25,21 @@ import {
   type StepStatus,
 } from "../../operate/run-contracts";
 import type {
+  HandledFailure,
   RecordedItem,
   RecordedLoop,
   RecordedRun,
 } from "../canvas/run-state";
+import { failureCodeText } from "../canvas/tile-facts";
 import { allSteps, childLists, withChildIds } from "../ndv/step-walk";
 import { fingerprint } from "../state/fingerprints";
 import { instanceStep } from "../state/instance-keys";
 import type { RunRecord } from "./run-record";
+import { failedStep } from "./runs-list-model";
 
 export type RunStepState =
   | "completed"
+  | "handled"
   | "running"
   | "waiting"
   | "failed"
@@ -48,9 +52,11 @@ export const OVERLAY_FACTS_LIMIT = 2000;
 const RANK: Readonly<Record<RunStepState, number>> = {
   "not-reached": 0,
   completed: 1,
-  waiting: 2,
-  running: 3,
-  failed: 4,
+  // It failed and its On error went on: more than finished, less than at work.
+  handled: 2,
+  waiting: 3,
+  running: 4,
+  failed: 5,
 };
 const FACT_STATES: Readonly<Partial<Record<StepStatus, RunStepState>>> = {
   scheduled: "running",
@@ -61,12 +67,118 @@ const FACT_STATES: Readonly<Partial<Record<StepStatus, RunStepState>>> = {
   timed_out: "failed",
 };
 
+/** A failure a step's On error handled in a run, as the run recorded it. */
+export interface RecordedFailure {
+  /** Its instance key ("send[1]"), or the step ID. */
+  key: string;
+  step: string;
+  /** As the run gave it: any case, any length. */
+  code: string;
+  /** Platform copy, or a called workflow's own words; "" when the run no longer holds it. */
+  message: string;
+  /** null when the run no longer holds it (an item of a loop that ended). */
+  outcome: string | null;
+  attempts: number;
+  /** null when the step fact doesn't say (the step's setting then does). */
+  policy: "continue" | "errorOutput" | null;
+}
+type ErrorObject = Record<string, unknown> & { code: string };
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+/** The error a binding holds ({error}, or {output, error}); null for any other binding. */
+const errorOf = (binding: unknown): ErrorObject | null => {
+  const error = isObject(binding) ? binding["error"] : null;
+  return isObject(error) && typeof error["code"] === "string"
+    ? (error as ErrorObject)
+    : null;
+};
+
+/**
+ * Each failure a step's On error handled, once per instance, in the order
+ * the step facts list them, then the ones only a binding names. The
+ * binding later steps read holds the message and the outcome; an item of
+ * a loop that ended keeps only its step fact (its code, its attempts and
+ * how its step handled it).
+ */
+export function handledFailures(
+  run: RunRecord,
+  facts: readonly StepFact[] | null,
+): RecordedFailure[] {
+  const found = new Map<string, RecordedFailure>();
+  const bound = new Map<string, ErrorObject>();
+  for (const [key, binding] of Object.entries(run.completed)) {
+    const error = errorOf(binding);
+    if (!error) continue;
+    const instance =
+      typeof error["instanceKey"] === "string" && error["instanceKey"]
+        ? error["instanceKey"]
+        : key;
+    bound.set(instance, error);
+  }
+  const read = (
+    key: string,
+    error: ErrorObject | undefined,
+    fact?: StepFact,
+  ): RecordedFailure => {
+    const attempts = error?.["attempts"];
+    return {
+      key,
+      step: instanceStep(key),
+      code: error?.code ?? fact?.error_code ?? "",
+      message: typeof error?.["message"] === "string" ? error["message"] : "",
+      outcome: typeof error?.["outcome"] === "string" ? error["outcome"] : null,
+      attempts:
+        typeof attempts === "number" && Number.isSafeInteger(attempts)
+          ? attempts
+          : (fact?.attempts ?? 0),
+      policy: fact?.handled ?? null,
+    };
+  };
+  for (const fact of facts ?? []) {
+    if (!handledFact(fact)) continue;
+    const key = factKey(fact);
+    found.set(key, read(key, bound.get(key), fact));
+  }
+  for (const [key, error] of bound)
+    if (!found.has(key)) found.set(key, read(key, error));
+  return [...found.values()];
+}
+
+/** The On error setting that handled a failure: the run's own word, else the step's setting. */
+export function handledPolicy(
+  failure: RecordedFailure,
+  definition: Workflow | null,
+): "continue" | "errorOutput" {
+  if (failure.policy) return failure.policy;
+  const step = definition
+    ? allSteps(definition.spec.steps).find((s) => s.id === failure.step)
+    : undefined;
+  return step?.["onError"] === "errorOutput" ? "errorOutput" : "continue";
+}
+
+/**
+ * The header's line for a run that handled failures: "1 error handled ·
+ * submit: REQUEST_REFUSED", the platform's count and the first failure
+ * (its item inside a loop); "" when it handled none.
+ */
+export function handledCaption(
+  count: number,
+  first: Pick<RecordedFailure, "key" | "step" | "code"> | null,
+): string {
+  if (count <= 0) return "";
+  const head = `${count.toLocaleString("en-US")} ${count === 1 ? "error" : "errors"} handled`;
+  return first
+    ? `${head} · ${failedStep({ node_id: first.step, instance_key: first.key })}: ${failureCodeText(first.code)}`
+    : head;
+}
+
 /**
  * Each step the run reached, by static step ID: failed when any instance
  * failed, else running when any runs, else waiting when any waits, else
- * completed. Step facts add instances the run's state doesn't name. In a
- * run that ended nothing runs or waits any more, whatever step facts read
- * a moment earlier say.
+ * handled when one failed and its On error went on, else completed. Step
+ * facts add instances the run's state doesn't name. In a run that ended
+ * nothing runs or waits any more, whatever step facts read a moment
+ * earlier say.
  */
 export function stepStates(
   run: RunRecord,
@@ -83,18 +195,23 @@ export function stepStates(
     const was = states.get(id);
     if (!was || RANK[state] > RANK[was]) states.set(id, state);
   };
-  for (const key of Object.keys(run.completed)) mark(key, "completed");
+  // A binding that holds an error: the step failed and its On error went on.
+  for (const [key, binding] of Object.entries(run.completed))
+    mark(key, errorOf(binding) ? "handled" : "completed");
   for (const key of run.waiting) mark(key, "waiting");
   // A run that waits is waiting at the steps it is at (a person, a signal).
   const at = run.status === "waiting" ? "waiting" : "running";
   for (const key of run.active) mark(key, at);
   for (const { key } of run.incidents) mark(key, "failed");
   for (const fact of facts ?? []) {
-    const state = FACT_STATES[fact.status];
+    const state = handledFact(fact) ? "handled" : FACT_STATES[fact.status];
     if (state) mark(factKey(fact), state);
   }
   return states;
 }
+/** A step instance that failed and whose On error went on. */
+const handledFact = (fact: StepFact) =>
+  !!fact.handled && fact.status === "failed";
 
 const factKey = (fact: StepFact) => fact.instance_key || fact.node_id;
 /** The item of each loop around an instance, outermost first: `send[2][0]` gives [2, 0]. */
@@ -105,11 +222,13 @@ const iterationOf = (key: string): number[] =>
 const ITEM_RANK: Readonly<Record<RecordedItem["status"], number>> = {
   "not-run": 0,
   finished: 1,
-  running: 2,
+  // A step failed and its On error went on: more than finished, less than at work.
+  handled: 2,
+  running: 3,
   // Cut off by the run's end: above finished, below a failure.
-  stopped: 3,
-  "timed-out": 3,
-  failed: 4,
+  stopped: 4,
+  "timed-out": 4,
+  failed: 5,
 };
 
 /** Each step inside a loop, and the loops around it, outermost first. */
@@ -171,7 +290,8 @@ function loopsOf(
 /**
  * Each run of each loop in a recorded run, with what each of its items did:
  * failed when a step inside failed in it, running while one is at work,
- * finished once one ran, else not run. The run's state keeps how many items
+ * handled when a step failed in it and its On error went on, finished once
+ * one ran, else not run. The run's state keeps how many items
  * a loop had; the step facts say what each did, as its frames are gone.
  */
 export function recordedLoops(
@@ -183,13 +303,18 @@ export function recordedLoops(
   const marks: [string, RecordedItem["status"], string | null][] = [
     ...(facts ?? []).flatMap(
       (fact): [string, RecordedItem["status"], string | null][] => {
-        const status = itemStatus(fact.status, run.status);
+        // An item whose failure its step's On error handled went on.
+        const status = handledFact(fact)
+          ? "handled"
+          : itemStatus(fact.status, run.status);
         if (!status) return [];
         return [
           [
             factKey(fact),
             status,
-            status === "failed" ? (fact.error_code ?? fact.status) : null,
+            status === "failed" || status === "handled"
+              ? (fact.error_code ?? fact.status)
+              : null,
           ],
         ];
       },
@@ -366,6 +491,8 @@ export interface RunOverlay {
   /** Null when the run's version couldn't be read. */
   diff: VersionDiff | null;
   banner: string | null;
+  /** Every failure a step's On error handled in the run, every item included. */
+  handled: readonly RecordedFailure[];
 }
 
 export function overlayOf(
@@ -411,9 +538,20 @@ export function overlayOf(
     if (
       fact.error_code &&
       FACT_STATES[fact.status] === "failed" &&
+      !handledFact(fact) &&
       counts(factKey(fact))
     )
       failures[fact.node_id] ??= fact.error_code;
+  // Each handled step's failure, in the item picked: its code, message and setting.
+  const recorded = handledFailures(run, facts);
+  const handled: Record<string, HandledFailure> = {};
+  for (const failure of recorded)
+    if (counts(failure.key) && reached.get(failure.step) === "handled")
+      handled[failure.step] ??= {
+        code: failure.code,
+        message: failure.message,
+        policy: handledPolicy(failure, versions.run ?? versions.draft),
+      };
   const runningFor: Record<string, number> = {};
   if (now !== undefined && !terminalRunStatuses.includes(run.status))
     for (const fact of facts ?? []) {
@@ -432,10 +570,12 @@ export function overlayOf(
       status: run.status,
       current: [...inState("failed"), ...inState("running")].sort(),
       active: inState("waiting"),
-      done: inState("completed"),
+      // A handled step finished: the run went on past it.
+      done: [...inState("completed"), ...inState("handled")].sort(),
       changed: diff?.changed ?? [],
       added: diff?.added ?? [],
       failures,
+      ...(Object.keys(handled).length ? { handled } : {}),
       ...(Object.keys(runningFor).length ? { runningFor } : {}),
       loops: recordedLoops(versions.draft, run, facts),
       ...(picks ? { picks: { ...picks } } : {}),
@@ -447,5 +587,6 @@ export function overlayOf(
       versions.draft.metadata.version,
       versions.test,
     ),
+    handled: recorded,
   };
 }

@@ -20,6 +20,9 @@ SPDX-License-Identifier: Apache-2.0
 // body can read, which the Studio host computes with the compiler
 // (POST /studio/local/scope) because Studio's offline scope doesn't model
 // loops. Answers are kept per document and field.
+import { escapeSegment } from "../../forms/core/json";
+import type { Step } from "../../model";
+import { blocksOf } from "../step-blocks";
 import type { HostEntry } from "./complete";
 
 export interface HostScopeEntry extends HostEntry {
@@ -40,20 +43,20 @@ function blocks(
   step: Record<string, unknown>,
   at: string,
 ): { steps: unknown[]; at: string; loop: boolean }[] {
-  const found: { steps: unknown[]; at: string; loop: boolean }[] = [];
-  const add = (block: unknown, path: string, loop = false) => {
-    if (isRecord(block) && Array.isArray(block["steps"]))
-      found.push({ steps: block["steps"], at: `${at}${path}/steps`, loop });
-  };
-  if (Array.isArray(step["cases"]))
-    step["cases"].forEach((block, i) => add(block, `/cases/${i}`));
-  add(step["default"], "/default");
-  if (isRecord(step["branches"]))
-    for (const [name, block] of Object.entries(step["branches"]))
-      add(block, `/branches/${name.replace(/~/g, "~0").replace(/\//g, "~1")}`);
-  add(step["body"], "/body", step["kind"] === "forEach");
-  add(step["errorPath"], "/errorPath");
-  return found;
+  return blocksOf(step as Step).flatMap((block) => {
+    const branch: unknown = block.branch;
+    if (!isRecord(branch) || !Array.isArray(branch["steps"])) return [];
+    const path = block.path
+      .map((segment) => `/${escapeSegment(String(segment))}`)
+      .join("");
+    return [
+      {
+        steps: branch["steps"],
+        at: `${at}${path}/steps`,
+        loop: step["kind"] === "forEach" && block.kind === "body",
+      },
+    ];
+  });
 }
 
 function find(

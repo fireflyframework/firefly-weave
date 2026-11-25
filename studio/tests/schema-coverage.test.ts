@@ -21,7 +21,11 @@ import { resolve } from "node:path";
 import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import { propertyFields, supportedOperators } from "../src/app/property-grid";
-import { createStep, freshWorkflow, kinds } from "../src/app/model";
+import { createStep, freshWorkflow, kinds, type Step } from "../src/app/model";
+import {
+  onErrorFields,
+  onErrorKinds,
+} from "../src/app/editor/ndv/settings/on-error";
 import {
   pendingStepFields,
   readyKinds,
@@ -79,6 +83,18 @@ print(json.dumps({
     )
   : null;
 const manifest = schema?.manifest as Manifest;
+/**
+ * On error and Result on error: step details' Settings adds them to every
+ * kind the language lets choose what its failure does, after its own fields.
+ */
+const onErrorPaths = (step: Step, ctx: KindContext): string[] =>
+  onErrorFields(step, {
+    ...ctx,
+    features: ["flow.onError"],
+    onErrorKinds: onErrorKinds(manifest),
+  })
+    .filter((spec) => !spec.readOnly)
+    .map((spec) => String(spec.path[0]));
 
 describe.skipIf(!available)(
   "editor coverage of the real Python contracts",
@@ -123,12 +139,13 @@ describe.skipIf(!available)(
           tableContract: () => null,
           workflowContract: () => null,
         };
-        const fields = new Set(
-          [
+        const fields = new Set([
+          ...[
             ...allParams(descriptor.form?.(step, ctx), step, ctx),
             ...allParams(descriptor.settings?.(step, ctx), step, ctx),
           ].map(({ spec }) => String(spec.path[0])),
-        );
+          ...onErrorPaths(step, ctx),
+        ]);
         fields.add("id");
         fields.add("kind");
         const pending = new Set(
@@ -144,9 +161,19 @@ describe.skipIf(!available)(
         );
       }
       for (const kind of kinds) {
-        const fields = new Set(
-          propertyFields(createStep(kind, "step")).map((f) => f.path[0]),
-        );
+        const step = createStep(kind, "step");
+        const workflow = freshWorkflow();
+        workflow.spec.steps.push(step);
+        const fields = new Set([
+          ...propertyFields(step).map((f) => f.path[0]),
+          ...onErrorPaths(step, {
+            workflow,
+            features: [],
+            actionContract: () => null,
+            tableContract: () => null,
+            workflowContract: () => null,
+          }),
+        ]);
         // Identity is displayed separately; branch steps are managed on canvas.
         fields.add("id");
         fields.add("kind");

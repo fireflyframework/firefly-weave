@@ -361,6 +361,10 @@ weave-canvas-view,
 .canvas-v2 .frame-run[data-tone="failed"] {
   color: var(--danger-ink);
 }
+/* "20 of 20 · 1 error handled": items failed and went on. */
+.canvas-v2 .frame-run[data-tone="handled"] {
+  color: var(--warning-ink);
+}
 /* A cancelled run cut the loop off: said quietly, it wasn't a failure. */
 .canvas-v2 .frame-run[data-tone="stopped"] {
   color: var(--muted);
@@ -604,6 +608,32 @@ weave-canvas-view,
   inset: -6px;
   border-radius: 50%;
 }
+/* Below 768 px or with a coarse pointer, a step's Success and Error outputs
+   and an empty path's slot take a 44 px tap on screen at any zoom (--zoom is
+   the canvas's). Those outputs sit 20 units right of their step's card: the
+   area starts at the card and grows right, up and down; it is placed from
+   inside the output's 2 px border. Any other output sits on its card's edge
+   and keeps its circle, so the card and its issue badge keep their taps. */
+@media (max-width: 767px), (pointer: coarse) {
+  .canvas-v2
+    .handle:is([data-tone="danger"], [data-handle$=":path:success"])::before {
+    --hit: max(24px, calc(44px / var(--zoom, 1)));
+    inset: calc(4px - var(--hit) / 2) calc(24px - var(--hit))
+      calc(4px - var(--hit) / 2) -16px;
+    border-radius: 0;
+  }
+  /* Success's area reaches a quarter up and three down: the step's issue
+     badge, right above it at low zoom, keeps its center and the 11 px
+     below. */
+  .canvas-v2 .handle[data-handle$=":path:success"]::before {
+    inset-block: calc(4px - var(--hit) / 4) calc(4px - var(--hit) * 0.75);
+  }
+  .canvas-v2 .lane-slot::before {
+    content: "";
+    position: absolute;
+    inset: min(0px, calc(50% - 22px / var(--zoom, 1)));
+  }
+}
 .canvas-v2 .handle-in {
   left: -6px;
   top: calc(50% - 6px);
@@ -708,6 +738,64 @@ weave-canvas-view,
   color: var(--muted);
   transform: scale(var(--path-label-scale, 1));
   transform-origin: bottom left;
+}
+/* A step's Error output: its label in the danger ink with the warning icon,
+   its handle with a danger border. Success stays muted. */
+.canvas-v2 .branch-label[data-tone="danger"] {
+  color: var(--danger-ink);
+  font-weight: 600;
+}
+.canvas-v2 .branch-label > weave-icon {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+.canvas-v2 .handle[data-tone="danger"] {
+  border-color: var(--danger);
+}
+/* The Error output is a button: drawn as the handle, with a ring on hover. */
+.canvas-v2 button.handle {
+  min-height: 0;
+  padding: 0;
+}
+.canvas-v2 button.handle:hover {
+  box-shadow: 0 0 0 4px var(--danger-bg);
+}
+/* What Enter does, under the Error output while it has keyboard focus; and
+   the words beside the pointer while a drag from it runs. */
+.canvas-v2 :is(.handle-tip, .band-ghost) {
+  position: absolute;
+  z-index: 7;
+  width: max-content;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  box-shadow: var(--shadow-1);
+  color: var(--text);
+  font: var(--type-caption);
+  pointer-events: none;
+}
+.canvas-v2 .handle-tip {
+  display: none;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) scale(var(--tip-scale, 1));
+  transform-origin: top center;
+}
+.canvas-v2 button.handle:focus-visible .handle-tip {
+  display: block;
+}
+.canvas-v2 .band-ghost {
+  transform: translate(12px, 12px) scale(var(--tip-scale, 1));
+  transform-origin: top left;
+}
+/* The empty path a drag from its step's Error output adds to. */
+.canvas-v2 .lane-slot.drop-target {
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
 }
 .canvas-v2 .join-bar {
   position: absolute;
@@ -1286,6 +1374,10 @@ weave-canvas-view,
 }
 .canvas-v2 .tile-label span.tile-output[data-tone="danger"] {
   color: var(--danger-ink);
+}
+/* A handled failure's code (D28). */
+.canvas-v2 .tile-label span.tile-output[data-tone="warning"] {
+  color: var(--warning-ink);
 }
 .canvas-v2 .tile-label span.tile-output[data-tone="info"] {
   color: var(--info-ink);

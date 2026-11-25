@@ -93,6 +93,37 @@ loop (`["body", "steps"]`); decision cases and parallel branches are found by
 position and by name. Output handles are `case:<index>` and `default` for a
 decision and `branch:<name>` for a parallel step; `fail` has none.
 
+**A step's blocks.** `blocksOf(step)` in `studio/src/app/editor/step-blocks.ts`
+lists a step's blocks, each a step list with its output, in document order:
+its own blocks, then its error path, as the Studio host's slicer orders them. Every walk of a workflow's
+structure reads blocks through it: sequences, step IDs and rename, the
+breadcrumb and Outline, copy and paste, delete, Execute's step list and the
+offline scope. A new block kind is one entry there.
+
+| `StepBlock` field | Holds |
+| --- | --- |
+| `name` | The block's name in its sequence's owner, `"<step>/<name>"`: `case 1` (counted from 1), `default`, a parallel branch's own name, `body`, or `errorPath` |
+| `path` | Where the block sits, relative to the step; its steps are at `path` plus `steps` |
+| `branch` | The block as the document holds it: `{steps, output}` |
+| `kind` | `case`, `default`, `branch`, `body` or `errorPath` |
+
+A step's error path is the `errorPath` block (`ERROR_PATH`) at `["errorPath"]`,
+present on a step whose `onError` is `errorOutput`. Its owner is
+`"<step>/errorPath"`, like a loop's `"<loop>/body"`, so insertion, selection
+and moves work on it as on any sequence. On the canvas the step's outputs are
+`<step>:path:success` and `<step>:path:errorPath`, and an empty path's slot
+inserts at `{owner: "<step>/errorPath", index: 0}`. The Settings tab writes
+`onError` and `errorPath` as one edit: Continue with error output writes
+`onError: errorOutput` and, when the step has none, `errorPath: {steps: [],
+output: {literal: null}}`; Continue writes `onError: continue` and deletes
+`errorPath`; Stop the run deletes both, so `onError: stop` is never written.
+**Result on error** edits `["errorPath", "output"]`. Its `ParamSpec` has
+`mapping: "both"`, `default: null`, `whenRemoved: "default"` and
+`emptyMapped: true`: while the field holds its default, it reads as an empty
+Mapped field that shows its `placeholder` ("Empty (null)") until Fixed is
+chosen, and clearing it writes `{literal: null}` back, since the language needs
+the path's output.
+
 A `forEach` step's descriptor is gated by `flow.forEach`. Its expression fields
 are `["items"]` (expected schema `{type: "array"}`) and `["body", "output"]`;
 its one container is `["body", "steps"]` with the `frame` layout. A new loop
@@ -202,8 +233,9 @@ the language adds its descriptor or the `pending` mark.
 ## Test data
 
 One test data document per workflow keeps the test input, pinned outputs, signal
-and human task scripts, recorded AI turns and mocks for steps inside called
-workflows. Its JSON Schema, `urn:firefly-weave:schema:studio-test-data:v1`, is
+and human task scripts, recorded AI turns, mocks for steps inside called
+workflows and simulated step failures. Its JSON Schema,
+`urn:firefly-weave:schema:studio-test-data:v1`, is
 [studio-test-data-v1.json](../../src/firefly_weave/contracts/schemas/studio-test-data-v1.json);
 the Python models are in `firefly_weave.contracts.studio_documents` and the
 TypeScript types in `studio/src/app/editor/state/test-data.ts`.
@@ -217,9 +249,11 @@ TypeScript types in `studio/src/app/editor/state/test-data.ts`.
 | `aiTurns` | Recorded AI turns: `{turns, memory?, autoApprove?}` with their source and fingerprints. Each entry follows `urn:firefly-weave:schema:studio-ai-turns:v1` ([studio-ai-turns-v1.json](../../src/firefly_weave/contracts/schemas/studio-ai-turns-v1.json)): a turn is `{toolCalls: [{name, arguments}], text?}` or `{final, text?}`, with at most 33 turns and 16 calls a turn. An AI task replays one `final` turn |
 | `workflows` | Mocks for steps inside called workflows, by callee reference: `{"notify-customer@1.0.0": {"mocks": {...}}}` |
 | `waits` | `autoAdvance`, true when absent |
+| `errors` | Simulated failures, at most 1,000: `{code, outcome?, attempts?, source?}` with `runId` and `runEnvironmentId` for one copied from a run. Only Execute in Studio reads them; see [Simulated failures](#simulated-failures) |
 
-- **Keys** of `pins`, `signals`, `humans`, `aiTurns` and each called workflow's
-  `mocks` are a step ID, which applies to every iteration, or an instance key
+- **Keys** of `pins`, `signals`, `humans`, `aiTurns`, `errors` and each called
+  workflow's `mocks` are a step ID, which applies to every iteration, or an
+  instance key
   (`send[1]`, `support#2.1`), which overrides it for one iteration or
   activation. Lookups try the instance key first. An instance key is the step
   ID, then `[i]` per enclosing loop, `#` and dot-separated segments for repeated
@@ -233,7 +267,8 @@ TypeScript types in `studio/src/app/editor/state/test-data.ts`.
 - **Frames.** A script with `frame` (`enrich`, `notify[2]/enrich`) applies only
   inside that sub-workflow.
 - **Source.** `source` is `manual`, `schema`, `simulated`, `test-call` or `run`
-  (an `aiTurns` entry is never `schema`). Data from a run or a test call names
+  (an `aiTurns` entry is never `schema`; an `errors` entry is only `manual` or
+  `run`, and may leave it out). Data from a run or a test call names
   `runId` and `runEnvironmentId`, and `runId` never appears without `source` and
   `runEnvironmentId`.
 - **Size.** A document is at most 1 MiB.
@@ -243,6 +278,33 @@ TypeScript types in `studio/src/app/editor/state/test-data.ts`.
   An optional field is left out, never `null`; JSON uses the camelCase names
   only; a UUID is written with hyphens, 8-4-4-4-12; and a timestamp is an
   RFC 3339 date-time such as `2026-10-07T10:00:00Z`.
+
+### Simulated failures
+
+An `errors` entry (`ErrorEntry` in Python and TypeScript) makes a step fail
+when Studio executes the workflow, in place of its result. Real runs never read
+it: Execute in an environment, for one step or the whole draft, sends no
+`errors`.
+
+| Field | Holds |
+| --- | --- |
+| `code` | Required. 1–128 characters matching `^[A-Z][A-Z0-9_.-]*$`, such as `REQUEST_REFUSED` |
+| `outcome` | `not_started`, `failed` (when absent) or `unknown`: what the platform would report after the step's own retries |
+| `attempts` | 0–1000, 1 when absent |
+| `source` | `manual`, or `run` with `runId` and `runEnvironmentId` |
+
+An entry never holds a message: the platform's copy for the code applies, and
+a code it doesn't know reads "The step failed with code REQUEST_REFUSED." A failure
+copied from a run keeps only its code, outcome, attempts and the run it came
+from, and counts as run data like a pin from a run. Studio copies a step's
+failures with the step only when their `source` is `manual` or absent. A
+document without `errors` keeps its bytes, and `schemaVersion` stays 1.
+
+Simulate a failure writes `outcome` only when it isn't `failed`. For a
+`transform` or a `decisionTable` it asks no outcome and writes `not_started`:
+such a step changes nothing outside the run, and Execute reports its failure
+as `not_started` whatever the entry holds. Studio's banners read that outcome
+for these kinds, also for an entry pasted with another one.
 
 ### Stored on the platform
 
@@ -262,6 +324,13 @@ A save sends only `{draft_revision, document}`; a body that sets
 document with run data needs `run.read` in each source environment. A canvas
 document is at most 256 KiB and a test data document at most 1 MiB
 (`413 WV-STUDIO-DOCUMENT-SIZE`).
+
+A platform that predates `errors` refuses a test data document that holds them
+with `WV-STUDIO-DOCUMENT-SCHEMA` and no path. Studio then saves the same
+document without `errors`, and only when that save succeeds keeps the failures
+for this session alone: it never sends them again, never writes them to its copy
+on this computer, and drops them when another account, environment or workflow
+opens. Any other refusal is reported as before.
 
 ## Execute step
 
@@ -296,6 +365,22 @@ bodies are camelCase. The Python models are in
   `action:<reference>`, where a step ID is itself an instance key; the most
   specific applies, in that order. Scripts come from test data: `signals`,
   `humans`, `aiTurns` and `autoAdvanceWaits`.
+- **Failures.** `errors` holds simulated failures, keyed like mocks, at most
+  1,000: `ScriptedFailure {code, outcome = "failed", attempts = 1}`, with the
+  same limits as test data's `errors`. A key in both `mocks` and `errors` is
+  refused (`422 WV-DEBUG-MOCK-CONFLICT`), and so is a failure for a step that
+  can't fail in a simulation (`422 WV-DEBUG-MOCK-KEY`), such as a Transform
+  without `onError` or a call that doesn't wait. An action, an AI task or a
+  waiting call reports the failure's `outcome` and `attempts`; a Transform or
+  a Decision table takes only its `code`, fails before it is evaluated and
+  reports `not_started`. Failures apply
+  only to the simulated workflow, never inside a called one.
+  `POST /studio/local/debug/sessions` applies them as Execute does. Studio
+  sends `errors` only when it holds some, as `node:<key>`, and leaves out a
+  failure whose step can no longer take one. It sends no pin at a failure's
+  key, and no last result or AI turns for an instance that fails, by its own
+  key or its step's; an item's own pin still wins over its step's failure for
+  every item, as the more specific key.
 - **Called workflows.** `workflows` carries each callee's local source and
   format, or only its mocks when the callee is published.
 - **Result.** `status` is `completed`, `blocked`, `failed` or `limit`. Every
@@ -310,6 +395,16 @@ bodies are camelCase. The Python models are in
   when it equals the step ID), and `frame` inside a called workflow; `loops`,
   `frames` and `selectedScope` describe loop progress, sub-workflow frames and
   the picked iteration's roots.
+- **Failures in the trace.** A step whose `onError` handled its failure has
+  `status: "failed"`, its `error` and `handled` (`continue` or
+  `errorOutput`); with `errorOutput`, its `output` is the error path's output
+  once the path ended. The failure that stopped the run has `status: "failed"`
+  and `error` without `handled`. `error` is the platform's error object,
+  `{code, message, outcome, attempts, instanceKey, childRunId?}`; `handled`
+  without `error`, or on another status, is refused by the model. A step
+  inside an error path its step didn't take blocks with `reason: "path"` and,
+  for example, "With this test data, submit succeeds, so notify-team isn't
+  reached."
 - **Test data checks** report each entry by JSON pointer; refused entries name
   `WV-SCHEMA-SECRET_VALUE`, `WV-SCHEMA-CLASSIFICATION`,
   `WV-STUDIO-TESTDATA-SCHEMA` or `WV-STUDIO-TESTDATA-UNRESOLVED`.

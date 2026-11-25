@@ -5,7 +5,7 @@
 {"name": "schema version 2", "valid": false, "document": {"schemaVersion": 2, "kind": "weave.studio/testData", "updatedAt": "2026-10-07T10:00:00Z"}},
 {"name": "a boolean schema version", "valid": false, "document": {"schemaVersion": true, "kind": "weave.studio/testData", "updatedAt": "2026-10-07T10:00:00Z"}},
 {"name": "another kind", "valid": false, "document": {"schemaVersion": 1, "kind": "weave.studio/canvas", "updatedAt": "2026-10-07T10:00:00Z"}},
-{"name": "an unknown section", "valid": false, "document": {"schemaVersion": 1, "kind": "weave.studio/testData", "updatedAt": "2026-10-07T10:00:00Z", "errors": {}}},
+{"name": "an unknown section", "valid": false, "document": {"schemaVersion": 1, "kind": "weave.studio/testData", "updatedAt": "2026-10-07T10:00:00Z", "notes": {}}},
 {"name": "a client-asserted containsRunData flag", "valid": false, "document": {"schemaVersion": 1, "kind": "weave.studio/testData", "updatedAt": "2026-10-07T10:00:00Z", "containsRunData": false}},
 {"name": "a timestamp without a time zone", "valid": false, "document": {"schemaVersion": 1, "kind": "weave.studio/testData", "updatedAt": "2026-10-07T10:00:00"}},
 {"name": "a timestamp with a space instead of T", "valid": false, "document": {"schemaVersion": 1, "kind": "weave.studio/testData", "updatedAt": "2026-10-07 10:00:00Z"}},

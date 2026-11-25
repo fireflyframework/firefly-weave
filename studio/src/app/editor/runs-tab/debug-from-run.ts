@@ -18,10 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 // A run's recorded data as test data, for Debug in editor and Copy to
 // editor: the run's input, the outputs of the steps a simulation can't work
 // out (actions, AI steps and calls that wait) as pins, people's answers and
-// signals as scripts. Every entry is marked as run data (its run and that
-// run's environment), only typed values are copied (never people's or
-// workers' IDs), and the step that failed gets nothing, so the simulation
-// stops there. Pure.
+// signals as scripts, and the failures steps' On error handled as simulated
+// failures. Every entry is marked as run data (its run and that run's
+// environment), only typed values are copied (never people's or workers'
+// IDs, never a failure's message), and the step that failed gets nothing,
+// so the simulation stops there. Pure.
 import type { Step, Workflow } from "../../model";
 import {
   OMISSION_WORDS,
@@ -34,14 +35,15 @@ import type { CheckCode } from "../state/execution";
 import type { StepFingerprints } from "../state/fingerprints";
 import { instanceStep } from "../state/instance-keys";
 import type {
-  HumanScript,
+  ErrorEntry,
+  HumanEntry,
   PinEntry,
   Provenance,
-  SignalScript,
+  SignalEntry,
   StudioTestData,
 } from "../state/test-data";
 import { emptyTestData, fitsTestData } from "../state/test-data-ops";
-import { OVERLAY_FACTS_LIMIT } from "./run-overlay";
+import { handledFailures, OVERLAY_FACTS_LIMIT } from "./run-overlay";
 import type { RunRecord } from "./run-record";
 
 /** Everything about one run that test data is made from. */
@@ -61,7 +63,11 @@ export type LeftOutReason =
   | "not-in-draft"
   | "omitted"
   | "not-recorded"
-  | "refused";
+  | "refused"
+  /** A handled failure whose code isn't one a simulation takes. */
+  | "code"
+  /** A handled failure after more attempts than a simulation takes. */
+  | "attempts";
 export interface LeftOut {
   key: string;
   reason: LeftOutReason;
@@ -90,6 +96,18 @@ const pinned = (kind: string, step: Step | undefined) =>
   PINNED_KINDS.has(kind) ||
   (kind === "callWorkflow" && step?.["mode"] !== "detach");
 const SECTION_LIMIT = 1000;
+/** The codes and attempts a simulated failure takes (contracts ErrorEntry). */
+const ERROR_CODE = /^[A-Z][A-Z0-9_.-]*$/;
+const MAX_ATTEMPTS = 1000;
+const OUTCOMES = ["not_started", "failed", "unknown"] as const;
+/** The one failure of each kind that waits: it ran out of time. */
+const WAIT_TIMEOUTS: Readonly<Record<string, string>> = {
+  signal: "WV-SIGNAL-TIMEOUT",
+  humanTask: "WV-HUMAN-EXPIRED",
+};
+export const CODE_LEFT_OUT = "Studio can't simulate this failure's code.";
+export const ATTEMPTS_LEFT_OUT =
+  "Studio can't simulate a failure after more than 1,000 attempts.";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const TOO_LARGE_FOR_TEST_DATA =
   "This run's data is larger than test data holds (1 MB, 1,000 entries a section), so Studio kept nothing.";
@@ -125,8 +143,8 @@ export function testDataFromRun(
     allSteps(draft.spec.steps).map((step) => [step.id, step]),
   );
   const pins: Record<string, PinEntry> = {};
-  const humans: Record<string, HumanScript> = {};
-  const signals: Record<string, SignalScript> = {};
+  const humans: Record<string, HumanEntry> = {};
+  const signals: Record<string, SignalEntry> = {};
   const leftOut: LeftOut[] = [];
   const recomputed = new Set<string>();
   const visited = new Set<string>();
@@ -214,8 +232,59 @@ export function testDataFromRun(
       };
     }
   }
+  // Each failure a step's On error handled becomes a simulated one: its
+  // code, outcome and attempts, never its message (run data, and the
+  // platform's copy for the code applies). What a simulation can't take
+  // is left out, so the result is always test data Studio can keep.
+  const errors: Record<string, ErrorEntry> = {};
+  for (const failure of handledFailures(source.record, source.facts)) {
+    const step = inDraft.get(failure.step);
+    if (!step) {
+      leftOut.push({
+        key: failure.key,
+        reason: "not-in-draft",
+        detail: "not in this draft",
+      });
+      continue;
+    }
+    // A wait's failure is its test data answer, Time out or Expire, which
+    // takes its On error; Execute sends no failure for these kinds.
+    const timeout = WAIT_TIMEOUTS[step.kind];
+    if (timeout) {
+      if (failure.code !== timeout)
+        leftOut.push({
+          key: failure.key,
+          reason: "code",
+          detail: CODE_LEFT_OUT,
+        });
+      else if (step.kind === "signal")
+        signals[failure.key] = { outcome: "timeout" };
+      else humans[failure.key] = { outcome: "expire" };
+      continue;
+    }
+    if (!ERROR_CODE.test(failure.code) || failure.code.length > 128) {
+      leftOut.push({ key: failure.key, reason: "code", detail: CODE_LEFT_OUT });
+      continue;
+    }
+    if (failure.attempts > MAX_ATTEMPTS) {
+      leftOut.push({
+        key: failure.key,
+        reason: "attempts",
+        detail: ATTEMPTS_LEFT_OUT,
+      });
+      continue;
+    }
+    const outcome = OUTCOMES.find((known) => known === failure.outcome);
+    errors[failure.key] = {
+      code: failure.code,
+      ...(outcome ? { outcome } : {}),
+      attempts: Math.max(0, failure.attempts),
+      source: "run",
+      ...provenance,
+    };
+  }
   if (
-    [pins, humans, signals].some(
+    [pins, humans, signals, errors].some(
       (section) => Object.keys(section).length > SECTION_LIMIT,
     )
   )
@@ -226,6 +295,7 @@ export function testDataFromRun(
     ...(Object.keys(pins).length ? { pins } : {}),
     ...(Object.keys(humans).length ? { humans } : {}),
     ...(Object.keys(signals).length ? { signals } : {}),
+    ...(Object.keys(errors).length ? { errors } : {}),
   };
   if (!fitsTestData(data)) return { refused: TOO_LARGE_FOR_TEST_DATA };
   return {
@@ -235,6 +305,7 @@ export function testDataFromRun(
       ...Object.keys(pins).map((key) => `/pins/${escape(key)}`),
       ...Object.keys(humans).map((key) => `/humans/${escape(key)}`),
       ...Object.keys(signals).map((key) => `/signals/${escape(key)}`),
+      ...Object.keys(errors).map((key) => `/errors/${escape(key)}`),
     ],
     leftOut,
     stopAt,
@@ -256,7 +327,7 @@ export function mergedTestData(
   const reached = new Set(fromRun.reached);
   const merged: StudioTestData = { ...current, updatedAt: now };
   if (fromRun.data.input) merged.input = fromRun.data.input;
-  for (const section of ["pins", "humans", "signals"] as const) {
+  for (const section of ["pins", "humans", "signals", "errors"] as const) {
     const kept = Object.fromEntries(
       Object.entries(current[section] ?? {}).filter(
         ([key]) => !reached.has(key),
@@ -276,7 +347,18 @@ export function listText(items: readonly string[]): string {
     ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
     : (items[0] ?? "");
 }
-/** "the run's input, fetch's output, approve's answer and wait-for-reply's signal" */
+/** A wait's answers, or only the ones where it ran out of time (Time out, Expire). */
+function answers(
+  section: Record<string, HumanEntry | SignalEntry> | undefined,
+  ranOut: boolean,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(section ?? {}).filter(
+      ([, entry]) => !!entry.outcome === ranOut,
+    ),
+  );
+}
+/** "the run's input, fetch's output, approve's answer, wait-for-reply's signal and submit's failure" */
 function copiedText(data: StudioTestData): string {
   const named = (
     section: Record<string, unknown> | undefined,
@@ -291,8 +373,11 @@ function copiedText(data: StudioTestData): string {
   const parts = [
     ...(data.input ? ["the run's input"] : []),
     ...named(data.pins, "output", "outputs"),
-    ...named(data.humans, "answer", "answers"),
-    ...named(data.signals, "signal", "signals"),
+    ...named(answers(data.humans, false), "answer", "answers"),
+    ...named(answers(data.humans, true), "expiry", "expiries"),
+    ...named(answers(data.signals, false), "signal", "signals"),
+    ...named(answers(data.signals, true), "time out", "time outs"),
+    ...named(data.errors, "failure", "failures"),
   ];
   // A long run: the first few by name, then how many more.
   const shown =
@@ -336,7 +421,11 @@ const phraseOf = (item: LeftOut) =>
     ? item.detail === OMISSION_WORDS.classified_secret
       ? "marked secret"
       : "left out by the platform"
-    : item.detail;
+    : item.reason === "code"
+      ? "a code Studio can't simulate"
+      : item.reason === "attempts"
+        ? "more than 1,000 attempts"
+        : item.detail;
 
 /** "Left out 2 values: send (marked secret), log (not in this draft)."; "" when nothing was. */
 export function leftOutText(

@@ -111,6 +111,8 @@ export interface ShownRow extends RunRow {
 }
 interface Chip {
   label: string;
+  /** Its remove button's name: "Remove " and the label unless it says otherwise. */
+  removeLabel?: string;
   remove: () => RunsTabFilters;
 }
 
@@ -180,7 +182,7 @@ export class RunsList {
         icon: isUnavailableRun(item)
           ? "lock"
           : row.label === "Succeeded with errors"
-            ? "warning"
+            ? "degraded"
             : (STATUS_ICONS[item.status] ?? "info"),
         older: !row.unavailable && !row.test && version !== draft,
         // A test run's Test tag already says how it started.
@@ -223,6 +225,17 @@ export class RunsList {
             {
               label: `How it started: ${originLabel(filters.origin)}`,
               remove: () => ({ ...filters, origin: null }),
+            },
+          ]
+        : []),
+      ...(filters.handled !== null
+        ? [
+            {
+              label: filters.handled
+                ? "With handled errors"
+                : "Without handled errors",
+              removeLabel: `Remove the filter ${filters.handled ? "With" : "Without"} handled errors`,
+              remove: () => ({ ...filters, handled: null }),
             },
           ]
         : []),
@@ -305,6 +318,10 @@ export class RunsList {
   toggleTest(): void {
     const filters = this.filters();
     this.setFilters({ ...filters, includeTest: !filters.includeTest });
+  }
+  /** With handled errors: only runs that went on after a step failed, or any run. */
+  setHandled(on: boolean): void {
+    this.setFilters({ ...this.filters(), handled: on ? true : null });
   }
   clearFilters(): void {
     this.setFilters(defaultRunsTabFilters());

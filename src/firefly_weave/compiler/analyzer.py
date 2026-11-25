@@ -176,6 +176,10 @@ def reference_available(step_id: str, completed: frozenset[str]) -> bool:
 
 # A model runs only in an AI step, which supplies the run's token cap, the data notice and the reviewed transcript.
 UNDO_MODEL_MESSAGE = "An undo action can't run an AI model: only an AI step runs a model, under the run's token cap."
+# An action step carries no AI profile, so activation could never check its model against the AI policy.
+ACTION_MODEL_MESSAGE = (
+    "An action step can't run an AI model: use an AI step, so activation checks its model against the AI policy."
+)
 # What an undo phase reads besides what its step saw: the step's own operation key and outcome, and the transaction.
 UNDO_ROOTS = frozenset({"participant", "transaction"})
 PARTICIPANT_SCHEMA: JsonObject = {
@@ -1127,6 +1131,8 @@ class _Analyzer:
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
                 if action_spec is not None and runs_turn_task(action_spec):
                     self.issue("AGENT_ACTION", location + "/uses", message=AGENT_MESSAGES["AGENT_ACTION"])
+                elif action_spec is not None and runs_model_task(action_spec):
+                    self.issue("AGENT_ACTION", location + "/uses", message=ACTION_MODEL_MESSAGE)
                 side_effect = action_spec.get("sideEffect") if action_spec else None
                 target = cast(JsonObject, action_spec["inputSchema"]) if action_spec else None
                 self.expression(cast(JsonObject, step["with"]), location + "/with", visible, target)

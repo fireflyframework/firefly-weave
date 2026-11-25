@@ -24,7 +24,11 @@ SPDX-License-Identifier: Apache-2.0
 // - a case `when` sees only what was visible before the group;
 // - a branch `output` sees that branch's own steps;
 // - after a group, only the group's id becomes visible;
-// - `fail` (and a group whose paths cannot complete) ends reachability.
+// - `fail` (and a group whose paths cannot complete) ends reachability;
+// - a step that handles its failures (On error Continue or Continue with
+//   error output) may hold an error after it, `/steps/<id>/error`; inside
+//   its error path the error is always there and the step has no output
+//   (compiler/step_errors.py, analyzer `error_handling`).
 // The compiler stays authoritative; this module only drives suggestions.
 
 import { callOutputSchema } from "./call-output";
@@ -46,7 +50,8 @@ export interface VisibleStep {
 export interface ScopeEntry {
   /** RFC 6901 pointer usable as `{ref}`, e.g. `/steps/check/output/eligible`. */
   ref: string;
-  source: "input" | "step";
+  /** "error": a failed step's error, `/steps/<id>/error`. */
+  source: "input" | "step" | "error";
   stepId?: string;
   stepKind?: string;
   /** Property path below `/input` or `/steps/<id>/output` (unescaped keys). */
@@ -124,13 +129,40 @@ function targetOf(stepId: string, fieldPath: string): Target | null {
     return { stepId, kind: "branch", branch: `branch:${segments[1]}` };
   if (segments[0] === "body" && segments[1] === "output")
     return { stepId, kind: "branch", branch: "body" };
+  if (segments[0] === "errorPath" && segments[1] === "output")
+    return { stepId, kind: "branch", branch: "errorPath" };
   return { stepId, kind: "step" };
 }
 
+/** A step whose error a position may read; `always` inside its own error path. */
+interface ErrorRoot {
+  id: string;
+  kind: string;
+  always: boolean;
+}
 interface Capture {
   visible: Map<string, VisibleStep>;
   evaluated: boolean;
+  /** Inside error paths first (outermost first), then handled steps in the order they run. */
+  errors: ErrorRoot[];
 }
+
+/** The error object of a step that handled its failure (contracts/step_errors.py). */
+export const STEP_ERROR_SCHEMA: Schema = {
+  type: "object",
+  properties: {
+    code: { type: "string", minLength: 1, maxLength: 128 },
+    message: { type: "string", minLength: 1, maxLength: 512 },
+    outcome: { type: "string", enum: ["not_started", "failed", "unknown"] },
+    attempts: { type: "integer", minimum: 0 },
+    instanceKey: { type: "string", minLength: 1 },
+    childRunId: { type: "string", format: "uuid" },
+  },
+  required: ["code", "message", "outcome", "attempts", "instanceKey"],
+  additionalProperties: false,
+};
+const NULL_SCHEMA: Schema = { type: "null" };
+const empty = (schema: Schema) => Object.keys(schema).length === 0;
 
 /** Literal JSON → the schema the compiler would infer for its shape. */
 function literalSchema(value: unknown, depth = 0): Schema {
@@ -441,9 +473,81 @@ class Walker {
     private readonly profiles: JsonObject = {},
   ) {}
 
-  private take(visible: Map<string, VisibleStep>, evaluated: boolean) {
+  /** The steps whose error paths enclose the walk now, outermost first. */
+  private errorOwners: { id: string; kind: string }[] = [];
+  /** Steps that handle their failures (Continue, Continue with error output). */
+  private readonly handled = new Set<string>();
+
+  /** Mirrors `_Analyzer.observe`: the scope here, with the errors it may read. */
+  take(visible: Map<string, VisibleStep>, evaluated: boolean) {
     if (this.capture) return;
-    this.capture = { visible: new Map(visible), evaluated };
+    this.capture = {
+      visible: new Map(visible),
+      evaluated,
+      errors: [
+        ...this.errorOwners
+          .filter(({ id }) => !visible.has(id))
+          .map(({ id, kind }) => ({ id, kind, always: true })),
+        ...[...visible.values()]
+          .filter(({ id }) => this.handled.has(id))
+          .map(({ id, kind }) => ({ id, kind, always: false })),
+      ],
+    };
+  }
+
+  /**
+   * Mirrors `_Analyzer.error_handling`: the output later steps see after a
+   * step that handles its failures. Continue makes it null too; an error path
+   * runs with the step's error and no output of its own, and its result
+   * joins the step's output unless that already holds it.
+   */
+  private handle(
+    step: JsonObject,
+    kind: string,
+    output: Schema,
+    visible: Map<string, VisibleStep>,
+  ): Schema {
+    const id = String(step["id"]);
+    const policy = step["onError"];
+    if (policy !== "continue" && policy !== "errorOutput") return output;
+    if (policy === "continue") {
+      this.handled.add(id);
+      return empty(output) ? output : { anyOf: [output, NULL_SCHEMA] };
+    }
+    const path = schemaOf(step["errorPath"]);
+    const outer = this.errorOwners;
+    this.errorOwners = [...outer, { id, kind }];
+    let result: Schema = {};
+    let completes: boolean;
+    try {
+      const inner = this.block(path["steps"], visible);
+      completes = inner.completes;
+      if (
+        this.target.kind === "branch" &&
+        this.target.stepId === id &&
+        this.target.branch === "errorPath"
+      )
+        this.take(inner.visible, completes);
+      if (completes) result = this.infer(path["output"], inner.visible);
+    } finally {
+      this.errorOwners = outer;
+    }
+    this.handled.add(id);
+    const contained =
+      !completes ||
+      (!empty(output) &&
+        !empty(result) &&
+        compatibility(result, output) === "compatible");
+    if (contained || empty(output)) return output;
+    return empty(result) ? {} : { anyOf: [output, result] };
+  }
+
+  /** Whether `/steps/<id>/error` may be read here: inside its error path, or after a step that handles failures. */
+  private errorReadable(id: string, visible: Map<string, VisibleStep>) {
+    return (
+      (this.errorOwners.some((owner) => owner.id === id) && !visible.has(id)) ||
+      (visible.has(id) && this.handled.has(id))
+    );
   }
 
   /** Mirrors `_Analyzer.block`: returns the scope after `steps` and whether they complete. */
@@ -561,6 +665,7 @@ class Walker {
           completes = alternatives.length > 0;
         }
       }
+      schema = this.handle(step, kind, schema, visible);
       this.outputs.set(id, schema);
       if (reachable && completes) visible.set(id, { id, kind, schema });
       reachable = reachable && completes;
@@ -592,6 +697,12 @@ class Walker {
         return schemaAt(this.input, [id, output, ...rest].filter(defined));
       if (head === "steps" && output === "output" && visible.has(id!))
         return schemaAt(visible.get(id!)!.schema, rest);
+      if (
+        head === "steps" &&
+        output === "error" &&
+        this.errorReadable(id!, visible)
+      )
+        return schemaAt(STEP_ERROR_SCHEMA, rest);
     }
     return {};
   }
@@ -691,11 +802,7 @@ function walk(
     isObject(spec) && isObject(spec["llmProfiles"]) ? spec["llmProfiles"] : {};
   const walker = new Walker(target, input, options, profiles);
   const result = walker.block(steps, new Map());
-  if (target.kind === "workflow")
-    return {
-      capture: { visible: result.visible, evaluated: result.completes },
-      input,
-    };
+  if (target.kind === "workflow") walker.take(result.visible, result.completes);
   return { capture: walker.capture, input };
 }
 
@@ -755,7 +862,7 @@ export function referenceScope(
       truncated: false,
     };
   const steps = [...capture.visible.values()];
-  const { entries, truncated } = expand(input, steps, options);
+  const { entries, truncated } = expand(input, steps, options, capture.errors);
   return {
     found: true,
     evaluated: capture.evaluated,
@@ -785,6 +892,7 @@ function expand(
   input: Schema,
   steps: VisibleStep[],
   options: ScopeOptions,
+  errors: readonly ErrorRoot[] = [],
 ): { entries: ScopeEntry[]; truncated: boolean } {
   const maxDepth = Math.max(0, options.maxDepth ?? 4);
   const maxEntries = Math.max(1, options.maxEntries ?? 200);
@@ -796,10 +904,28 @@ function expand(
     types: schemaTypes(base.schema, root),
     typeLabel: typeLabel(base.schema, root),
   });
-  const roots: Pending[] = [
+  // A failed step's error, as scope_at's `_error_root` names it.
+  const errorRoot = ({ id, kind, always }: ErrorRoot): ScopeEntry =>
+    make(
+      {
+        ref: `/steps/${escapeSegment(id)}/error`,
+        source: "error",
+        stepId: id,
+        stepKind: kind,
+        path: [],
+        label: "Error",
+        breadcrumb: `${id} › Error`,
+        schema: STEP_ERROR_SCHEMA,
+        optional: !always,
+      },
+      STEP_ERROR_SCHEMA,
+    );
+  const after = new Map(
+    errors.filter(({ always }) => !always).map((error) => [error.id, error]),
+  );
+  const listed: { entry: ScopeEntry; root: Schema }[] = [
     {
       root: input,
-      order: [0],
       entry: make(
         {
           ref: "/input",
@@ -813,25 +939,38 @@ function expand(
         input,
       ),
     },
-    ...steps.map((step, i) => ({
-      root: step.schema,
-      order: [i + 1],
-      entry: make(
+    // Inside an error path, the failed step's error comes first: the step has no output there.
+    ...errors
+      .filter(({ always }) => always)
+      .map((error) => ({ root: STEP_ERROR_SCHEMA, entry: errorRoot(error) })),
+    ...steps.flatMap((step) => {
+      const error = after.get(step.id);
+      return [
         {
-          ref: `/steps/${escapeSegment(step.id)}/output`,
-          source: "step" as const,
-          stepId: step.id,
-          stepKind: step.kind,
-          path: [],
-          label: step.id,
-          breadcrumb: step.id,
-          schema: step.schema,
-          optional: false,
+          root: step.schema,
+          entry: make(
+            {
+              ref: `/steps/${escapeSegment(step.id)}/output`,
+              source: "step" as const,
+              stepId: step.id,
+              stepKind: step.kind,
+              path: [],
+              label: step.id,
+              breadcrumb: step.id,
+              schema: step.schema,
+              optional: false,
+            },
+            step.schema,
+          ),
         },
-        step.schema,
-      ),
-    })),
+        // After a step that handles its failures, its error may be there.
+        ...(error
+          ? [{ root: STEP_ERROR_SCHEMA, entry: errorRoot(error) }]
+          : []),
+      ];
+    }),
   ];
+  const roots: Pending[] = listed.map((item, i) => ({ ...item, order: [i] }));
   let truncated = roots.length > maxEntries;
   const accepted: Pending[] = roots.slice(0, maxEntries);
   let level = accepted.slice();

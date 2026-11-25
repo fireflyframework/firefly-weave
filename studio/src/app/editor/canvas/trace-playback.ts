@@ -21,8 +21,9 @@ SPDX-License-Identifier: Apache-2.0
 import { getAt, isJsonObject, parsePointer } from "../../forms/core/json";
 import { loopLimitText } from "./loop-frame";
 import { stepPointerOf } from "../formula/loops";
-import type { ExecuteResponse } from "../state/execution";
+import type { ExecuteResponse, TraceEntry } from "../state/execution";
 import {
+  type HandledFailure,
   LOOP_LIMIT,
   loopProgress,
   type CanvasRun,
@@ -38,21 +39,24 @@ export function stepsOf(response: ExecuteResponse): TraceStep[] {
   const overLimit = (response.diagnostics ?? []).some(
     (problem) => problem.code === LOOP_LIMIT,
   );
-  return top.map(({ nodeId, instanceKey, kind, status, output }, index) => ({
-    nodeId,
-    instanceKey,
-    kind,
-    status,
-    ...(kind === "forEach" && Array.isArray(output)
-      ? { results: output.length }
-      : {}),
-    ...(overLimit &&
-    kind === "forEach" &&
-    status === "failed" &&
-    index === top.length - 1
-      ? { code: LOOP_LIMIT }
-      : {}),
-  }));
+  return top.map(
+    ({ nodeId, instanceKey, kind, status, output, handled }, index) => ({
+      nodeId,
+      instanceKey,
+      kind,
+      status,
+      ...(status === "failed" && handled ? { handled: true as const } : {}),
+      ...(kind === "forEach" && Array.isArray(output)
+        ? { results: output.length }
+        : {}),
+      ...(overLimit &&
+      kind === "forEach" &&
+      status === "failed" &&
+      index === top.length - 1
+        ? { code: LOOP_LIMIT }
+        : {}),
+    }),
+  );
 }
 /** Each loop instance's count, as the simulator reports it (`orders`, `lines[2]`). */
 export const countsOf = (response: ExecuteResponse): Record<string, number> =>
@@ -74,8 +78,13 @@ export const pausedOf = (response: ExecuteResponse): Record<string, number> =>
 /** The run as it stands after the whole trace. */
 export function finalRun(response: ExecuteResponse): CanvasRun {
   const top = response.trace.filter((entry) => !entry.frame);
-  const done = top.filter((e) => e.status === "completed").map((e) => e.nodeId);
-  const failed = top.filter((e) => e.status === "failed").map((e) => e.nodeId);
+  // A failure its On error handled: the run went on past the step.
+  const went = (e: TraceEntry) =>
+    e.status === "completed" || (e.status === "failed" && !!e.handled);
+  const done = top.filter(went).map((e) => e.nodeId);
+  const failed = top
+    .filter((e) => e.status === "failed" && !e.handled)
+    .map((e) => e.nodeId);
   const waiting = top
     .filter((e) => e.status === "waiting")
     .map((e) => e.nodeId);
@@ -97,8 +106,38 @@ export function finalRun(response: ExecuteResponse): CanvasRun {
     at: trace.length,
     counts: countsOf(response),
     ended: true,
+    ...handledOf(top),
     paused: pausedOf(response),
   };
+}
+
+/**
+ * The steps whose failure their On error handled, with what the trace says
+ * of it, and those of them that completed in another item of a loop.
+ */
+function handledOf(top: readonly TraceEntry[]): {
+  handled?: Record<string, HandledFailure>;
+  alsoCompleted?: string[];
+} {
+  const handled: Record<string, HandledFailure> = {};
+  for (const entry of top)
+    if (entry.status === "failed" && entry.handled && entry.error)
+      handled[entry.nodeId] = {
+        code: entry.error.code,
+        message: entry.error.message,
+        policy: entry.handled,
+      };
+  if (!Object.keys(handled).length) return {};
+  const alsoCompleted = [
+    ...new Set(
+      top
+        .filter(
+          (entry) => entry.status === "completed" && handled[entry.nodeId],
+        )
+        .map((entry) => entry.nodeId),
+    ),
+  ];
+  return { handled, ...(alsoCompleted.length ? { alsoCompleted } : {}) };
 }
 
 /**
@@ -124,13 +163,18 @@ export function playbackFrames(
       ...new Set(
         top
           .slice(0, index)
-          .filter((e) => e.status === "completed")
+          .filter(
+            (e) =>
+              e.status === "completed" ||
+              (e.status === "failed" && !!e.handled),
+          )
           .map((e) => e.nodeId),
       ),
     ],
     trace,
     at: index,
     counts,
+    ...handledOf(top.slice(0, index)),
   }));
   return [...frames, last];
 }
@@ -264,7 +308,11 @@ export function runFailureOf(
   definition: unknown,
 ): { code?: string; message?: string } | null {
   if (response.status !== "failed") return null;
-  const failed = response.trace.find((entry) => entry.status === "failed");
+  // A failure a step's On error handled went on: the run stopped later. A
+  // called run's step (its frame) failed inside the call, never the run.
+  const failed = response.trace.find(
+    (entry) => entry.status === "failed" && !entry.handled && !entry.frame,
+  );
   if (failed?.nodeId !== stepId) return null;
   const diagnostic = response.diagnostics?.[0];
   if (!diagnostic) return {};

@@ -27,7 +27,7 @@ from starlette.responses import JSONResponse
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
 from firefly_weave.api.transport import page_request, page_response
-from firefly_weave.api.triggers import retarget_body, tagged
+from firefly_weave.api.triggers import if_match, retarget_body, tagged
 from firefly_weave.contracts.event_triggers import EventTriggerRequest
 from firefly_weave.triggers.event_triggers import EventTriggerService
 
@@ -82,13 +82,16 @@ class EventTriggerController:
 
     @operation("event_triggers.disable")
     async def disable(self, request: Request) -> JSONResponse:
+        # Checked first, like a retarget's; a stop without If-Match applies to whatever revision is current.
+        expected = if_match(request)
         result = await self.service.disable(
             request.state.principal,
             request_scope(request, environment=True),
             UUID(request.path_params["identifier"]),
+            expected,
             context=request.state.audit_context,
         )
-        return JSONResponse(result.model_dump(mode="json"))
+        return tagged(result, request)
 
     @operation("event_triggers.starts")
     async def starts(self, request: Request) -> JSONResponse:

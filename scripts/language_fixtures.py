@@ -52,6 +52,8 @@ from firefly_weave.contracts.instance_keys import (
     split_instance,
 )
 from firefly_weave.contracts.language import language_manifest
+from firefly_weave.contracts.language_features import ERROR_KINDS
+from firefly_weave.contracts.step_errors import STEP_ERROR_MESSAGES
 from firefly_weave.contracts.transactions import (
     PARTICIPANT_STATUSES,
     TERMINAL_TRANSACTION_STATES,
@@ -328,15 +330,56 @@ _GUARDED = {
         "output": {"literal": 0},
     },
 }
-_ERROR_ROWS = [
-    ("/steps/total/error", "error", None, "Group"),
-    ("/steps/total/error/code", "error", None, "Text"),
-    ("/steps/total/error/message", "error", None, "Text"),
-    ("/steps/total/error/outcome", "error", None, "Choice"),
-    ("/steps/total/error/attempts", "error", None, "Whole number"),
-    ("/steps/total/error/instanceKey", "error", None, "Text"),
-    ("/steps/total/error/childRunId", "error", None, "Text"),
-]
+
+
+def _error_rows(identifier: str) -> list[tuple[str, str, str | None, str]]:
+    return [
+        (f"/steps/{identifier}/error", "error", None, "Group"),
+        (f"/steps/{identifier}/error/code", "error", None, "Text"),
+        (f"/steps/{identifier}/error/message", "error", None, "Text"),
+        (f"/steps/{identifier}/error/outcome", "error", None, "Choice"),
+        (f"/steps/{identifier}/error/attempts", "error", None, "Whole number"),
+        (f"/steps/{identifier}/error/instanceKey", "error", None, "Text"),
+        (f"/steps/{identifier}/error/childRunId", "error", None, "Text"),
+    ]
+
+
+_ERROR_ROWS = _error_rows("total")
+_LOOKUP = {"id": "lookup", "kind": "transform", "value": {"ref": "/input/invoices"}}
+# A step whose error path has two steps, the second reading the first.
+_GUARDED_TWICE = {
+    **_GUARDED,
+    "errorPath": {
+        "steps": [
+            {"id": "note", "kind": "transform", "value": {"ref": "/steps/total/error/code"}},
+            {"id": "tell", "kind": "transform", "value": {"ref": "/steps/note/output"}},
+        ],
+        "output": {"ref": "/steps/note/output"},
+    },
+}
+# A decision whose first path holds a step with an error path.
+_DECIDED = {
+    "id": "route",
+    "kind": "switch",
+    "cases": [{"when": {"literal": True}, "steps": [_GUARDED], "output": {"literal": None}}],
+    "default": {"steps": [], "output": {"literal": None}},
+}
+# A step inside a loop body whose failure for one item runs its error path for that item.
+_CHECKED = _loop(
+    "notify",
+    "/input/invoices",
+    {
+        "id": "check",
+        "kind": "transform",
+        "value": {"ref": "/item/number"},
+        "onError": "errorOutput",
+        "errorPath": {
+            "steps": [{"id": "flag", "kind": "transform", "value": {"ref": "/steps/check/error/code"}}],
+            "output": {"ref": "/steps/flag/output"},
+        },
+    },
+    maxItems=500,
+)
 # (name, document, path, (ref, source, loop, typeLabel) per entry, or None when the position is not found)
 SCOPE_CASES: tuple[tuple[str, dict[str, Any], str, list[tuple[str, str, str | None, str]] | None], ...] = (
     (
@@ -435,6 +478,38 @@ SCOPE_CASES: tuple[tuple[str, dict[str, Any], str, list[tuple[str, str, str | No
         _workflow(_GUARDED, {"id": "after", "kind": "transform", "value": {"ref": "/steps/total/output"}}),
         "/spec/steps/1/value",
         [*_INPUT_ROWS, ("/steps/total/output", "step", None, "Whole number"), *_ERROR_ROWS],
+    ),
+    (
+        "after a step that continues on error its output may be empty and its error may be missing",
+        _workflow(
+            {**{k: v for k, v in _GUARDED.items() if k != "errorPath"}, "onError": "continue"},
+            {"id": "after", "kind": "transform", "value": {"ref": "/steps/total/output"}},
+        ),
+        "/spec/steps/1/value",
+        [*_INPUT_ROWS, ("/steps/total/output", "step", None, "Whole number or empty"), *_ERROR_ROWS],
+    ),
+    (
+        "a step inside an error path sees the error first, then earlier steps and the path's steps before it",
+        _workflow(_LOOKUP, _GUARDED_TWICE),
+        "/spec/steps/1/errorPath/steps/1/value",
+        [
+            *_INPUT_ROWS,
+            *_ERROR_ROWS,
+            ("/steps/lookup/output", "step", None, "List of groups"),
+            ("/steps/note/output", "step", None, "Text"),
+        ],
+    ),
+    (
+        "an error path inside a loop body sees the current item and the failed step's error together",
+        _workflow(_CHECKED),
+        "/spec/steps/0/body/steps/0/errorPath/steps/0/value",
+        [*_INPUT_ROWS, *_ITEM_ROWS, *_error_rows("check")],
+    ),
+    (
+        "an error path inside a decision path sees the failed step's error",
+        _workflow(_DECIDED),
+        "/spec/steps/0/cases/0/steps/0/errorPath/steps/0/value",
+        [*_INPUT_ROWS, *_ERROR_ROWS],
     ),
 )
 
@@ -761,6 +836,50 @@ def transaction_cases() -> dict[str, Any]:
     }
 
 
+# The step kinds that may return each platform failure code, by code or code prefix, first match: Studio's Simulate a
+# failure suggests a kind's codes. A new code must be placed here before the fixture is written again.
+CODE_KINDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("WV-EXPR-", ("transform", "decisionTable")),
+    ("WV-DECISION-", ("decisionTable",)),
+    ("WV-SCHEMA-", ("action", "callWorkflow")),
+    # Someone's confirmation that the step had no effect, never a step's own failure.
+    ("WV-TASK-RECONCILED-FAILURE", ()),
+    ("WV-TASK-", ("action",)),
+    ("WV-CALL-", ("callWorkflow",)),
+    ("WV-RUN-", ("callWorkflow",)),
+    ("WV-HUMAN-", ("humanTask",)),
+    ("WV-SIGNAL-", ("signal",)),
+    ("WV-AGENT-", ("agent",)),
+    ("WV-TXN-", ("transaction",)),
+    ("TRANSIENT", ("action", "llm", "agent")),
+    ("UNAVAILABLE", ("action", "llm", "agent")),
+    ("RATE_LIMITED", ("action", "llm", "agent")),
+    ("TIMEOUT", ("action", "llm", "agent")),
+    ("LLM_", ("llm", "agent")),
+)
+
+
+def code_kinds(code: str) -> list[str]:
+    """The kinds that may return ``code``; a code no rule places is refused."""
+    for prefix, kinds in CODE_KINDS:
+        if code == prefix or (prefix.endswith(("-", "_")) and code.startswith(prefix)):
+            if not set(kinds) <= set(ERROR_KINDS):
+                raise ValueError(f"{code}: {kinds} are not all step kinds that handle errors")
+            return list(kinds)
+    raise ValueError(f"place {code} in CODE_KINDS: which step kinds return it?")
+
+
+def step_error_cases() -> dict[str, Any]:
+    return {
+        "generator": GENERATOR,
+        "rule": "the platform's failure codes with their messages and the step kinds that may return them",
+        "codes": [
+            {"code": code, "message": message, "kinds": code_kinds(code)}
+            for code, message in STEP_ERROR_MESSAGES.items()
+        ],
+    }
+
+
 def manifest_snapshot() -> dict[str, Any]:
     return {"generator": GENERATOR, "manifest": language_manifest().model_dump(mode="json")}
 
@@ -773,6 +892,7 @@ def render() -> dict[str, str]:
         "scope.json": scope_cases(),
         "manifest.json": manifest_snapshot(),
         "transactions.json": transaction_cases(),
+        "step-errors.json": step_error_cases(),
     }
     return {name: json.dumps(value, indent=2, ensure_ascii=False) + "\n" for name, value in files.items()}
 

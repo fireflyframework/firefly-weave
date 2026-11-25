@@ -337,6 +337,20 @@ async def test_run_data_under_a_step_named_like_a_value_field_is_still_run_data(
     assert (await author[0].get(url(project_url, identifier), headers=other_headers)).status_code == 403
 
 
+async def test_a_failure_copied_from_a_run_is_run_data(author, headers, other_headers, project_url, person):
+    client, identifier = author[0], await draft(author, headers, project_url)
+    environment = str(author[2].environment_id)
+    copied = {"code": "REQUEST_REFUSED", "outcome": "unknown", "attempts": 3, "source": "run", "runId": RUN}
+    errors = {"token": {"code": "REQUEST_REFUSED"}, "local": {**copied, "runEnvironmentId": environment}}
+    saved = await save(client, project_url, headers, identifier, document_of(errors=errors))
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["contains_run_data"] is True
+    assert saved.json()["source_environment_ids"] == [environment]
+    assert saved.json()["document"]["errors"] == errors
+    await person[0](["developer"])  # simulate and definition.write, no run.read in the environment
+    assert (await client.get(url(project_url, identifier), headers=other_headers)).status_code == 403
+
+
 async def test_a_field_named_like_provenance_inside_ai_turns_is_data(author, headers, project_url):
     identifier = await draft(author, headers, project_url)
     turns = {"turns": [{"runEnvironmentId": "not a uuid", "source": "run"}], "source": "manual"}
