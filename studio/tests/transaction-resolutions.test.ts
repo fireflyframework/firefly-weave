@@ -20,10 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import type {
-  IncidentTransaction,
-  IncidentView,
-} from "../src/app/operate/incidents/incidents-model";
+import type { IncidentView } from "../src/app/operate/incidents/incidents-model";
 import {
   afterRevisionRefresh,
   checkForceEnd,
@@ -40,6 +37,7 @@ import {
   type ReconcileDraft,
 } from "../src/app/operate/incidents/transaction-resolutions";
 import { REASON_LIMIT } from "../src/app/operate/operate-limits";
+import type { TransactionParticipantView } from "../src/app/operate/transactions/transaction-contracts";
 import {
   called,
   caller,
@@ -162,77 +160,335 @@ describe("the decisions an incident in doubt offers", () => {
   });
 });
 
-const record = called.transaction!;
-/** A record with one step of each way to be stuck, and steps that aren't. */
-const stuck: IncidentTransaction = {
-  ...record,
-  participants: [
-    { ...record.participants[0], status: "cancel_stuck", attempts: 1 },
-    record.participants[1],
-    {
-      ...record.participants[0],
-      node_id: "keep",
-      instance_key: "keep[2]",
-      status: "confirm_stuck",
-      attempts: 4,
-    },
-    { ...record.participants[1], node_id: "note", instance_key: "note" },
-  ].map((participant, index) =>
-    index === 3 ? { ...participant, status: "undone" } : participant,
-  ),
-};
+type Step = TransactionParticipantView;
+const step = (
+  key: string,
+  mode: Step["mode"],
+  status: Step["status"],
+  attempts?: number,
+): Step => ({
+  node_id: key.replace(/\[.*/, ""),
+  instance_key: key,
+  mode,
+  status,
+  effect: "none",
+  ...(attempts ? { attempts } : {}),
+});
+/** An incident in doubt about `key`, as the platform names it, with these steps. */
+const about = (
+  code: string,
+  key: string,
+  participants: Step[],
+): IncidentView => ({
+  ...called,
+  code,
+  node_id: key.replace(/\[.*/, "").replace(/#.*/, ""),
+  instance_key: key,
+  transaction: { ...called.transaction!, participants },
+});
+/** A record with one step of each way to be stuck, and steps that ended undone. */
+const stuck = about("WV-TXN-UNDO-STUCK", "add#undo", [
+  step("hold", "reserve", "cancel_stuck", 1),
+  step("add", "compensate", "undo_stuck", 3),
+  step("keep[2]", "reserve", "confirm_stuck", 4),
+  step("note", "compensate", "undone"),
+]);
+const undoStuck = about("WV-TXN-UNDO-STUCK", "add#undo", [
+  step("hold", "reserve", "done"),
+  step("add", "compensate", "undo_stuck", 3),
+  step("add2", "compensate", "undone"),
+]);
+const settleTimeout = about("WV-TXN-SETTLE-TIMEOUT", "move", [
+  step("hold", "reserve", "done"),
+  step("add", "compensate", "unknown"),
+  step("add2", "compensate", "dispatched"),
+]);
+const confirmStuck = about("WV-TXN-CONFIRM-STUCK", "hold#confirm", [
+  step("hold", "reserve", "confirm_stuck", 2),
+  step("hold2", "reserve", "confirming"),
+  step("submit", "irreversible", "done"),
+]);
+const cancelStuck = about("WV-TXN-CANCEL-STUCK", "hold[3]#cancel", [
+  step("keep[3]", "reserve", "done"),
+  step("hold[3]", "reserve", "cancel_stuck", 10),
+  step("add[3]", "compensate", "undone"),
+]);
+const afterPivot = (notify: Step["status"]) =>
+  about("WV-TXN-AFTER-PIVOT-STUCK", "notify", [
+    step("hold", "reserve", "confirmed"),
+    step("add", "compensate", "done"),
+    step("submit", "irreversible", "done"),
+    step("notify", "irreversible", notify),
+  ]);
 
 describe("the checklist", () => {
-  it("lists each step Weave couldn't finish, as it ended when undone", () => {
-    expect(checklistRows(stuck, "compensated", runs.called)).toEqual([
-      {
-        instanceKey: "hold",
-        stepId: "hold",
-        sentence: "I confirmed hold was reversed in the other system.",
-        caption: `Release failed · operation key ${runs.called}:hold#cancel`,
-        operationKey: `${runs.called}:hold#cancel`,
-        outcomes: ["undone"],
-      },
-      {
-        instanceKey: "add",
-        stepId: "add",
-        sentence: "I confirmed add was reversed in the other system.",
-        caption: `Undo failed after 3 tries · operation key ${runs.called}:add#undo`,
-        operationKey: `${runs.called}:add#undo`,
-        outcomes: ["undone"],
-      },
-      {
-        instanceKey: "keep[2]",
-        stepId: "keep",
-        sentence: "I confirmed keep[2] was reversed in the other system.",
-        caption: `Confirm failed after 4 tries · operation key ${runs.called}:keep[2]#confirm`,
-        operationKey: `${runs.called}:keep[2]#confirm`,
-        outcomes: ["undone"],
-      },
+  const listed = (incident: IncidentView, as: "compensated" | "completed") =>
+    Object.fromEntries(
+      checklistRows(incident, as).map((row) => [
+        row.instanceKey,
+        row.outcomes.join(),
+      ]),
+    );
+  it.each([
+    ["an undo stuck", "Undone", undoStuck, { hold: "undone", add: "undone" }],
+    [
+      "an undo stuck",
+      "Finished",
+      undoStuck,
+      { hold: "confirmed", add: "done", add2: "done" },
+    ],
+    [
+      "a settle timeout",
+      "Undone",
+      settleTimeout,
+      { hold: "undone", add: "undone", add2: "undone" },
+    ],
+    [
+      "a settle timeout",
+      "Finished",
+      settleTimeout,
+      { hold: "confirmed", add: "done", add2: "done" },
+    ],
+    [
+      "a confirm stuck",
+      "Undone",
+      confirmStuck,
+      { hold: "undone", hold2: "undone", submit: "undone" },
+    ],
+    [
+      "a confirm stuck",
+      "Finished",
+      confirmStuck,
+      { hold: "confirmed", hold2: "confirmed" },
+    ],
+    [
+      "a step of unknown outcome after the point of no return",
+      "Undone",
+      afterPivot("unknown"),
+      { hold: "undone", add: "undone", submit: "undone", notify: "undone" },
+    ],
+    [
+      "a step of unknown outcome after the point of no return",
+      "Finished",
+      afterPivot("unknown"),
+      { notify: "done" },
+    ],
+    [
+      "a step that failed after the point of no return",
+      "Undone",
+      afterPivot("failed"),
+      { hold: "undone", add: "undone", submit: "undone" },
+    ],
+    [
+      "a step that failed after the point of no return",
+      "Finished",
+      afterPivot("failed"),
+      { notify: "done" },
+    ],
+    [
+      "a release stuck",
+      "Undone",
+      cancelStuck,
+      { "keep[3]": "undone", "hold[3]": "undone" },
+    ],
+    [
+      "a release stuck",
+      "Finished",
+      cancelStuck,
+      { "keep[3]": "confirmed", "hold[3]": "confirmed", "add[3]": "done" },
+    ],
+  ] as const)(
+    "of %s lists for %s what Weave doesn't know ended that way",
+    (_what, ending, incident, steps) => {
+      expect(
+        listed(incident, ending === "Undone" ? "compensated" : "completed"),
+      ).toEqual(steps);
+    },
+  );
+
+  const STATUSES = [
+    "pending",
+    "dispatched",
+    "done",
+    "failed",
+    "unknown",
+    "skipped",
+    "cancelling",
+    "cancelled",
+    "cancel_stuck",
+    "undoing",
+    "undone",
+    "undo_stuck",
+    "confirming",
+    "confirmed",
+    "confirm_stuck",
+  ] as const;
+  it.each([
+    ["compensated", "reserve", "undone", "cancelled"],
+    ["compensated", "compensate", "undone", "cancelled"],
+    ["compensated", "irreversible", "undone", "cancelled"],
+    ["completed", "reserve", "confirmed"],
+    ["completed", "compensate", "confirmed", "done"],
+    ["completed", "irreversible", "confirmed", "done"],
+  ] as const)(
+    "as %s leaves out a %s step only when it ended %s, or nothing of it stays",
+    (as, mode, ...ended) => {
+      const left: readonly string[] = [
+        ...ended,
+        "failed",
+        "skipped",
+        "pending",
+      ];
+      const incident = about(
+        "WV-TXN-UNDO-STUCK",
+        "other#undo",
+        STATUSES.map((status) => step(status, mode, status)),
+      );
+      expect(Object.keys(listed(incident, as))).toEqual(
+        STATUSES.filter((status) => !left.includes(status)),
+      );
+      expect(new Set(Object.values(listed(incident, as)))).toEqual(
+        new Set([
+          as === "compensated"
+            ? "undone"
+            : mode === "reserve"
+              ? "confirmed"
+              : "done",
+        ]),
+      );
+    },
+  );
+
+  it("asks of a failed step only when the incident is about that one, in its own iteration", () => {
+    const failed = about("WV-TXN-AFTER-PIVOT-STUCK", "notify[2]", [
+      step("notify[1]", "irreversible", "failed"),
+      step("notify[2]", "irreversible", "failed"),
+      step("keep[2]", "reserve", "failed"),
+    ]);
+    expect(listed(failed, "completed")).toEqual({ "notify[2]": "done" });
+    // The platform's own row names the whole instance as its step.
+    const { instance_key: _key, ...row } = failed;
+    expect(listed({ ...row, node_id: "keep[2]#confirm" }, "completed")).toEqual(
+      { "keep[2]": "confirmed" },
+    );
+  });
+
+  it("asks of a step whose status Studio doesn't know, for either ending", () => {
+    const newer = about("WV-TXN-UNDO-STUCK", "other#undo", [
+      step("add", "compensate", "held_open" as Step["status"]),
+    ]);
+    expect(listed(newer, "compensated")).toEqual({ add: "undone" });
+    expect(listed(newer, "completed")).toEqual({ add: "done" });
+  });
+
+  it("is empty without the record it is built from", () => {
+    expect(checklistRows(held, "compensated")).toEqual([]);
+  });
+
+  it("says what each line confirms, and how Weave left its step", () => {
+    const said = (incident: IncidentView, as: "compensated" | "completed") =>
+      checklistRows(incident, as).map((row) => [row.sentence, row.caption]);
+    const key = (rest: string) => `operation key ${runs.called}:${rest}`;
+    expect(said(stuck, "compensated")).toEqual([
+      [
+        "I confirmed hold was reversed in the other system.",
+        `Release failed · ${key("hold#cancel")}`,
+      ],
+      [
+        "I confirmed add was reversed in the other system.",
+        `Undo failed after 3 tries · ${key("add#undo")}`,
+      ],
+      [
+        "I confirmed keep[2] was reversed in the other system.",
+        `Confirm failed after 4 tries · ${key("keep[2]#confirm")}`,
+      ],
+    ]);
+    expect(said(stuck, "completed")).toEqual([
+      [
+        "I confirmed hold was confirmed in the other system.",
+        `Release failed · ${key("hold#cancel")}`,
+      ],
+      [
+        "I confirmed add finished in the other system.",
+        `Undo failed after 3 tries · ${key("add#undo")}`,
+      ],
+      [
+        "I confirmed keep[2] was confirmed in the other system.",
+        `Confirm failed after 4 tries · ${key("keep[2]#confirm")}`,
+      ],
+      [
+        "I confirmed note finished in the other system.",
+        `Undone · ${key("note#undo")}`,
+      ],
+    ]);
+    // A reservation nobody released, and a step of unknown outcome.
+    expect(said(settleTimeout, "compensated").slice(0, 2)).toEqual([
+      [
+        "I confirmed hold was reversed in the other system.",
+        `Still reserved · ${key("hold")}`,
+      ],
+      [
+        "I confirmed add was reversed in the other system.",
+        `Unknown · ${key("add")}`,
+      ],
+    ]);
+    // What went ahead is done, whatever the transaction's state.
+    expect(said(afterPivot("failed"), "compensated").slice(0, 2)).toEqual([
+      [
+        "I confirmed hold was reversed in the other system.",
+        `Confirmed · ${key("hold#confirm")}`,
+      ],
+      [
+        "I confirmed add was reversed in the other system.",
+        `Done · ${key("add")}`,
+      ],
     ]);
   });
 
-  it("asks what a finished one did: a reservation confirmed, any other step finished", () => {
+  it("asks of a step still running, when undone, that it is stopped too", () => {
+    const running = about("WV-TXN-SETTLE-TIMEOUT", "move", [
+      step("add", "compensate", "dispatched", 2),
+      step("hold", "reserve", "cancelling"),
+      step("add2", "compensate", "undoing", 3),
+      step("hold2", "reserve", "confirming"),
+      step("add3", "compensate", "unknown", 2),
+    ]);
+    const key = (rest: string) => `operation key ${runs.called}:${rest}`;
     expect(
-      checklistRows(stuck, "completed", runs.called).map((row) => [
+      checklistRows(running, "compensated").map((row) => [
         row.sentence,
-        row.outcomes,
+        row.caption,
       ]),
     ).toEqual([
-      ["I confirmed hold was confirmed in the other system.", ["confirmed"]],
-      ["I confirmed add finished in the other system.", ["done"]],
-      ["I confirmed keep[2] was confirmed in the other system.", ["confirmed"]],
+      [
+        "I confirmed add is stopped and its change is reversed in the other system.",
+        // A try that runs hasn't ended anything.
+        `Running · 2 tries · ${key("add")}`,
+      ],
+      [
+        "I confirmed hold is stopped and its change is reversed in the other system.",
+        `Releasing · ${key("hold#cancel")}`,
+      ],
+      [
+        "I confirmed add2 is stopped and its change is reversed in the other system.",
+        `Undoing · 3 tries · ${key("add2#undo")}`,
+      ],
+      [
+        "I confirmed hold2 is stopped and its change is reversed in the other system.",
+        `Confirming · ${key("hold2#confirm")}`,
+      ],
+      [
+        "I confirmed add3 was reversed in the other system.",
+        `Unknown · 2 tries · ${key("add3")}`,
+      ],
     ]);
-  });
-
-  it("is empty when no step is stuck", () => {
-    expect(
-      checklistRows(caller.transaction!, "compensated", runs.caller),
-    ).toEqual([]);
+    expect(checklistRows(running, "completed")[0].sentence).toBe(
+      "I confirmed add finished in the other system.",
+    );
   });
 });
 
-const rows = () => checklistRows(stuck, "compensated", runs.called);
+const rows = () => checklistRows(stuck, "compensated");
 const draft = (change: Partial<ReconcileDraft> = {}): ReconcileDraft => ({
   as: "compensated",
   ticked: new Set(rows().map((row) => row.instanceKey)),
@@ -259,10 +515,14 @@ describe("Mark as reconciled", () => {
         },
       },
     });
-    const finished = checklistRows(stuck, "completed", runs.called);
+    const finished = checklistRows(stuck, "completed");
     expect(
       checkReconcile(
-        draft({ as: "completed", blockOutput: '{"quantity": 40}' }),
+        draft({
+          as: "completed",
+          blockOutput: '{"quantity": 40}',
+          ticked: new Set(finished.map((row) => row.instanceKey)),
+        }),
         finished,
       ),
     ).toEqual({
@@ -276,6 +536,7 @@ describe("Mark as reconciled", () => {
             { instance_key: "hold", outcome: "confirmed" },
             { instance_key: "add", outcome: "done" },
             { instance_key: "keep[2]", outcome: "confirmed" },
+            { instance_key: "note", outcome: "done" },
           ],
           blockOutput: { quantity: 40 },
         },
@@ -283,7 +544,7 @@ describe("Mark as reconciled", () => {
     });
   });
 
-  it("takes null as the result of a finished transaction, and a record with no stuck step", () => {
+  it("takes null as the result of a finished transaction, and a record with no step to check", () => {
     expect(
       checkReconcile(
         draft({ as: "completed", blockOutput: " null ", ticked: new Set() }),

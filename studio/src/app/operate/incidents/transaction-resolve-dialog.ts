@@ -179,8 +179,7 @@ const ENDINGS = [
                 </p>
               }
               <p class="field-help" id="decide-checklist-help">
-                Only the steps Weave couldn't finish are listed. Weave already
-                knows how the others ended.
+                Only the steps you need to check for this ending are listed.
               </p>
             </fieldset>
           }
@@ -386,9 +385,8 @@ export class TransactionResolveDialog {
   /** The checklist, once the person said how the transaction ended. */
   readonly rows = computed(() => {
     const { as } = this.draft();
-    const { transaction, run_id } = this.incident();
-    return this.action() === "mark_reconciled" && as && transaction
-      ? checklistRows(transaction, as, run_id)
+    return this.action() === "mark_reconciled" && as
+      ? checklistRows(this.incident(), as)
       : [];
   });
   readonly asksEvidence = computed(

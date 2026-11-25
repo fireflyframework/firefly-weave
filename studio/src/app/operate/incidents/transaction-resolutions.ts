@@ -20,9 +20,13 @@ SPDX-License-Identifier: Apache-2.0
 // how a refusal reads; and how the drawer names the decision recorded. The
 // incident's code says which phase a retry runs again, and whether it is Wait
 // again: a transaction's record alone can't. Pure.
+import type { ParticipantStatus } from "../../editor/transactions/transaction-words";
 import type { PlainError } from "../../errors";
 import { REASON_LIMIT, tooLongMessage } from "../operate-limits";
-import { stepName } from "../transactions/transaction-contracts";
+import {
+  stepName,
+  type TransactionParticipantView,
+} from "../transactions/transaction-contracts";
 import {
   RESOLUTION_LABELS,
   RETRY_LABELS,
@@ -32,7 +36,7 @@ import {
 import {
   inDoubt,
   resolutionLabel,
-  type IncidentTransaction,
+  transactionStep,
   type IncidentView,
   type ResolutionKind,
   type ResolutionRequest,
@@ -146,7 +150,7 @@ export function transactionActions(
   return offers;
 }
 
-/** A step Weave couldn't finish, which a person checks in its own system. */
+/** A step Weave doesn't know ended as the person says, which is checked in its own system. */
 export interface ChecklistRow {
   instanceKey: string;
   stepId: string;
@@ -157,35 +161,85 @@ export interface ChecklistRow {
   /** What the record may say of it; the first is sent. */
   outcomes: readonly ("undone" | "confirmed" | "done")[];
 }
-export function checklistRows(
-  transaction: IncidentTransaction,
+/** The steps with a call that may still change the other system. */
+const RUNNING = new Set<ParticipantStatus>([
+  "dispatched",
+  "cancelling",
+  "undoing",
+  "confirming",
+]);
+/**
+ * Whether Weave knows that a step ended as the transaction is said to have: it
+ * stops there, so a step it doesn't know is left as it is for good. A failed
+ * step is asked about only when finished, and only when the incident waits for
+ * it (`own`): any other one's On error setting may have taken care of it. A
+ * status Studio doesn't know is asked about.
+ */
+function endedSo(
+  { status, mode, instance_key }: TransactionParticipantView,
   as: "compensated" | "completed",
-  runId: string,
+  own: string | null,
+): boolean {
+  switch (status) {
+    case "pending":
+    case "skipped":
+      return true;
+    case "failed":
+      return as === "compensated" || instance_key !== own;
+    case "undone":
+    case "cancelled":
+      return as === "compensated";
+    case "confirmed":
+      return as === "completed";
+    case "done":
+      return as === "completed" && mode !== "reserve";
+    default:
+      return false;
+  }
+}
+/** The steps to check before saying how a transaction ended; each is sent as ticked. */
+export function checklistRows(
+  incident: Pick<
+    IncidentView,
+    "run_id" | "node_id" | "instance_key" | "transaction"
+  >,
+  as: "compensated" | "completed",
 ): ChecklistRow[] {
-  return recordRows(transaction, runId)
-    .filter((row) => row.stuck)
-    .map((row) => {
-      const outcome =
-        as === "compensated"
-          ? "undone"
-          : row.how === "Reserved"
-            ? "confirmed"
-            : "done";
-      const did = {
-        undone: "was reversed",
-        confirmed: "was confirmed",
-        done: "finished",
-      }[outcome];
-      const tries = row.attempts ? ` after ${row.attempts}` : "";
-      return {
+  const { transaction, run_id } = incident;
+  if (!transaction) return [];
+  const own = transactionStep(incident);
+  return recordRows(transaction, run_id).flatMap((row, index) => {
+    const participant = transaction.participants[index];
+    if (endedSo(participant, as, own)) return [];
+    const { status, mode } = participant;
+    const running = RUNNING.has(status);
+    const outcome =
+      as === "compensated"
+        ? "undone"
+        : mode === "reserve"
+          ? "confirmed"
+          : "done";
+    const did = {
+      // What it still answers isn't shown while the transaction is in doubt.
+      undone: running
+        ? "is stopped and its change is reversed"
+        : "was reversed",
+      confirmed: "was confirmed",
+      done: "finished",
+    }[outcome];
+    const over = row.stuck || status === "failed" ? " after " : " · ";
+    const tries = row.attempts ? over + row.attempts : "";
+    return [
+      {
         instanceKey: row.instanceKey,
         stepId: row.stepId,
         sentence: `I confirmed ${stepName(row.instanceKey)} ${did} in the other system.`,
-        caption: `${row.undo?.text}${tries} · operation key ${row.operationKey}`,
+        caption: `${(row.undo ?? row.forward).text}${tries} · operation key ${row.operationKey}`,
         operationKey: row.operationKey,
         outcomes: [outcome],
-      };
-    });
+      },
+    ];
+  });
 }
 
 /** What the person entered in Mark as reconciled. */
@@ -249,8 +303,8 @@ const lacks = (missing: MissingPart[], problems: object) =>
   missing.length > 0 || Object.keys(problems).length > 0;
 
 /**
- * The record of how a transaction ended: its stuck steps as ticked, and the
- * result the steps after it read, only when it finished.
+ * The record of how a transaction ended: its checklist's steps as ticked, and
+ * the result the steps after it read, only when it finished.
  */
 export function checkReconcile(
   draft: ReconcileDraft,

@@ -127,16 +127,23 @@ const drawn = (page: Page) =>
         requestAnimationFrame(() => requestAnimationFrame(() => done())),
       ),
   );
+/** Ticks every line of Mark as reconciled's checklist. */
+async function tickAll(page: Page) {
+  const lines = dialog(page, "Mark as reconciled").getByRole("checkbox");
+  await expect(lines.first()).toBeVisible();
+  for (const line of await lines.all()) await line.check();
+}
 /** Opens Mark as reconciled on the called run's incident, filled in as undone. */
 async function undone(page: Page) {
   const name = "Mark as reconciled";
   await offer(page, name).click();
   await ending(page, name, "Undone").check();
-  await dialog(page, name)
-    .getByRole("checkbox", {
-      name: "I confirmed add was reversed in the other system.",
-    })
-    .check();
+  for (const key of ["hold", "add"])
+    await dialog(page, name)
+      .getByRole("checkbox", {
+        name: `I confirmed ${key} was reversed in the other system.`,
+      })
+      .check();
   await field(page, name, "Reason").fill("The quantity is back");
   await field(page, name, "Evidence reference").fill("OPS-2304");
 }
@@ -294,7 +301,7 @@ test("Mark as reconciled reads the incident first, once, and opens on what it re
   await expect(dialog(page, name)).toContainText("Undo failed after 4 tries");
   await page.unroute(`${environment}/incidents/${ids.called}`);
   change(platform, triedAgain(called, 4));
-  await dialog(page, name).getByRole("checkbox").check();
+  await tickAll(page);
   await field(page, name, "Reason").fill("The quantity is back");
   await field(page, name, "Evidence reference").fill("OPS-2304");
   await confirm(page, name).click();
@@ -307,7 +314,10 @@ test("Mark as reconciled reads the incident first, once, and opens on what it re
     evidence_reference: "OPS-2304",
     output: {
       as: "compensated",
-      participants: [{ instance_key: "add", outcome: "undone" }],
+      participants: [
+        { instance_key: "hold", outcome: "undone" },
+        { instance_key: "add", outcome: "undone" },
+      ],
     },
   });
 });
@@ -534,13 +544,30 @@ test("Mark as reconciled names only what it still lacks, and drops the ticks of 
   await expect(asked).toContainText(
     `Undo failed after 3 tries · operation key ${runs.called}:add#undo`,
   );
+  // Undo stopped at add: hold stays reserved, and is asked about too.
   await expect(asked).toContainText(
-    "Only the steps Weave couldn't finish are listed. Weave already knows how the others ended.",
+    `Still reserved · operation key ${runs.called}:hold`,
   );
+  await expect(
+    asked.getByRole("group", { name: "Check each step in its system" }),
+  ).toContainText(
+    "Only the steps you need to check for this ending are listed.",
+  );
+  await expect(asked).not.toContainText("Weave already knows");
   await expect(asked.getByLabel("Result of the transaction")).toHaveCount(0);
   await field(page, name, "Reason").fill(
     "Checked the target system: the quantity is back to 120.",
   );
+  await expect
+    .poll(() => described(page, name))
+    .toBe(
+      "To mark it as reconciled, tick 2 more lines and fill in Evidence reference.",
+    );
+  await asked
+    .getByRole("checkbox", {
+      name: "I confirmed hold was reversed in the other system.",
+    })
+    .check();
   await expect
     .poll(() => described(page, name))
     .toBe(
@@ -557,15 +584,15 @@ test("Mark as reconciled names only what it still lacks, and drops the ticks of 
     .toBe("To mark it as reconciled, fill in Evidence reference.");
   await ending(page, name, "Finished").check();
   // Another ending asks another question of each step.
-  await expect(
-    asked.getByRole("checkbox", {
-      name: "I confirmed add finished in the other system.",
-    }),
-  ).not.toBeChecked();
+  for (const line of [
+    "I confirmed hold was confirmed in the other system.",
+    "I confirmed add finished in the other system.",
+  ])
+    await expect(asked.getByRole("checkbox", { name: line })).not.toBeChecked();
   await expect
     .poll(() => described(page, name))
     .toBe(
-      "To mark it as reconciled, tick the line for add, fill in Result of the transaction and fill in Evidence reference.",
+      "To mark it as reconciled, tick 2 more lines, fill in Result of the transaction and fill in Evidence reference.",
     );
   await ending(page, name, "Undone").check();
   await expect(reversed).not.toBeChecked();
@@ -580,7 +607,7 @@ test("Mark as reconciled as finished sends the result, and never one it can't re
   await offer(page, name).click();
   await ending(page, name, "Finished").check();
   const asked = dialog(page, name);
-  await asked.getByRole("checkbox").check();
+  await tickAll(page);
   await field(page, name, "Reason").fill("The 40 were added at 10:36");
   await field(page, name, "Evidence reference").fill("Log line 90412");
   const result = field(page, name, "Result of the transaction (JSON)");
@@ -602,7 +629,10 @@ test("Mark as reconciled as finished sends the result, and never one it can't re
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].body.output).toEqual({
     as: "completed",
-    participants: [{ instance_key: "add", outcome: "done" }],
+    participants: [
+      { instance_key: "hold", outcome: "confirmed" },
+      { instance_key: "add", outcome: "done" },
+    ],
     blockOutput: { quantity: 40 },
   });
   await expect(drawer(page).locator("dt:text-is('Decision') + dd")).toHaveText(
@@ -620,31 +650,100 @@ test("a result typed for a finished transaction is never sent with one that was 
   await ending(page, name, "Finished").check();
   await field(page, name, "Result of the transaction (JSON)").fill("{}");
   await ending(page, name, "Undone").check();
-  await dialog(page, name).getByRole("checkbox").check();
+  await tickAll(page);
   await field(page, name, "Reason").fill("It is back");
   await field(page, name, "Evidence reference").fill("OPS-2304");
   await confirm(page, name).click();
   await expect.poll(() => sent.length).toBe(1);
   expect(sent[0].body.output).toEqual({
     as: "compensated",
-    participants: [{ instance_key: "add", outcome: "undone" }],
+    participants: [
+      { instance_key: "hold", outcome: "undone" },
+      { instance_key: "add", outcome: "undone" },
+    ],
   });
 });
 
-test("a settle timeout has no stuck step: Mark as reconciled asks for no checklist", async ({
+test("a settle timeout asks about the steps it left, one still running among them, and sends them", async ({
   page,
 }) => {
-  await opened(page, caller);
+  const platform = await opened(page, caller);
+  const sent = await decisions(page, platform);
   const name = "Mark as reconciled";
   await offer(page, name).click();
   await ending(page, name, "Undone").check();
-  await expect(dialog(page, name).getByRole("checkbox")).toHaveCount(0);
-  await expect(dialog(page, name)).not.toContainText("Check each step");
+  const asked = dialog(page, name);
+  const lines = asked.locator(".tick");
+  await expect(lines).toHaveText([
+    new RegExp(
+      `I confirmed hold was reversed in the other system\\.Still reserved · operation key ${runs.caller}:hold`,
+    ),
+    new RegExp(
+      `I confirmed add is stopped and its change is reversed in the other system\\.Running · operation key ${runs.caller}:add`,
+    ),
+  ]);
+  await field(page, name, "Reason").fill("Both are back");
+  await field(page, name, "Evidence reference").fill("OPS-2311");
   await expect
     .poll(() => described(page, name))
-    .toBe(
-      "To mark it as reconciled, fill in Reason and fill in Evidence reference.",
-    );
+    .toBe("To mark it as reconciled, tick 2 more lines.");
+  await page.screenshot({ path: `${captures}/reconcile-settle-1440.png` });
+  await tickAll(page);
+  await confirm(page, name).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].body.output).toEqual({
+    as: "compensated",
+    participants: [
+      { instance_key: "hold", outcome: "undone" },
+      { instance_key: "add", outcome: "undone" },
+    ],
+  });
+});
+
+test("a step that failed after the point of no return is the one a finished transaction asks about", async ({
+  page,
+}) => {
+  const [hold, add] = called.transaction!.participants;
+  const platform = await opened(page, {
+    ...called,
+    code: "WV-TXN-AFTER-PIVOT-STUCK",
+    node_id: "notify",
+    instance_key: "notify",
+    transaction: {
+      ...called.transaction!,
+      participants: [
+        { ...hold, status: "confirmed" },
+        { ...add, status: "done", attempts: 1 },
+        ...(["submit", "notify"] as const).map((key) => ({
+          ...hold,
+          node_id: key,
+          instance_key: key,
+          mode: "irreversible" as const,
+          status: key === "submit" ? ("done" as const) : ("failed" as const),
+        })),
+      ],
+    },
+  });
+  const sent = await decisions(page, platform);
+  const name = "Mark as reconciled";
+  await offer(page, name).click();
+  await ending(page, name, "Undone").check();
+  await expect(dialog(page, name).getByRole("checkbox")).toHaveCount(3);
+  await ending(page, name, "Finished").check();
+  await expect(dialog(page, name).locator(".tick")).toContainText([
+    "I confirmed notify finished in the other system.",
+  ]);
+  await tickAll(page);
+  await field(page, name, "Result of the transaction").fill("null");
+  await field(page, name, "Reason").fill("Sent by hand");
+  await field(page, name, "Evidence reference").fill("OPS-2312");
+  await confirm(page, name).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0].body.output).toEqual({
+    as: "completed",
+    participants: [{ instance_key: "notify", outcome: "done" }],
+    blockOutput: null,
+  });
 });
 
 test("evidence holding markup is text in the drawer once resolved", async ({
@@ -686,6 +785,8 @@ for (const [name, kind, output] of [
     await expect
       .poll(() => described(page, name))
       .toBe(`${lead} and fill in Evidence reference.`);
+    // Only Mark as reconciled asks about every step.
+    await expect(asked.getByRole("checkbox")).toHaveCount(0);
     const result = asked.getByLabel("Result of the step (JSON)");
     await expect(result).toHaveCount(output ? 1 : 0);
     if (output) {
@@ -775,6 +876,7 @@ test("a run held whole can only be force ended, whatever its record", async ({
   const asked = dialog(page, name);
   await expect(asked).toContainText("Run 0e5a7c13");
   await expect(asked).not.toContainText("Stays done in other systems");
+  await expect(asked.getByRole("checkbox")).toHaveCount(0);
   await field(page, name, "Reason").fill("It can't be undone");
   await field(page, name, "Type 0e5a7c13 to confirm").fill("0e5a7c13");
   await confirm(page, name).click();
@@ -917,7 +1019,7 @@ test("a refused record shows under the result, and everything typed stays", asyn
   await offer(page, name).click();
   await ending(page, name, "Finished").check();
   const asked = dialog(page, name);
-  await asked.getByRole("checkbox").check();
+  await tickAll(page);
   const result = field(page, name, "Result of the transaction (JSON)");
   await result.fill('{"quantity": "40"}');
   await field(page, name, "Reason").fill("The 40 were added");
@@ -940,7 +1042,8 @@ test("a refused record shows under the result, and everything typed stays", asyn
     await expect(part).toBeInViewport({ ratio: 1 });
   await expect(result).toHaveValue('{"quantity": "40"}');
   await expect(ending(page, name, "Finished")).toBeChecked();
-  await expect(asked.getByRole("checkbox")).toBeChecked();
+  for (const line of await asked.getByRole("checkbox").all())
+    await expect(line).toBeChecked();
   await expect(field(page, name, "Reason")).toHaveValue("The 40 were added");
   await expect(field(page, name, "Evidence reference")).toHaveValue(
     "Log line 90412",
@@ -975,7 +1078,7 @@ for (const [why, as, message] of [
     await offer(page, name).click();
     await ending(page, name, as).check();
     const asked = dialog(page, name);
-    await asked.getByRole("checkbox").check();
+    await tickAll(page);
     if (as === "Finished")
       await field(page, name, "Result of the transaction (JSON)").fill("{}");
     await field(page, name, "Reason").fill("Checked");
@@ -990,7 +1093,8 @@ for (const [why, as, message] of [
       await expect(
         field(page, name, "Result of the transaction (JSON)"),
       ).not.toHaveAttribute("aria-invalid");
-    await expect(asked.getByRole("checkbox")).toBeChecked();
+    for (const line of await asked.getByRole("checkbox").all())
+      await expect(line).toBeChecked();
     // It was about that ending: another one hasn't been refused.
     await ending(page, name, as === "Undone" ? "Finished" : "Undone").check();
     await expect(asked).not.toContainText("WV-RUNTIME-OUTPUT");
@@ -1127,15 +1231,16 @@ test("an incident that changed must be refreshed: the checklist is built again, 
     "Studio read the incident again and rebuilt the checklist. Tick each step again; your reason and evidence are kept.",
   );
   await expect(asked).toContainText("Undo failed after 4 tries");
-  await expect(asked.getByRole("checkbox")).not.toBeChecked();
+  for (const line of await asked.getByRole("checkbox").all())
+    await expect(line).not.toBeChecked();
   await expect(ending(page, name, "Undone")).toBeChecked();
   await expect(field(page, name, "Reason")).toHaveValue("The quantity is back");
   await expect(field(page, name, "Evidence reference")).toHaveValue("OPS-2304");
   await expect
     .poll(() => described(page, name))
-    .toBe("To mark it as reconciled, tick the line for add.");
+    .toBe("To mark it as reconciled, tick 2 more lines.");
   await page.screenshot({ path: `${captures}/reconcile-refreshed-1440.png` });
-  await asked.getByRole("checkbox").check();
+  await tickAll(page);
   await confirm(page, name).click();
   await expect.poll(() => sent.length).toBe(2);
   expect(sent[1].revision).toBe('"2"');
@@ -1149,7 +1254,7 @@ test("the result typed for a finished transaction stays through a refresh", asyn
   await offer(page, name).click();
   await ending(page, name, "Finished").check();
   const asked = dialog(page, name);
-  await asked.getByRole("checkbox").check();
+  await tickAll(page);
   const result = field(page, name, "Result of the transaction (JSON)");
   await result.fill('{"quantity": 40}');
   await field(page, name, "Reason").fill("Added");
@@ -1436,7 +1541,7 @@ for (const size of [
       await offer(page, name).click();
       await ending(page, name, "Finished").check();
       const asked = dialog(page, name);
-      const key = asked.locator(".tick code");
+      const key = asked.locator(".tick code").last();
       await expect(key).toHaveText(`${runs.called}:add#undo`);
       const panel = (await asked.boundingBox())!;
       // 520 px wide, or the screen's width less 8 px each side on a phone.
