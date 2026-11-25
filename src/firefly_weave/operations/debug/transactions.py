@@ -39,7 +39,7 @@ from firefly_weave.operations.debug.models import ScriptedError, TransactionDebu
 from firefly_weave.runtime.control import enclosing_loops
 from firefly_weave.runtime.kernel import PreparedWorkflow
 from firefly_weave.runtime.models import Deadline, RunState, TransactionCause, TransactionRecord
-from firefly_weave.runtime.transactions import split_deadline
+from firefly_weave.runtime.transactions import TRANSACTION_RULES, split_deadline
 
 # The simulated workflow's run: stable across sessions, restores, the library, the CLI and servers, so the operation
 # keys its confirms, cancels and undos read are too. A called workflow's run is ``frame_run_id`` of its call.
@@ -62,8 +62,11 @@ RESOLUTIONS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
 
 def started_data(prepared: PreparedWorkflow, run_id: UUID) -> JsonObject:
     """The data a simulated run starts with: its run ID when it has a transaction (the kernel needs it there for
-    operation keys), nothing otherwise, so sessions without transactions keep their bytes."""
-    return {"run_id": str(run_id)} if prepared.transactions is not None else {}
+    operation keys) and the rules its transactions follow, nothing otherwise, so sessions without transactions keep
+    their bytes."""
+    if prepared.transactions is None:
+        return {}
+    return {"run_id": str(run_id), "transaction_rules": TRANSACTION_RULES}
 
 
 def scripted_effect(action_spec: Mapping[str, Any] | None, failure: ScriptedError) -> Literal["none", "unknown"]:

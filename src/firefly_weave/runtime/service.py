@@ -58,6 +58,7 @@ from firefly_weave.runtime.kernel import KernelError, action_schemas, validate, 
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RunState, RuntimeEvent, TerminalControl
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
+from firefly_weave.runtime.transactions import TRANSACTION_RULES
 
 if TYPE_CHECKING:
     from firefly_weave.runtime.calls import ChildStart
@@ -263,6 +264,7 @@ class RuntimeService:
             if any(node.kind == "transaction" for node in ir.graph.nodes):
                 # Undo steps name operation keys, which start with the run's ID.
                 data["run_id"] = str(run_id)
+                data["transaction_rules"] = TRANSACTION_RULES
             if child is not None and child.not_after is not None:
                 data["not_after"] = child.not_after.isoformat()
             event = RuntimeEvent(id=uuid4(), type="started", timestamp=now, sequence=1, data=data)
