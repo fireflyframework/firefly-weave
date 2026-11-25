@@ -133,6 +133,7 @@ function onceEach(api: StudioApi): StudioApi {
   template: `<weave-modal
     [heading]="(activated() ? 'Activated ' : 'Activate ') + workflowName()"
     [wide]="true"
+    [stays]="stays()"
     describedBy="activation-summary"
     (dismiss)="dismiss()"
   >

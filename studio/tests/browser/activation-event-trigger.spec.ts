@@ -587,8 +587,19 @@ test("the dialog can't be closed while its triggers are set up, so what is owed 
   await expect.poll(() => asked).toBe(true);
   await page.keyboard.press("Escape");
   await expect(dialog).toContainText("Setting up the triggers…");
+  // The close button looks off, as Done does.
+  const close = dialog.getByRole("button", { name: "Close dialog" });
+  const done = dialog.getByRole("button", { name: "Done", exact: true });
+  await expect(close).toHaveAttribute("aria-disabled", "true");
+  await expect(close).toHaveCSS(
+    "color",
+    await done.evaluate((button) => getComputedStyle(button).color),
+  );
+  await close.click({ force: true });
+  await expect(dialog).toContainText("Setting up the triggers…");
   answer();
   await expect(dialog.getByRole("button", { name: "Stop it" })).toBeVisible();
+  await expect(close).toBeEnabled();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   expect(await storedIntent(page)).toMatchObject({

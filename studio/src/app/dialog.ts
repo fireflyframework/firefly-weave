@@ -89,6 +89,7 @@ export class Autofocus implements AfterViewInit {
           type="button"
           class="icon-button"
           [attr.aria-label]="closeLabel()"
+          [attr.aria-disabled]="stays() || null"
           (click)="dismiss.emit()"
         >
           <weave-icon name="close" />
@@ -103,6 +104,8 @@ export class Modal implements AfterViewInit, OnDestroy {
   describedBy = input("");
   closeLabel = input("Close dialog");
   wide = input(false);
+  /** Something runs that the dialog has to stay open for: its close button looks off. */
+  stays = input(false);
   /** "side": a full-height sheet at the right edge, full width on a phone. */
   placement = input<"center" | "side">("center");
   dismiss = output<void>();
