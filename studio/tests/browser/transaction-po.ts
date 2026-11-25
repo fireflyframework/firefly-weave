@@ -24,8 +24,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { repository } from "../python-path";
-import { StepDetailsPage, withNewEditor } from "./step-details-po";
-import { offline, sourceText } from "./support";
+import { hostValidate, platformCompile } from "./local-authoring";
+import {
+  openStepFixture,
+  StepDetailsPage,
+  withNewEditor,
+  yamlFile,
+} from "./step-details-po";
+import { connected, offline, sourceText, type CatalogEntry } from "./support";
 
 /** The language manifest the Studio host serves, as the repository's Python writes it. */
 export const manifest = JSON.parse(
@@ -133,6 +139,79 @@ export async function openKept(page: Page): Promise<StepDetailsPage> {
   if (await show.isVisible()) await show.click();
   return new StepDetailsPage(page);
 }
+interface Definition {
+  kind: string;
+  metadata: { name: string; version: string };
+  spec: Record<string, unknown>;
+}
+/** The actions, called workflows and worker tasks the transaction tests compile against. */
+export const catalog = parse(
+  readFileSync(
+    join(repository, "tests/fixtures/transactions/catalog.yaml"),
+    "utf8",
+  ),
+) as { definitions: Definition[]; tasks: unknown[] };
+const actions = catalog.definitions.filter(({ kind }) => kind === "Action");
+
+/**
+ * A platform whose project publishes that catalog. Its own compiler checks a
+ * workflow, and so does the Studio host while it is edited.
+ */
+export async function connectedCatalog(page: Page) {
+  await connected(page, {
+    catalog: actions.map((document, index) => ({
+      id: `a${index}`,
+      document: document as unknown as CatalogEntry["document"],
+    })),
+  });
+  await withManifest(page);
+  await page.route(/\/projects\/[^/]+\/catalog$/, (route) =>
+    route.fulfill({
+      json: {
+        definitions: catalog.definitions.map((document) => ({
+          document,
+          digest: "0".repeat(64),
+        })),
+        tasks: catalog.tasks,
+        adapters: [],
+        schemas: {},
+      },
+    }),
+  );
+  await page.route("**/compiler/compile", async (route) => {
+    const body = route.request().postDataJSON() as {
+      source: unknown;
+      format: string;
+    };
+    const json = await platformCompile({ ...body, ...catalog });
+    await route.fulfill({ json }).catch(() => undefined);
+  });
+  await hostValidate(page);
+}
+/** Opens the workflow on that platform, on its canvas. */
+export const openConnectedMove = (
+  page: Page,
+  source: string,
+): Promise<StepDetailsPage> =>
+  openStepFixture(
+    page,
+    yamlFile("move-between-systems.yaml", source),
+    connectedCatalog,
+  );
+
+/** A step of move, as YAML; its other fields one per line. */
+export const step = (
+  id: string,
+  uses: string,
+  fields: Record<string, string> = {},
+) => `- id: ${id}
+  kind: action
+  uses: ${uses}
+  with: {object: {quantity: {ref: /input/quantity}, reference: {ref: /input/moveId}}}
+${Object.entries(fields)
+  .map(([name, value]) => `  ${name}: ${value}\n`)
+  .join("")}`;
+
 export interface MoveOptions {
   method?: string;
   features?: readonly string[];

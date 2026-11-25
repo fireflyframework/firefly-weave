@@ -90,6 +90,7 @@ export class ResourceViewerLayer implements AfterViewInit {
             [controlId]="controlId()"
             [options]="options()"
             [note]="spec().listNote ?? null"
+            [searchText]="spec().searchText ?? null"
             [value]="value()"
             [disabled]="!!readOnly()"
             [describedBy]="description()"

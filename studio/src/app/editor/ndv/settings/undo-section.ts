@@ -207,7 +207,7 @@ export class UndoSection {
       () =>
         this.element.nativeElement
           .querySelector<HTMLElement>(
-            ".settings-undo-fields .param-control :is(input, button):not([disabled])",
+            ".settings-undo-fields .param-control input:not([disabled])",
           )
           ?.focus(),
       { injector: this.injector },

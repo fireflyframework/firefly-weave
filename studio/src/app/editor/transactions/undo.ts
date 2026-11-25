@@ -21,7 +21,8 @@ SPDX-License-Identifier: Apache-2.0
 // the builder. Pure, and only loaded with step details.
 import type { Step } from "../../model";
 import type { LanguageManifest, ManifestStepField } from "../language-manifest";
-import type { Edit, Expression } from "../ndv/registry";
+import { durationWords } from "../ndv/params/field-rules";
+import type { Edit, Expression, Json } from "../ndv/registry";
 import type { UndoMode } from "./transaction-words";
 
 /** How a step is undone; null while nothing is chosen. */
@@ -29,7 +30,7 @@ export type UndoChoice = UndoMode | null;
 /** What a choice writes, relative to the step, as one undo step. */
 export type StepPatch = Edit[];
 /** One step of a step's undo: what confirms, releases or reverses it. */
-export type UndoOperation = "confirm" | "cancel" | "compensate";
+export type UndoOperation = (typeof UNDO_STEPS)[number];
 
 /** How long a transaction holds reservations when it doesn't say (contracts/transactions.py). */
 const HOLD_SECONDS = 900;
@@ -53,13 +54,9 @@ export const OPERATION_LABELS: Readonly<Record<UndoOperation, string>> = {
   cancel: "Release with",
   compensate: "Reverse with",
 };
-const FIELDS = [
-  "confirm",
-  "cancel",
-  "compensate",
-  "irreversible",
-  "holdSeconds",
-] as const;
+/** The steps of a step's undo, as the language names them. */
+export const UNDO_STEPS = ["confirm", "cancel", "compensate"] as const;
+const FIELDS = [...UNDO_STEPS, "irreversible", "holdSeconds"] as const;
 
 export type UndoRow =
   | {
@@ -176,9 +173,9 @@ export function writeUndo(
         ? [{ path: ["irreversible"], value: true }]
         : []),
     ],
-    removed: (["confirm", "cancel", "compensate"] as const)
-      .filter((name) => dropped.includes(name) && configured(step, name))
-      .map((name) => OPERATION_LABELS[name]),
+    removed: UNDO_STEPS.filter(
+      (name) => dropped.includes(name) && configured(step, name),
+    ).map((name) => OPERATION_LABELS[name]),
   };
 }
 
@@ -189,6 +186,81 @@ export const clearUndo = (step: Step): StepPatch =>
 /** The toast after a choice dropped operations: "Removed Confirm with and Release with." */
 export const removedUndoText = (removed: readonly string[]): string =>
   `Removed ${removed.join(" and ")}.`;
+
+/** An undo step is retried until it succeeds (TXN_UNDO_SIDE_EFFECT). */
+const SAFE_UNDO: ReadonlySet<string> = new Set([
+  "idempotent",
+  "idempotency_key",
+]);
+const NOT_SAFE =
+  "Weave retries undo steps until they succeed, so this action must be safe to retry.";
+/** The platform's finding on a called workflow without a time limit (TXN_CALL_TIMEOUT). */
+const NO_LIMIT = "Called workflows inside a transaction need a time limit.";
+
+/** What an undo picker knows of one action or workflow version. */
+export interface UndoCandidate {
+  kind: "action" | "callWorkflow";
+  /** An action's; nothing while Studio can't read it. */
+  sideEffect?: string;
+  /** A workflow's time limit, when it has one. */
+  timeoutSeconds?: number;
+}
+
+/** Why an action or a workflow can't undo a step, or null; the platform decides what Studio can't read. */
+export function undoPickerReason(row: UndoCandidate): string | null {
+  if (row.kind === "callWorkflow")
+    return row.timeoutSeconds === undefined ? NO_LIMIT : null;
+  return row.sideEffect && !SAFE_UNDO.has(row.sideEffect) ? NOT_SAFE : null;
+}
+
+/** The fact a picker's row ends with, or nothing while Studio can't read it. */
+export function undoFact(row: UndoCandidate): string | null {
+  if (row.kind === "callWorkflow")
+    return row.timeoutSeconds === undefined
+      ? "No time limit"
+      : `Up to ${durationWords(row.timeoutSeconds)}`;
+  if (!row.sideEffect) return null;
+  if (SAFE_UNDO.has(row.sideEffect)) return "Safe to retry";
+  return row.sideEffect === "read_only" ? "Reads data" : "Changes data";
+}
+
+const nameOf = (uses: unknown) =>
+  typeof uses === "string" ? uses.slice(0, Math.max(0, uses.indexOf("@"))) : "";
+
+/**
+ * What choosing another action or workflow makes of an undo step: its kind,
+ * and an input to fill again. Its own connection, which only YAML sets, stays
+ * with another version of the same action. Nothing while it is the same one.
+ */
+export function settledOperations(
+  before: Step,
+  after: Step,
+  kindOf: (uses: string) => "action" | "callWorkflow" | null,
+): Edit[] {
+  return UNDO_STEPS.flatMap((name) => {
+    const was = before[name];
+    const now = after[name];
+    if (!isRecord(was) || !isRecord(now) || was["uses"] === now["uses"])
+      return [];
+    const uses = typeof now["uses"] === "string" ? now["uses"] : "";
+    const kind =
+      (uses && kindOf(uses)) ||
+      (now["kind"] === "callWorkflow" ? "callWorkflow" : "action");
+    const keeps =
+      kind === "action" &&
+      now["connection"] !== undefined &&
+      nameOf(uses) === nameOf(was["uses"]);
+    return [
+      {
+        path: [name],
+        value: {
+          ...undoOperation(uses, kind),
+          ...(keeps ? { connection: now["connection"] as Json } : {}),
+        },
+      },
+    ];
+  });
+}
 
 /**
  * What a change of Hold for makes of it: nothing while it is the

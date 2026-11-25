@@ -19,8 +19,19 @@ SPDX-License-Identifier: Apache-2.0
 // way chosen. How it's undone has no field of its own in the document; its
 // choice is read from the fields each way has.
 import type { Step } from "../../model";
+import {
+  inputParams,
+  readableInput,
+  type TargetInput,
+} from "../ndv/kinds/forms/call-forms";
 import { durationParam } from "../ndv/kinds/forms/shared";
-import type { KindContext, ParamSpec } from "../ndv/registry";
+import { isRecord } from "../ndv/kinds/shared";
+import type {
+  Choice,
+  KindContext,
+  NdvContext,
+  ParamSpec,
+} from "../ndv/registry";
 import {
   OPERATION_LABELS,
   UNDO_OPERATIONS,
@@ -62,19 +73,92 @@ const NEEDS_PAIR =
   "A step that reserves needs both Confirm with and Release with.";
 const NEEDS_REVERSE = "Choose what reverses this step.";
 
-export interface UndoFieldsContext extends KindContext, UndoContext {}
+const RELEASE_HINT =
+  "Release must work even if the hold didn't go through. Use the step's operation key or your own reference.";
 
-/** The field that holds a way's operation: an action or a workflow version. */
-const operationParam = (name: UndoOperation): ParamSpec => ({
-  id: name,
-  path: [name, "uses"],
-  type: "resource",
-  label: OPERATION_LABELS[name],
-  required: true,
-  requiredText: name === "compensate" ? NEEDS_REVERSE : NEEDS_PAIR,
-  placeholder: "name@1.0.0",
-  whenHidden: "keep",
-});
+export interface UndoFieldsContext extends KindContext, UndoContext {
+  /** Why the project's actions and workflows aren't offered, or null. */
+  undoNote?: string | null;
+}
+
+/**
+ * What may undo the step, from step details' catalog port. One function for
+ * every form, so a field keeps its list while the form is drawn again.
+ */
+const operationChoices = (ndv: NdvContext) =>
+  ndv.catalog.undoTargets().then((rows) =>
+    rows.map(
+      ({ uses, title, group, aside, note, disabled }): Choice => ({
+        value: uses,
+        label: title,
+        group,
+        ...(aside ? { aside } : {}),
+        ...(note ? { note } : {}),
+        ...(disabled ? { disabled } : {}),
+      }),
+    ),
+  );
+
+/** The input of what an undo step runs, or null while Studio can't read it. */
+export function operationInput(
+  operation: Record<string, unknown>,
+  ctx: KindContext,
+): TargetInput | null {
+  const uses = operation["uses"];
+  if (typeof uses !== "string" || !uses) return null;
+  const call = operation["kind"] === "callWorkflow";
+  const contract = ctx.undoContract?.(uses, call ? "callWorkflow" : "action");
+  if (!isRecord(contract)) return null;
+  const spec = isRecord(contract["spec"]) ? contract["spec"] : {};
+  return call
+    ? readableInput(contract["inputSchema"], contract["schemas"])
+    : readableInput(spec["inputSchema"]);
+}
+
+/** A way's operation: the action or workflow version, and the rows of its input. */
+function operationParams(
+  name: UndoOperation,
+  step: Step,
+  ctx: UndoFieldsContext,
+): ParamSpec[] {
+  const label = OPERATION_LABELS[name];
+  const picker: ParamSpec = {
+    id: name,
+    path: [name, "uses"],
+    type: "resource",
+    label,
+    required: true,
+    requiredText: name === "compensate" ? NEEDS_REVERSE : NEEDS_PAIR,
+    placeholder: "name@1.0.0",
+    choices: operationChoices,
+    searchText: "Search actions and workflows",
+    ...(ctx.undoNote ? { listNote: ctx.undoNote } : {}),
+    whenHidden: "keep",
+  };
+  const operation = step[name];
+  const uses = isRecord(operation) ? operation["uses"] : undefined;
+  if (!isRecord(operation) || typeof uses !== "string" || !uses)
+    return [picker];
+  const target = operationInput(operation, ctx);
+  if (!target && ctx.viewingRun) return [picker];
+  return [
+    picker,
+    ...inputParams(
+      {
+        id: `${name}.input`,
+        path: [name, "with"],
+        value: operation["with"],
+        name: uses.slice(0, Math.max(0, uses.indexOf("@"))) || uses,
+        rows: {
+          label: `${label} input`,
+          labelHidden: true,
+          ...(name === "cancel" ? { hint: RELEASE_HINT } : {}),
+        },
+      },
+      target,
+    ),
+  ];
+}
 
 /** Hold for: the transaction's own unless the step sets another. */
 const holdParam = (step: Step, holdDefault: number): ParamSpec =>
@@ -116,7 +200,9 @@ export function undoFields(step: Step, ctx: UndoFieldsContext): ParamSpec[] {
   if (row.kind !== "choices" || !row.value) return [choice];
   return [
     choice,
-    ...UNDO_OPERATIONS[row.value].map(operationParam),
+    ...UNDO_OPERATIONS[row.value].flatMap((name) =>
+      operationParams(name, step, ctx),
+    ),
     ...(row.value === "reserve" ? [holdParam(step, row.holdDefault)] : []),
   ];
 }

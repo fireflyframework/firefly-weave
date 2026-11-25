@@ -50,11 +50,16 @@ import { actionSideEffect } from "./kinds/forms/action-forms";
 import { settledPolicy } from "./kinds/forms/transaction-forms";
 import type { LanguageManifest } from "../language-manifest";
 import { enclosingTransaction } from "../transactions/group";
-import { settledHold } from "../transactions/undo";
+import {
+  UNDO_STEPS,
+  settledHold,
+  settledOperations,
+} from "../transactions/undo";
 import {
   undoFields,
   type UndoFieldsContext,
 } from "../transactions/undo-fields";
+import { undoNote, undoTargets } from "../transactions/undo-targets";
 import {
   ownedActionsOf,
   usesOwning,
@@ -1264,7 +1269,30 @@ export class StepDetailsController {
         : null,
       sideEffect:
         node?.step.kind === "action" ? actionSideEffect(node.step, kind) : "",
+      undoNote: this.viewingRuns()
+        ? null
+        : undoNote(this.callSources().lock.current()),
     };
+  }
+  /** What an undo step runs: a published action's document, or a workflow's contract. */
+  private undoContract(
+    uses: string,
+    kind: "action" | "callWorkflow",
+  ): Json | null {
+    if (kind === "callWorkflow") return this.callSources().contract(uses);
+    const known = this.actionContract(uses);
+    if (known) return known;
+    const lock = this.callSources().lock.current();
+    return lock.kind === "ready"
+      ? ((lock.lock.actions.get(uses)?.document as Json | undefined) ?? null)
+      : null;
+  }
+  /** Whether a reference names an action or a workflow; null when Studio knows neither. */
+  private undoKind(uses: string): "action" | "callWorkflow" | null {
+    const lock = this.callSources().lock.current();
+    if (lock.kind === "ready" && lock.lock.actions.has(uses)) return "action";
+    if (this.callSources().contract(uses)) return "callWorkflow";
+    return this.actionContract(uses) ? "action" : null;
   }
   /** What fields in loop bodies can read, from the Studio host. */
   readonly loopScopes = new LoopScopes(
@@ -1456,6 +1484,7 @@ export class StepDetailsController {
       actionContract: (uses) => this.actionContract(uses),
       tableContract: (uses) => this.tableContract(uses),
       workflowContract: (uses) => this.callSources().contract(uses),
+      undoContract: (uses, kind) => this.undoContract(uses, kind),
       callNote: (uses) =>
         this.viewingRuns() ? null : this.callSources().note(uses),
       viewingRun: this.viewingRuns(),
@@ -2181,10 +2210,25 @@ export class StepDetailsController {
         )
           ? settledHold(settled.step, this.undoContext(target).inTransaction)
           : null;
+      // Another action or workflow in an undo step starts its input over.
+      const operations =
+        settled.step &&
+        env.subject.step &&
+        changes.some(
+          ({ scope, path }) =>
+            scope === "step" &&
+            path[1] === "uses" &&
+            UNDO_STEPS.some((name) => name === path[0]),
+        )
+          ? settledOperations(env.subject.step, settled.step, (uses) =>
+              this.undoKind(uses),
+            )
+          : [];
       const endChanges: FormChange[] = [
         ...(ended?.patch ?? []),
         ...(policy ? [policy] : []),
         ...(hold ? [hold] : []),
+        ...operations,
       ].map((edit) => ({
         scope: "step",
         path: edit.path,
@@ -2650,6 +2694,27 @@ export class StepDetailsController {
           if (host.model !== model || model.opened !== opened) return [];
           return workflowRows(
             sources.list(filter?.callableBy ?? model.definition.metadata.name),
+          );
+        },
+        undoTargets: async () => {
+          const { profile, api, stepDataScope } = host;
+          const sources = this.callSources();
+          const state = await sources.lock.read();
+          // The step, its workflow or the account changed meanwhile.
+          if (
+            host.model !== model ||
+            model.opened !== opened ||
+            host.profile !== profile ||
+            host.api !== api ||
+            host.stepDataScope !== stepDataScope ||
+            !this.step(target)
+          )
+            return [];
+          return undoTargets(state, model.definition.metadata.name, () =>
+            host.actionVersions.map((row) => {
+              const uses = `${String(row["name"])}@${String(row["version"])}`;
+              return { uses, contract: this.actionContract(uses) };
+            }),
           );
         },
         tablesNote: () => (this.tables?.needsSignIn() ? SIGN_IN_TO_LIST : null),

@@ -1366,8 +1366,8 @@ export class FormSession {
     if (!root || !subject.step) return undefined;
     try {
       return get(
-        decode(subject.step[String(root[0])] ?? undefined),
-        spec.path.slice(1),
+        decode(getAt(subject.step, root) ?? undefined),
+        spec.path.slice(root.length),
       );
     } catch {
       return undefined;

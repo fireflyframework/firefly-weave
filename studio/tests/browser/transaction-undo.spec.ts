@@ -128,11 +128,14 @@ test.describe("how a step is undone at 1440x900", () => {
     );
     // Its first field is next, and asks for an operation.
     const field = details.field("compensate");
-    const name = field.getByRole("textbox", { name: "Reverse with" });
-    await expect(name).toBeFocused();
+    await expect(
+      field.getByRole("combobox", { name: "Reverse with" }),
+    ).toBeFocused();
     await expect(field.getByRole("alert")).toHaveText(
       "Choose what reverses this step.",
     );
+    const name = field.getByRole("textbox", { name: "Reverse with" });
+    await field.getByRole("radio", { name: "By name" }).click();
     await name.fill("target-system.remove-quantity@1.0.0");
     await name.press("Enter");
     await expect(field.getByRole("alert")).toHaveCount(0);

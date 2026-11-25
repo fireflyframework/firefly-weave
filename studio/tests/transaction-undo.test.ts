@@ -472,10 +472,16 @@ describe("How it's undone in Settings", () => {
     expect(await shown({ confirm: CONFIRM, cancel: RELEASE })).toEqual([
       "undo",
       "confirm",
+      "confirm.input",
       "cancel",
+      "cancel.input",
       "undoHold",
     ]);
-    expect(await shown({ compensate: REMOVE })).toEqual(["undo", "compensate"]);
+    expect(await shown({ compensate: REMOVE })).toEqual([
+      "undo",
+      "compensate",
+      "compensate.input",
+    ]);
     expect(await shown({ irreversible: true })).toEqual(["undo"]);
   });
 
@@ -765,7 +771,10 @@ describe("a way of undoing a step, chosen in step details", () => {
     };
     expect(await changed({})).toEqual([]);
     expect(await changed({ irreversible: true })).toEqual(["undo"]);
-    expect(await changed({ compensate: REMOVE })).toEqual(["compensate"]);
+    expect(await changed({ compensate: REMOVE })).toEqual([
+      "compensate",
+      "compensate.input",
+    ]);
   });
 });
 

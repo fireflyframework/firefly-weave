@@ -43,7 +43,7 @@ from firefly_weave.sdk.openapi_import import import_openapi, init_policy, invent
 def dump(value):
     return value.model_dump(by_alias=True, mode="json")
 
-def test_catalog(definitions):
+def test_catalog(definitions, tasks=()):
     from firefly_weave.compiler.catalog import CatalogSnapshot
     from firefly_weave.connectors import email
     from firefly_weave.contracts.definitions import ConnectorDefinition, load_definition
@@ -52,7 +52,7 @@ def test_catalog(definitions):
     http, mail = HTTP_PROFILE_DESCRIPTOR, email.package.descriptor
     return CatalogSnapshot.from_definitions(
         [ConnectorDefinition.model_validate(http.manifest.value), ConnectorDefinition.model_validate(mail.manifest.value), *(load_definition(d) for d in definitions)],
-        tasks=[*http.capabilities, *mail.capabilities],
+        tasks=[*http.capabilities, *mail.capabilities, *tasks],
         adapters=[HTTP_ADAPTER, "weave-email"],
     )
 
@@ -116,7 +116,12 @@ def handle(path, raw, method="POST", match=None):
     if path == "/test/compile":
         from firefly_weave.compiler.api import compile_source
         body = json.loads(raw)
-        return json.loads(compile_source(body["source"], format=body["format"], catalog=test_catalog(body["definitions"])).to_bytes())
+        return json.loads(compile_source(body["source"], format=body["format"], catalog=test_catalog(body["definitions"], body.get("tasks", []))).to_bytes())
+    if path == "/studio/local/validate":
+        from firefly_weave.compiler.api import validate_authoring
+        from firefly_weave.studio.host import ValidationRequest
+        body = ValidationRequest.model_validate_json(raw)
+        return json.loads(validate_authoring(body.source, format=body.format, filename=body.filename).to_bytes())
     if path == "/studio/local/http-action":
         body = HttpActionBuild.model_validate_json(raw)
         return dump(author_http_action(body.request))
@@ -303,11 +308,27 @@ export async function platformCompile(body: {
   source: unknown;
   format: string;
   definitions: unknown[];
+  /** The worker tasks the definitions' actions run. */
+  tasks?: unknown[];
 }): Promise<Record<string, unknown>> {
   const reply = await ask("/test/compile", JSON.stringify(body));
   if (reply.status !== 200)
     throw new Error(`The test compile failed: ${JSON.stringify(reply.body)}`);
   return reply.body as Record<string, unknown>;
+}
+
+/** Answers the Studio host's own check of a workflow with the real Python code. */
+export async function hostValidate(page: Page) {
+  await ask("/test/ready", "{}");
+  await page.route("**/studio/local/validate", async (route) => {
+    const reply = await ask(
+      "/studio/local/validate",
+      route.request().postData() ?? "{}",
+    );
+    await route
+      .fulfill({ status: reply.status, json: reply.body })
+      .catch(() => undefined);
+  });
 }
 
 /** Answers /studio/local/{http-action,openapi/*,debug/*,decision/evaluate} with the real Python code. */

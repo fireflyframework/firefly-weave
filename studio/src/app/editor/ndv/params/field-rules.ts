@@ -91,7 +91,7 @@ const error = (code: RuleProblem["code"], message: string): RuleProblem => ({
 });
 
 /** "1 day", "30 seconds": a duration in the largest unit it is whole in. */
-function durationWords(seconds: number): string {
+export function durationWords(seconds: number): string {
   const [size, unit] = (
     [
       [86_400, "day"],
