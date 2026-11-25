@@ -460,6 +460,16 @@ def choices(run: Run) -> list[tuple[str, str]]:
     return found
 
 
+def to_doubt(run: Run) -> None:
+    """Bring the run to a person if it can get there: every step succeeds, and every confirm, cancel and undo fails."""
+    for _ in range(25):
+        going = [(kind, key) for kind, key in choices(run) if key and kind in {"done", "succeeded", "fire", "failed"}]
+        wanted = [(kind, key) for kind, key in going if (kind == "failed") == (split_phase(key) is not None)]
+        if run.state.status in TERMINAL | {"suspended"} or not wanted:
+            return
+        tell(run, *wanted[0])
+
+
 @settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(st.data())
 def test_whatever_happens_continue_with_nothing_after_the_block_reduces_exactly_like_no_setting(data):
@@ -479,6 +489,11 @@ def test_whatever_happens_continue_with_nothing_after_the_block_reduces_exactly_
 def test_no_event_of_a_run_with_a_transaction_escapes_the_kernel(artifact, data):
     run = Run(artifact)
     run.start()
+    if (ending := data.draw(st.sampled_from([None, "completed", "compensated"]))) is not None:
+        # A person decides only about a transaction in doubt, which few stories reach by chance.
+        to_doubt(run)
+        if ("say", ending) in choices(run):
+            tell(run, "say", ending)
     for _ in range(25):
         if run.state.status in TERMINAL:
             break
