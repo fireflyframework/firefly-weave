@@ -1514,6 +1514,85 @@ test.describe("platform filters, direct links and opening times", () => {
     await expect(page.locator("weave-incident-drawer")).toHaveCount(0);
   });
 
+  for (const [name, refused, heading] of [
+    [
+      "missing",
+      { status: 404, code: "WV-NOT-FOUND" },
+      "This incident can't be found",
+    ],
+    [
+      "refused",
+      { status: 403, code: "WV-FORBIDDEN" },
+      "You don't have access to this incident",
+    ],
+  ] as const)
+    test(`Try again reads an incident that was ${name}, keeps the focus, and opens it once it answers`, async ({
+      page,
+    }) => {
+      await inbox(page, ["incident.read"]);
+      const reads: Route[] = [];
+      await page.route(`${environment}/incidents/${hidden}`, (route) => {
+        reads.push(route);
+      });
+      const answer = {
+        status: refused.status,
+        json: { code: refused.code, message: "No" },
+      };
+      await page.goto(`/operate/incidents?incident=${hidden}`);
+      await expect.poll(() => reads.length).toBe(1);
+      await reads[0].fulfill(answer);
+      const problem = page.locator(".empty-state").filter({
+        has: page.getByRole("heading", { name: heading }),
+      });
+      const again = problem.getByRole("button", { name: "Try again" });
+      await expect(again).toBeVisible();
+      await page.screenshot({ path: `${captures}/incident-${name}.png` });
+      await again.focus();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => reads.length).toBe(2);
+      // A second press while it is on its way reads nothing.
+      await page.keyboard.press("Enter");
+      await expect(again).toBeFocused();
+      await reads[1].fulfill(answer);
+      await page.evaluate(
+        () => new Promise((done) => requestAnimationFrame(done)),
+      );
+      await expect(again).toBeFocused();
+      expect(reads).toHaveLength(2);
+      await page.keyboard.press("Enter");
+      await expect.poll(() => reads.length).toBe(3);
+      await reads[2].fulfill({ json: incident(hidden, facts) });
+      const title = page.locator("#incident-detail-title");
+      await expect(title).toHaveText("Incident WV-TASK-AMBIGUOUS");
+      await expect(problem).toHaveCount(0);
+      await expect(title).toBeFocused();
+    });
+
+  test("an incident that couldn't be opened is forgotten once the address no longer names it", async ({
+    page,
+  }) => {
+    await inbox(page, ["incident.read"]);
+    await page.goto(`/operate/incidents?incident=${hidden}`);
+    const problem = page.getByRole("heading", {
+      name: "This incident can't be found",
+    });
+    await expect(problem).toBeVisible();
+    await page.getByLabel("Include test runs").check();
+    await expect(page).toHaveURL(/\/operate\/incidents\?include_test=true$/);
+    await expect(problem).toHaveCount(0);
+    await expect(rows(page)).toHaveCount(1);
+    // Nor after Back, or a link to the list.
+    const move = (query: string) =>
+      page.evaluate((to) => {
+        history.pushState(null, "", `/operate/incidents${to}`);
+        dispatchEvent(new PopStateEvent("popstate"));
+      }, query);
+    await move(`?incident=${hidden}`);
+    await expect(problem).toBeVisible();
+    await move("");
+    await expect(problem).toHaveCount(0);
+  });
+
   for (const [name, extra, expected, hint] of [
     ["estimated", { opened_at_estimated: true }, /\(estimated\)/, true],
     ["exact", { opened_at_estimated: false }, /ago$/, false],
@@ -1860,6 +1939,45 @@ test.describe("transactions in doubt", () => {
     await expect(page).toHaveURL(
       new RegExp(`/operate/incidents\\?incident=${ids.caller}$`),
     );
+  });
+
+  test("Open on a case member that couldn't be read reads it again, once at a time", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, { items: [called, ...others] });
+    const reads: Route[] = [];
+    await page.route(`${environment}/incidents/${ids.caller}`, (route) => {
+      reads.push(route);
+    });
+    await page.goto("/operate/incidents");
+    const open = caseOf(page).getByRole("button", {
+      name: "Open incident WV-TXN-SETTLE-TIMEOUT, move in run 6d18b3f0",
+    });
+    await open.click();
+    await expect.poll(() => reads.length).toBe(1);
+    await reads[0].fulfill({
+      status: 404,
+      json: { code: "WV-NOT-FOUND", message: "Incident not found" },
+    });
+    const missing = page.getByRole("heading", {
+      name: "This incident can't be found",
+    });
+    await expect(missing).toBeVisible();
+    // The address names it already: Open reads it all the same.
+    await open.click();
+    await expect.poll(() => reads.length).toBe(2);
+    // Nor does a press while it is on its way read it once more.
+    await open.click();
+    await page.evaluate(
+      () => new Promise((done) => requestAnimationFrame(done)),
+    );
+    expect(reads).toHaveLength(2);
+    await reads[1].fulfill({ json: caller });
+    await expect(
+      page.locator("weave-incident-drawer #incident-detail-title"),
+    ).toHaveText("Incident WV-TXN-SETTLE-TIMEOUT");
+    await expect(missing).toHaveCount(0);
+    await expect(open).toBeFocused();
   });
 
   test("each band loads more with its own cursor, and a refresh reads each band's own pages", async ({

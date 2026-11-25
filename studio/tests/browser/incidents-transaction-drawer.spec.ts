@@ -496,7 +496,7 @@ for (const [how, ask] of [
     await reads[0].fulfill(unavailable);
     await expect(links(page, "Waits on").getByRole("alert")).toBeVisible();
     await ask(page);
-    await expect.poll(() => later.length).not.toBe(0);
+    await expect.poll(() => later.length).toBe(1);
     // It is on its way: the partner asked for before it isn't read again.
     await expect(links(page, "Waits on").getByRole("alert")).toHaveCount(0);
     await page.clock.fastForward(6_000);

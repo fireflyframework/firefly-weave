@@ -18,7 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // The states every Operate page and section shares: loading skeletons shaped
 // like a table, an empty reason with its next action, an error with its code
 // and Try again, a section that could not load, and the capability a person
-// lacks. Pages show it in place of their content.
+// lacks, with the page's own Try again where reading again may be allowed.
+// Pages show it in place of their content.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -61,6 +62,7 @@ export type OperateStateKind =
           You need <code>{{ capability() }}</code> in this environment. Ask an
           administrator in Settings › People and access.
         </p>
+        <ng-content select="[tryAgain]" />
       </div>
     }
     @default {

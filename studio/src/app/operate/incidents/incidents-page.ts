@@ -32,10 +32,12 @@ import {
   DoCheck,
   ElementRef,
   HostListener,
+  Injector,
   Input,
   OnDestroy,
   OnInit,
   afterEveryRender,
+  afterNextRender,
   inject,
 } from "@angular/core";
 import { NavigationEnd, Router } from "@angular/router";
@@ -345,19 +347,27 @@ interface Band {
             kind="access"
             heading="You don't have access to this incident"
             capability="incident.read"
-          />
+          >
+            <button type="button" tryAgain (click)="openFromAddress(true)">
+              Try again
+            </button>
+          </weave-operate-state>
         } @else if (failed.status === 404) {
           <weave-operate-state
             kind="empty"
             heading="This incident can't be found"
             text="It may belong to another environment, or its run's data was deleted."
-          />
+          >
+            <button type="button" (click)="openFromAddress(true)">
+              Try again
+            </button>
+          </weave-operate-state>
         } @else {
           <weave-operate-state
             kind="error"
             [message]="failed.message"
             [code]="failed.code"
-            (retry)="openFromAddress()"
+            (retry)="openFromAddress(true)"
           />
         }
       }
@@ -713,6 +723,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   @Input({ required: true }) host!: App;
   private cdr = inject(ChangeDetectorRef);
   private element = inject<ElementRef<HTMLElement>>(ElementRef);
+  private injector = inject(Injector);
   private router = inject(Router);
   private navigated = this.router.events.subscribe((event) => {
     if (event instanceof NavigationEnd) this.addressChanged();
@@ -868,6 +879,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       this.changed();
     }
     const id = incidentFromQuery(location.search);
+    // It no longer names the incident that couldn't be opened.
+    if (!id || this.selected?.id === id) this.detailProblem = null;
     if (!id) {
       if (this.selected && !this.resolving) this.close(false);
     } else if (this.selected?.id !== id) void this.openFromAddress();
@@ -1134,6 +1147,9 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     this.forgetPartner();
     const loaded = this.incidents.find((item) => item.id === link.id);
     if (loaded && !isUnavailableIncident(loaded)) this.open(loaded);
+    // The address names it already, so nothing would move.
+    else if (incidentFromQuery(location.search) === link.id)
+      void this.openFromAddress(true);
     else
       void this.router.navigateByUrl(
         viewPath("incidents") + incidentFiltersToQuery(this.filters, link.id),
@@ -1150,17 +1166,19 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   }
   /**
    * Opens the incident the address names from incidents.read, whether or not
-   * a loaded page lists it. A refusal or a missing incident is explained
-   * above the list.
+   * a loaded page lists it; one on its way isn't read twice. A refusal or a
+   * missing incident is explained above the list, where it stays while it is
+   * read `again`.
    */
-  async openFromAddress() {
+  async openFromAddress(again = false) {
     const scope = this.scope;
     const id = incidentFromQuery(location.search);
     if (!scope || !id || !this.host.identity || !this.readable) return;
     this.forgetPartner();
+    if (this.opening === id) return;
     const generation = this.generation;
     this.opening = id;
-    this.detailProblem = null;
+    if (!again) this.detailProblem = null;
     try {
       const incident = await this.host.api.request<IncidentRecord>(
         `${scope}/incidents/${encodeURIComponent(id)}`,
@@ -1180,6 +1198,10 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       this.selected = incident;
       this.resolving = false;
       this.failure = null;
+      // The Try again it was asked from goes.
+      if (document.activeElement?.closest("weave-operate-state"))
+        afterNextRender(() => this.focusTitle(), { injector: this.injector });
+      this.detailProblem = null;
       void this.loadEvents(incident);
     } catch (error) {
       if (generation !== this.generation || this.opening !== id) return;
