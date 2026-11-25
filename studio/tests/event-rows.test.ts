@@ -363,7 +363,7 @@ async function shown(
   return eventResultView(applied, result);
 }
 const BOTH =
-  "Both start notify-team for every new event until you stop it in Starts or at the next activation.";
+  "Both start notify-team for each event they share until you stop it in Starts or at the next activation.";
 
 describe("a row after activating", () => {
   it("says what was created, moved and stopped", async () => {
@@ -555,7 +555,7 @@ describe("a row after activating", () => {
       ...PLAIN,
       lead: "Created notify-team-2. notify-team has 3 events waiting to start. Stopping it now skips them.",
       detail:
-        "Keep it for now and both start notify-team for every new event until you stop it in Starts or at the next activation.",
+        "Keep it for now and both start notify-team for each event they share until you stop it in Starts or at the next activation.",
       tone: "warning",
       icon: "warning",
       action: "choose",

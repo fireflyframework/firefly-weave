@@ -316,7 +316,7 @@ test("a stop still owed comes first, marks the tab, and is made here", async ({
   ]);
   await stop.click();
   await expect(warning).toContainText(
-    /notify-team has 3 events waiting to start\. Stopping it now skips them\.\s*Keep it for now and both start notify-team for every new event until you stop it\./,
+    /notify-team has 3 events waiting to start\. Stopping it now skips them\.\s*Keep it for now and both start notify-team for each event they share until you stop it\./,
   );
   const keep = warning.getByRole("button", { name: "Keep it for now" });
   await expect(keep).toBeFocused();
@@ -386,7 +386,7 @@ test("a stop refused or a trigger changed says so, and focus goes to the way on"
   const warning = panel.locator(".es-callout");
   await warning.getByRole("button", { name: "Stop it" }).click();
   await expect(warning).toContainText(
-    /Couldn't stop notify-team: The platform didn't answer in time\.\s*Both start notify-team for every new event until you stop it\./,
+    /Couldn't stop notify-team: The platform didn't answer in time\.\s*Both start notify-team for each event they share until you stop it\./,
   );
   await expect(warning.getByRole("button", { name: "Stop it" })).toBeFocused();
   platform.find("t-1")!["revision"] = 9;

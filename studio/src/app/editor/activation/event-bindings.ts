@@ -260,10 +260,10 @@ export const second = (workflow: string, name: string, shared: boolean) =>
   shared
     ? `Two triggers start ${workflow} for the same events.`
     : `Trigger ${name} also starts this workflow, for other events.`;
-/** "both start notify-team for every new event", while two triggers react. */
+/** "both start notify-team for each event they share", while two triggers react. */
 export const bothStart = (workflow: string, shared: boolean) =>
   shared
-    ? `both start ${workflow} for every new event`
+    ? `both start ${workflow} for each event they share`
     : "both start this workflow, for different events,";
 /** The stop Studio owes for a trigger as it was read. */
 export const owedStop = (view: EventTriggerView): PendingStop => ({

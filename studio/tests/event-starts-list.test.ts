@@ -572,7 +572,7 @@ describe("a stop Studio still owes", () => {
       tone: "warning",
       lead: "notify-team has 3 events waiting to start. Stopping it now skips them.",
       detail:
-        "Keep it for now and both start notify-team for every new event until you stop it.",
+        "Keep it for now and both start notify-team for each event they share until you stop it.",
       actions: ["keep", "now"],
       busy: false,
     });
@@ -647,7 +647,8 @@ describe("a stop Studio still owes", () => {
     expect(callout(f)).toEqual({
       tone: "danger",
       lead: "Couldn't stop notify-team: the platform didn't answer in time.",
-      detail: "Both start notify-team for every new event until you stop it.",
+      detail:
+        "Both start notify-team for each event they share until you stop it.",
       actions: ["stop"],
       busy: false,
     });

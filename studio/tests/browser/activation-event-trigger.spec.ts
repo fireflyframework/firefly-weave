@@ -150,7 +150,7 @@ test("a stop that would skip waiting events is asked; Done keeps the old trigger
     "Created notify-team-2. notify-team has 3 events waiting to start. Stopping it now skips them.",
   );
   await expect(asking).toContainText(
-    "Keep it for now and both start notify-team for every new event until you stop it in Starts or at the next activation.",
+    "Keep it for now and both start notify-team for each event they share until you stop it in Starts or at the next activation.",
   );
   await expect(dialog.locator("#activation-summary")).toHaveText(
     /^\s*Activated in .*development\. 1 trigger needs your choice\.\s*$/,
@@ -220,7 +220,7 @@ test("Stop now stops it, and Keep it for now leaves the choice answered", async 
   await activate(dialog);
   await dialog.getByRole("button", { name: "Keep it for now" }).click();
   await expect(eventRows(dialog)).toHaveText([
-    /^\s*Created notify-team-2\. Kept notify-team for now\.\s*Both start notify-team for every new event until you stop it in Starts or at the next activation\.\s*$/,
+    /^\s*Created notify-team-2\. Kept notify-team for now\.\s*Both start notify-team for each event they share until you stop it in Starts or at the next activation\.\s*$/,
   ]);
   await expect(dialog.locator("#activation-summary")).toHaveText(
     /^\s*Activated in .*development\.\s*$/,
@@ -285,7 +285,7 @@ test("a stop that fails says so with Stop it, which tries once more", async ({
     "Created notify-team-2, but couldn't stop notify-team: The platform didn't answer in time.",
   ]);
   await expect(eventRows(dialog)).toContainText([
-    "Both start notify-team for every new event until you stop it in Starts or at the next activation.",
+    "Both start notify-team for each event they share until you stop it in Starts or at the next activation.",
   ]);
   await expect(dialog.locator("#activation-summary")).toContainText(
     "1 trigger needs attention.",

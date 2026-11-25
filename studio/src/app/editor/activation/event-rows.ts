@@ -178,7 +178,7 @@ export function eventRowView(row: EventRow): EventRowView {
   }
 }
 
-/** "both start notify-team for every new event until you stop it…", while another trigger reacts beside this one. */
+/** "both start notify-team for each event they share until you stop it…", while another trigger reacts beside this one. */
 const both = (row: EventRow): string | null => {
   if (row.kind !== "replace" && row.kind !== "duplicate") return null;
   const shared =
