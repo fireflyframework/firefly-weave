@@ -222,6 +222,18 @@ def test_the_first_rules_refuse_that_the_step_didnt_happen_behind_a_reads_deferr
     assert run.state.incidents["submit:0"].code == "WV-RUNTIME-EVENT"
 
 
+def test_the_first_rules_lose_a_read_that_failed_while_the_step_beside_it_decided():
+    run = Run(compiled([transaction([hold(), parallel(submit(), lookup())])]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("lookup", "UNAVAILABLE", effect="unknown", generation=3)
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    # Nothing is left to happen: the read's branch never ends, and no incident says so.
+    assert (run.state.status, run.state.active, run.state.incidents) == ("waiting", [], {})
+    assert run.txn().status == "committing" and "failed_beside" not in run.state.model_dump_json()
+
+
 def test_a_stuck_confirm_waits_beside_a_stuck_step_only_when_the_step_was_already_in_flight():
     # Otherwise the body waits for every confirm, so no step after the point of no return is in flight with one.
     run = after_pivot_pair()

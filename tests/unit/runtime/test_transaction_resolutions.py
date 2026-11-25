@@ -615,6 +615,79 @@ def test_a_step_retried_after_the_confirm_beside_it_finished_lets_the_body_go_on
     assert (run.txn().status, run.state.status) == ("completed", "succeeded")
 
 
+def deciding(*beside) -> Run:
+    """The step that can't be undone is in flight, and so are the steps beside it."""
+    run = Run(compiled([transaction([hold(), parallel(submit(), *beside)])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    assert run.txn().status == "deciding"
+    return run
+
+
+def test_a_step_that_failed_while_the_step_beside_it_decided_is_stuck_once_that_one_succeeds():
+    run = deciding(lookup(), lookup("lookup2"))
+    run.failed("lookup2", "UNAVAILABLE", effect="unknown", generation=3)
+    run.failed("lookup", "REJECTED", effect="none", generation=1)
+    # The result of the step that can't be undone decides what becomes of them.
+    assert (run.txn().status, run.state.incidents, run.state.active) == ("deciding", {}, ["submit"])
+    [confirm] = tasks(run.done("submit", {"orderId": "o-1"}))
+    assert confirm.node_id == "hold#confirm"
+    assert {key: (item.code, item.origin_code) for key, item in run.state.incidents.items()} == {
+        "lookup2:3": ("WV-TXN-AFTER-PIVOT-STUCK", "UNAVAILABLE"),
+        "lookup:1": ("WV-TXN-AFTER-PIVOT-STUCK", "REJECTED"),
+    }
+    assert (run.txn().status, run.txn().incident, run.txn().failed_beside) == ("in_doubt", "lookup2:3", [])
+    run.done("hold#confirm", {})
+    for key, generation in (("lookup:1", 2), ("lookup2:3", 4)):
+        resolve(run, key, "retry_safe")
+        run.done(key.partition(":")[0], {"count": 1}, generation=generation)
+    assert (run.txn().status, run.state.status) == ("completed", "succeeded")
+
+
+@pytest.mark.parametrize("told", ["it failed", "it didn't happen", "force end"])
+def test_a_step_that_failed_while_the_step_beside_it_decided_leaves_nothing_once_that_one_goes_back(told):
+    run = deciding(lookup())
+    run.failed("lookup", "UNAVAILABLE", effect="unknown", generation=3)
+    if told == "it failed":
+        run.failed("submit", "REFUSED", effect="none")
+    else:
+        run.failed("submit", "TIMEOUT", effect="unknown", generation=3)
+        assert [item.node_id for item in run.txn().failed_beside] == ["lookup"]
+        resolve(run, "submit:3", "terminate" if told == "force end" else "accept_reconciled_failure")
+    assert (run.state.incidents, run.txn().failed_beside) == ({}, [])
+    if told == "force end":
+        assert (run.txn().status, run.state.status) == ("force_ended", "cancelled")
+        return
+    # It goes back for the failure that came first.
+    assert run.txn().cause is not None and run.txn().cause.instance_key == "lookup"
+    run.done("hold#cancel", {})
+    assert (run.txn().status, run.state.status) == ("cancelled", "failed")
+
+
+def test_a_step_that_failed_while_the_step_beside_it_was_unknown_is_stuck_once_that_one_happened():
+    run = deciding(lookup())
+    run.failed("lookup", "UNAVAILABLE", effect="unknown", generation=3)
+    run.failed("submit", "TIMEOUT", effect="unknown", generation=3)
+    assert list(run.state.incidents) == ["submit:3"]
+    resolve(run, "submit:3", "accept_reconciled_result", {"orderId": "o-found"})
+    assert (list(run.state.incidents), run.txn().status) == (["lookup:3"], "in_doubt")
+
+
+def test_a_fail_step_reached_while_the_step_beside_it_decided_is_stuck_once_that_one_succeeds():
+    stop = {"id": "stop", "kind": "fail", "code": "STOPPED", "message": "Stopped."}
+    branches = {"b0": {"steps": [submit()], "output": {"literal": None}}}
+    branches["b1"] = {"steps": [lookup(), stop], "output": {"literal": None}}
+    fork = {"id": "both", "kind": "parallel", "concurrency": 2, "branches": branches}
+    run = Run(compiled([transaction([hold(), fork])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.done("lookup", {"count": 1})
+    run.done("submit", {"orderId": "o-1"})
+    assert run.state.incidents["stop:0"].code == "WV-TXN-AFTER-PIVOT-STUCK"
+    resolve(run, "stop:0", "terminate")
+    assert (run.txn().status, run.state.status) == ("force_ended", "cancelled")
+
+
 def test_either_incident_of_a_stuck_confirm_beside_a_stuck_step_decides_the_transaction():
     for key in ("hold#confirm:2", "lookup:3"):
         run = after_pivot_pair(run_rules=2)

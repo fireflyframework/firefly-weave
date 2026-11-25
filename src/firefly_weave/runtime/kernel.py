@@ -1059,6 +1059,9 @@ def _advance_owned(
     def rollback(key: str) -> None:
         nonlocal current_state
         cancel_scope(key)
+        if record(key).failed_beside:
+            # They go back with the rest: nothing is left to decide about them.
+            update(key, failed_beside=[])
         # A participant's result held behind a pause or another incident is settlement work now: the rollback
         # applies it at once instead of waiting in flight for a result Weave already has.
         flying = {item.key for item in record(key).participants if item.status == "dispatched"}
@@ -1096,11 +1099,17 @@ def _advance_owned(
 
     def commit(key: str) -> None:
         update(key, status="committing", decided_at_sequence=event.sequence, pending_abort=None)
+        beside = record(key).failed_beside
+        if beside:
+            update(key, failed_beside=[])
         for index, item in enumerate(record(key).participants):
             if item.mode == "reserve" and item.status == "done":
                 issue(key, index, "confirm")
                 if record(key).status != "committing":
-                    return
+                    break
+        for failed in beside:
+            # Nothing can be undone any more, so a step that failed for good meanwhile is stuck after it.
+            in_doubt(key, failed.code, failed.node_id, failed.generation, failed.origin_code)
         commit_progress(key)
 
     def commit_progress(key: str) -> None:
@@ -1250,6 +1259,11 @@ def _advance_owned(
             # A step that changes nothing failed: it undoes the transaction like any failure.
             if transaction.status in {"open", "deciding"}:
                 abort(key, TransactionCause(code=code, instance_key=name, effect="none"))
+                if rules_2() and transaction.status == "deciding":
+                    stuck = IncidentState(
+                        node_id=name, generation=generation, code="WV-TXN-AFTER-PIVOT-STUCK", origin_code=code
+                    )
+                    update(key, failed_beside=[*record(key).failed_beside, stuck])
             elif transaction.status == "committing":
                 in_doubt(key, "WV-TXN-AFTER-PIVOT-STUCK", name, generation, code)
             return
@@ -1605,6 +1619,8 @@ def _advance_owned(
             e for e in current_state.deferred_results if holder_of(str(e.data.get("node_id"))) != key
         ]
         update(key, resume=[])
+        if record(key).failed_beside:
+            update(key, failed_beside=[])
         if rules_2():
             # A person decided the whole transaction, so nothing is left to decide about any step of it.
             close_incidents(

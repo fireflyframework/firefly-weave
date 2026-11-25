@@ -169,6 +169,9 @@ class TransactionRecord(ContractModel):
     # How a person said a transaction in doubt ended when they marked it reconciled.
     reconciled_as: Literal["completed", "compensated"] | None = Field(default=None, exclude_if=lambda v: v is None)
     participants: list[ParticipantRecord] = Field(default_factory=list)
+    # Body steps that failed for good while the step that can't be undone was in flight, under the second rules: its
+    # result decides whether they are stuck, or go back with the rest.
+    failed_beside: list[IncidentState] = Field(default_factory=list, exclude_if=lambda v: not v)
     # Body steps that wait for every reservation to be confirmed.
     resume: list[str] = Field(default_factory=list, exclude_if=lambda v: not v)
     # Changes since the projection was written; persisted with the state.
