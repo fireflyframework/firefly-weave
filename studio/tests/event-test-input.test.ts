@@ -580,8 +580,10 @@ describe("a real platform event a test call brings", () => {
     const f = setup();
     await kafkaPane(f).enter(realEvent());
     const entered = kept(f.controller);
-    await receive(f, realEvent());
-    expect(kept(f.controller)).toEqual(entered);
+    expect(await receive(f, realEvent())).toMatchObject({
+      value: entered,
+      source: "test-call",
+    });
   });
 
   it("isn't kept with a field the platform event hasn't", async () => {
@@ -596,9 +598,8 @@ describe("a real platform event a test call brings", () => {
       type: "object",
       properties: { token: { type: "string", "x-secret": true } },
     });
-    expect(await receive(f, { token: "s3cret", id: "o-1" })).toMatchObject({
-      value: { id: "o-1" },
-    });
+    const input = await receive(f, { token: "s3cret", id: "o-1" });
+    expect(input?.value).toEqual({ id: "o-1" });
   });
 });
 
