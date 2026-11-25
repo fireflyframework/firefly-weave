@@ -237,7 +237,10 @@ revision cannot both win. Authority is checked before a resend
 is honored, so removing a grant also stops resends.
 Two decisions sent at once on one incident queue: the later one waits up to 2
 seconds for the earlier one, then answers HTTP 409 `WV-INCIDENT-REVISION` (or
-429 `WV-OPERATION-CAPACITY` if the wait runs out). A caller without
+429 `WV-OPERATION-CAPACITY` if the wait runs out). Decisions on two incidents of
+one transaction, or a decision and a cancel, don't queue for each other: the later
+one answers 429 `WV-OPERATION-CAPACITY` and changes nothing. Read the incident
+again and decide again. A caller without
 `incident.resolve` is refused with HTTP 403 `WV-FORBIDDEN` at once and never
 waits.
 
@@ -280,7 +283,8 @@ transaction.
 | Force end | `terminate` | `incident.resolve`, `transaction.reconcile` | The transaction ends `force_ended` and the run `cancelled`, `external_effects_may_continue: true`. On a run held behind `WV-TXN-RUN-OVERSIZED`, every open transaction ends this way |
 
 Any decision while the stuck step's latest attempt or child run is still running
-is refused (HTTP 409 `WV-RUNTIME-STATE`). After a settle timeout the steps still
+is refused (HTTP 409 `WV-RUNTIME-STATE`), Force end included. When a called run
+doesn't end, cancel that run, then decide. After a settle timeout the steps still
 in flight are what you decide about: Mark as reconciled and Force end settle
 them (their leases are revoked and their child runs asked to stop), they don't
 wait for them. The audit record adds the transaction's key and, for a
@@ -296,7 +300,8 @@ tried again raises no revision.
 What already happened counts too. A deadline that passed or a called run that
 ended is applied before the revision is checked, so a decision on a view that
 doesn't have it yet is refused as well. The refusal applies nothing. The next
-recovery scan does, and the incident then shows it.
+recovery scan does, and the incident then shows it. Force end waits for none of
+it: only what ends the run, such as its own time limit, is applied around it.
 
 A decision that ends a transaction, or stops steps of it, closes their open
 incidents too, a failure that recovery still handles included. Each one ends
@@ -343,14 +348,27 @@ these; a step that confirmed while you decided stays `confirmed`.
 
 A reconciler can also cancel a run without undoing its open transactions:
 `{"reason": "...", "skip_undo": true}` needs `transaction.reconcile`, ends them
-`force_ended`, and answers `external_effects_may_continue: true`. While an open
-transaction is in doubt, or the run is held behind `WV-TXN-RUN-OVERSIZED`, that
-cancel is refused too (HTTP 409 `WV-TXN-IN-DOUBT`) and changes nothing: Force end
-on the incident is the way past it. It is not refused for a run whose incident
-nobody can resolve, such as one over the fetch budget of retained runs. An
-incident in doubt that a cancel closes ends `resolved` with the kind `terminate`,
-the cancel's actor and reason, and the cancel event's ID as its receipt. The
-cancel's audit record lists their IDs in `closed`.
+`force_ended`, and answers `external_effects_may_continue: true`.
+
+That cancel is refused too (HTTP 409 `WV-TXN-IN-DOUBT`) and changes nothing in two
+cases: while the run is held behind `WV-TXN-RUN-OVERSIZED`, and while the run has
+an open transaction and any incident in doubt is open. The second counts an
+incident of a transaction that a person already ended, too. The ways past it are
+decisions on the incident:
+
+| What holds the run | The way past it |
+| --- | --- |
+| A transaction in doubt | Any decision on its incident; Force end if nothing else fits |
+| An incident of a transaction a person already ended | Retry (`retry_safe`), which closes it |
+| A step in doubt whose called run still runs | Cancel the called run, then decide |
+| `WV-TXN-RUN-OVERSIZED` | Force end on that incident |
+
+It isn't refused for a run over the fetch budget of retained runs, whose incidents
+take no decision.
+
+An incident in doubt that a cancel closes ends `resolved` with the kind
+`terminate`, the cancel's actor and reason, and the cancel event's ID as its
+receipt. The cancel's audit record lists the incident IDs in `closed`.
 
 Retiring an activation that a running transaction may still need to undo a step is
 refused (HTTP 409 `WV-TXN-UNDO-PINNED`) unless the request has `?force=true`, a

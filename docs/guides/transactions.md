@@ -116,7 +116,13 @@ and record your decision on each one. When someone else's decision, or a step
 that finishes, changes the transaction while you decide, your decision is refused
 with HTTP 409 `WV-INCIDENT-REVISION`: read the incident again and check again.
 
-Two cases to know:
+Three cases to know:
+
+- **A called run hasn't ended.** The time of a step that calls a workflow can be up
+  while the called run still runs. Until that run ends, every decision on the
+  step's incident answers HTTP 409 `WV-RUNTIME-STATE`, Force end included, and the
+  caller can't be canceled past it. Cancel the called run, or wait for it to end;
+  then decide.
 
 - **A step fails beside the one that can't be undone.** A read in another branch
   can fail for good while the order is in flight. Nothing is asked of you until
@@ -146,9 +152,10 @@ for the request bodies.
 ## 5. Stop a run without undoing it
 
 A reconciler can cancel a run without undoing its open transactions: they end
-`force_ended` and `external_effects_may_continue` is `true`. While one of them is
-in doubt, that cancel is refused, as a plain one is: resolve its incident instead,
-by Force end if nothing else fits.
+`force_ended` and `external_effects_may_continue` is `true`. While the run has an
+open transaction, any open incident in doubt refuses that cancel, as it refuses a
+plain one: resolve it instead, by Force end if nothing else fits. That includes an
+incident of a transaction a person already ended, which Retry closes.
 
 ```bash
 weave runs cancel "$RUN_ID" --request cancel.json   # {"reason": "...", "skip_undo": true}

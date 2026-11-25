@@ -713,9 +713,14 @@ replay to the same bytes.
   older view answers HTTP 409 `WV-INCIDENT-REVISION`.
 - **Mark as reconciled no longer waits** for a failure that recovery is still
   handling, which answered HTTP 409 `WV-RUNTIME-STATE`.
-- **A cancel without undoing is refused** (HTTP 409 `WV-TXN-IN-DOUBT`) while an
-  open transaction is in doubt or the run is held for its size. Use Force end on
-  the incident.
+- **A cancel without undoing is refused** (HTTP 409 `WV-TXN-IN-DOUBT`) while the
+  run has an open transaction and any incident in doubt is open, or the run is
+  held for its size. Use Force end on the incident, or Retry on one that an earlier
+  decision left.
+- **A receipt decides one incident of its run.** A `receipt_id` that another
+  decision of the run has answers HTTP 409 `WV-INCIDENT-RECEIPT-CONFLICT`.
+- **A page of incidents can hold fewer than `limit`** and still have a
+  `next_cursor`: it ends before 8 MiB, where a larger page answered HTTP 429.
 - **New fields**, left out when they don't apply: `leftover` in a resolution,
   `stuck_steps` in an incident's `transaction`, and `transaction_rules` in a run's
   state and events. Upgrade CLIs, SDKs, and Studio with the server: an earlier

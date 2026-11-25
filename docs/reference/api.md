@@ -1220,9 +1220,11 @@ need `transaction.reconcile` and end every open transaction `force_ended`.
 
 **Transactions.** `POST …/runs/{identifier}/cancel` takes an optional
 `"skip_undo": true` (needs `transaction.reconcile`): the run's open transactions
-end `force_ended` instead of being undone; while one of them is in doubt, it
-answers HTTP 409 `WV-TXN-IN-DOUBT`, as a plain cancel does. Without it, a run with an open
-transaction answers HTTP 202 with `pending_undo: true` and ends once its
+end `force_ended` instead of being undone. While the run has an open transaction
+and any incident in doubt is open, it answers HTTP 409 `WV-TXN-IN-DOUBT`, as a
+plain cancel does; see
+[what refuses a cancel](incident-operations.md#transactions-in-doubt). Without it,
+a run with an open transaction answers HTTP 202 with `pending_undo: true` and ends once its
 transactions settle; undoing them spends the run's control reserve, so it
 finishes at a full byte quota. Only settlement spends it: a confirm whose result
 also starts the steps after its block, say, waits for quota like any forward
