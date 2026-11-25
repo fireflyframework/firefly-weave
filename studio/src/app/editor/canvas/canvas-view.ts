@@ -2720,6 +2720,17 @@ export class CanvasView implements OnInit, DoCheck {
    * of their data would break, so those are listed first, with Cancel ahead.
    */
   async groupSelection() {
+    // A second press while the platform is asked adds nothing.
+    if (this.groupAsked) return;
+    this.groupAsked = true;
+    try {
+      await this.askAndGroup();
+    } finally {
+      this.groupAsked = false;
+    }
+  }
+  private groupAsked = false;
+  private async askAndGroup() {
     const h = this.host();
     const model = h.model;
     const opened = model.opened;

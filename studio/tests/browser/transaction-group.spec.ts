@@ -309,6 +309,35 @@ test("a platform whose transactions Studio can't add yet says so, as Add a step 
   );
 });
 
+test("a second press while the platform is asked does nothing", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  let answer = () => {};
+  const asked = new Promise<void>((done) => (answer = done));
+  await page.route(LANGUAGE, async (route) => {
+    await asked;
+    await route.fulfill({
+      json: { features: ["text.concat", "flow.transaction"] },
+    });
+  });
+  await openStepFixture(page, PLAIN);
+  const canvas = new CanvasPage(page);
+  await canvas.ready();
+  await select(canvas, "hold", "add");
+  await groupButton(page).click();
+  await groupButton(page).click();
+  answer();
+  const toast = page.locator(".toast-region");
+  await expect(toast).toContainText("Grouped 2 steps in transaction-1.");
+  await expect(toast).not.toContainText("The workflow changed since.");
+  await expect(toast.getByRole("button", { name: "Undo" })).toBeVisible();
+  expect((await stepsOf(page)).map((step) => step.id)).toEqual([
+    "transaction-1",
+    "move",
+  ]);
+});
+
 test("steps that changed while the platform was asked are not grouped", async ({
   page,
 }) => {
