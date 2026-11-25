@@ -165,6 +165,21 @@ LOOKUP = {
 }
 
 
+CALLED_SUBMIT = {
+    "id": "submit",
+    "kind": "callWorkflow",
+    "uses": "reverse-target-addition@1.0.0",
+    "with": {"object": {"reference": {"ref": "/input/moveId"}, "addOperation": {"literal": "order"}}},
+    "irreversible": True,
+}
+
+
+def _beside(*steps: dict[str, Any]) -> dict[str, Any]:
+    """Steps that run at once, each in its own branch."""
+    branches = {f"b{index}": {"steps": [step], "output": {"literal": None}} for index, step in enumerate(steps)}
+    return {"id": "beside", "kind": "parallel", "concurrency": len(steps), "branches": branches}
+
+
 def _workflow(name: str, steps: list[dict[str, Any]], *, output: Any = None) -> dict[str, Any]:
     return {
         "apiVersion": "weave/v1alpha1",
@@ -192,10 +207,12 @@ def _transaction(*steps: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class Scenario:
-    """One run: the events it accepts after ``started``, as (type, data) in order."""
+    """One run: the events it accepts after ``started``, as (type, data) in order, and the transaction rules its start
+    says it follows; a run of an earlier release says nothing."""
 
     name: str
     events: tuple[tuple[str, dict[str, Any]], ...]
+    rules: int = 1
 
 
 @dataclass(frozen=True)
@@ -227,6 +244,13 @@ def attempt_failed(key: str, effect: str = "unknown") -> tuple[str, dict[str, An
     return "task_failed", {"node_id": key, "generation": 1, "output": {"code": "UNAVAILABLE"}, "effect": effect}
 
 
+def call_failed(key: str) -> tuple[str, dict[str, Any]]:
+    """A called workflow's run ended badly, and what it applied is unknown."""
+    output = {"code": "WV-RUNTIME-TIMEOUT", "message": "The called run timed out."}
+    data = {"node_id": key, "generation": 0, "child_run_id": CHILD, "status": "timed_out", "output": output}
+    return "call_completed", {**data, "effect": "unknown"}
+
+
 def due(key: str) -> tuple[str, dict[str, Any]]:
     """A deadline of the run falls due; its time and identity come from the transition that armed it."""
     return "wait_elapsed", {"node_id": key}
@@ -236,6 +260,12 @@ def resolve(key: str, kind: str, code: str, output: Any = None) -> tuple[str, di
     node, _, generation = key.rpartition(":")
     data = {"incident_key": key, "node_id": node, "generation": int(generation), "kind": kind, "code": code}
     return "incident_resolved", {**data, **({"output": output} if output is not None else {})}
+
+
+def decide(key: str, kind: str, code: str, output: Any = None) -> tuple[str, dict[str, Any]]:
+    """A resolution of this release: it also says the rules the run follows and the transaction it decides."""
+    event, data = resolve(key, kind, code, output)
+    return event, {**data, "transaction_rules": 2, "transaction": "move"}
 
 
 def later(seconds: int) -> tuple[str, dict[str, Any]]:
@@ -254,6 +284,17 @@ PIVOT_UNKNOWN = (H, A, failed("submit", "TIMEOUT"))
 WENT_AHEAD = (H, done("hold2", {"holdId": "h-2"}), done("submit", {"orderId": "o-1"}))
 ONE_CONFIRM_STUCK = (*WENT_AHEAD, failed("hold#confirm", "HOLD_EXPIRED", "none", 2))
 TWO_CONFIRMS_STUCK = (*ONE_CONFIRM_STUCK, failed("hold2#confirm", "HOLD_EXPIRED", "none", 2))
+
+
+BOTH_FAIL_AFTER = (
+    *WENT_AHEAD,
+    done("hold#confirm", {}),
+    done("hold2#confirm", {}),
+    failed("notify", "UNAVAILABLE", "unknown", 4),
+    failed("notify2", "UNAVAILABLE", "unknown", 4),
+)
+# A read fails for good while the step that can't be undone is in flight.
+READ_FAILED = (H, attempt_failed("lookup", "none"), failed("lookup", "REJECTED", "none"))
 
 
 def finished(*confirmed: str) -> dict[str, Any]:
@@ -415,6 +456,18 @@ SOURCES = (
                     done("hold#cancel", {}),
                 ),
             ),
+            Scenario(
+                "hold-expired-while-a-body-step-waits-for-recovery-resolved",
+                (
+                    H,
+                    attempt_failed("add", "none"),
+                    due("move#hold"),
+                    failed("add", "REFUSED", "none"),
+                    failed("add2", "WV-TXN-ROLLED-BACK", "none", 0),
+                    done("hold#cancel", {}),
+                ),
+                rules=2,
+            ),
         ),
     ),
     Source(
@@ -499,6 +552,66 @@ SOURCES = (
                     resolve("notify:4", "retry_safe", "WV-TXN-AFTER-PIVOT-STUCK"),
                 ),
             ),
+            Scenario(
+                "two-confirms-stuck-first-reconciled-resolved",
+                (
+                    *TWO_CONFIRMS_STUCK,
+                    decide(
+                        "hold#confirm:2", "accept_reconciled_result", "WV-TXN-CONFIRM-STUCK", finished("hold", "hold2")
+                    ),
+                ),
+                rules=2,
+            ),
+            Scenario(
+                "two-confirms-stuck-first-retried-resolved",
+                (
+                    *TWO_CONFIRMS_STUCK,
+                    decide("hold#confirm:2", "retry_safe", "WV-TXN-CONFIRM-STUCK"),
+                    done("hold#confirm", {}, 3),
+                    decide("hold2#confirm:2", "retry_safe", "WV-TXN-CONFIRM-STUCK"),
+                    done("hold2#confirm", {}, 3),
+                    done("notify", {}),
+                    done("notify2", {}),
+                ),
+                rules=2,
+            ),
+            Scenario(
+                "two-confirms-stuck-second-force-ended-resolved",
+                (*TWO_CONFIRMS_STUCK, decide("hold2#confirm:2", "terminate", "WV-TXN-CONFIRM-STUCK")),
+                rules=2,
+            ),
+            Scenario(
+                "two-confirms-stuck-in-a-run-of-an-earlier-release-resolved",
+                (
+                    *TWO_CONFIRMS_STUCK,
+                    resolve(
+                        "hold#confirm:2", "accept_reconciled_result", "WV-TXN-CONFIRM-STUCK", finished("hold", "hold2")
+                    ),
+                    decide("hold2#confirm:2", "retry_safe", "WV-TXN-CONFIRM-STUCK"),
+                ),
+            ),
+            Scenario(
+                "confirm-stuck-beside-an-interim-failure-reconciled-resolved",
+                (
+                    *ONE_CONFIRM_STUCK,
+                    attempt_failed("hold2#confirm"),
+                    decide(
+                        "hold#confirm:2", "accept_reconciled_result", "WV-TXN-CONFIRM-STUCK", finished("hold", "hold2")
+                    ),
+                ),
+                rules=2,
+            ),
+            Scenario(
+                "two-steps-after-the-pivot-fail-together-resolved",
+                (
+                    *BOTH_FAIL_AFTER,
+                    decide("notify:4", "retry_safe", "WV-TXN-AFTER-PIVOT-STUCK"),
+                    decide("notify2:4", "retry_safe", "WV-TXN-AFTER-PIVOT-STUCK"),
+                    done("notify", {}, 5),
+                    done("notify2", {}, 5),
+                ),
+                rules=2,
+            ),
         ),
     ),
     Source(
@@ -508,6 +621,78 @@ SOURCES = (
             Scenario(
                 "hold-expired-while-a-read-waits-for-recovery",
                 (H, attempt_failed("lookup"), due("move#hold"), done("hold#cancel", {})),
+            ),
+            Scenario(
+                "hold-expired-while-a-read-waits-for-recovery-resolved",
+                (H, attempt_failed("lookup"), due("move#hold"), done("hold#cancel", {})),
+                rules=2,
+            ),
+        ),
+    ),
+    Source(
+        "golden-move-read-beside",
+        _workflow("golden-move-read-beside", [_transaction(hold(), _beside(SUBMIT, LOOKUP))]),
+        (
+            Scenario(
+                "read-fails-beside-the-decision-resolved",
+                (
+                    *READ_FAILED,
+                    done("submit", {"orderId": "o-1"}),
+                    decide("lookup:1", "retry_safe", "WV-TXN-AFTER-PIVOT-STUCK"),
+                    done("hold#confirm", {}),
+                    done("lookup", {"count": 1}, 2),
+                ),
+                rules=2,
+            ),
+            Scenario(
+                "read-fails-beside-the-decision-that-fails",
+                (
+                    H,
+                    failed("lookup", "REJECTED", "none"),
+                    failed("submit", "REFUSED", "none"),
+                    done("hold#cancel", {}),
+                ),
+                rules=2,
+            ),
+        ),
+    ),
+    Source(
+        "golden-move-called-decision",
+        _workflow("golden-move-called-decision", [_transaction(hold(), CALLED_SUBMIT, NOTIFY)]),
+        (
+            Scenario(
+                "a-call-ends-badly-after-its-time-and-it-happened",
+                (
+                    H,
+                    due("move#decide"),
+                    call_failed("submit"),
+                    decide("submit:0", "accept_reconciled_result", "WV-TXN-PIVOT-UNKNOWN", {}),
+                    done("hold#confirm", {}),
+                    done("notify", {}),
+                ),
+                rules=2,
+            ),
+        ),
+    ),
+    Source(
+        "golden-move-beside-another",
+        _workflow(
+            "golden-move-beside-another",
+            [_beside(_transaction(hold(), SUBMIT, NOTIFY), {**_transaction(add("add9")), "id": "other"})],
+        ),
+        (
+            Scenario(
+                "a-run-failure-beside-a-transaction-that-finishes",
+                (
+                    H,
+                    done("submit", {"orderId": "o-1"}),
+                    done("hold#confirm", {}),
+                    ("paused", {"control_revision": 1, "reason": "look"}),
+                    done("notify", {}),
+                    failed("add9", "REFUSED", "none"),
+                    ("resumed", {"control_revision": 2, "reason": "go on"}),
+                ),
+                rules=2,
             ),
         ),
     ),
@@ -519,7 +704,8 @@ def drive(artifact: CompiledArtifact, scenario: Scenario, label: str) -> list[di
     records: list[dict[str, Any]] = []
     armed: dict[str, Deadline] = {}
     clock = START
-    for index, (kind, data) in enumerate((("started", {"run_id": RUN}), *scenario.events)):
+    start = {"run_id": RUN, **({"transaction_rules": scenario.rules} if scenario.rules != 1 else {})}
+    for index, (kind, data) in enumerate((("started", start), *scenario.events)):
         sequence = state.accepted_sequence + 1
         clock = max(clock + timedelta(seconds=1), START + timedelta(seconds=index))
         if kind == "later":

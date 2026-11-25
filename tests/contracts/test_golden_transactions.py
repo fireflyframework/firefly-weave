@@ -69,6 +69,18 @@ def test_the_transaction_corpus_records_every_source_once_and_every_outcome():
         "two-steps-after-the-pivot-fail-together": ("suspended", "in_doubt"),
         "hold-expired-while-a-body-step-waits-for-recovery": ("failed", "cancelled"),
         "hold-expired-while-a-read-waits-for-recovery": ("suspended", "cancelled"),
+        "two-confirms-stuck-first-reconciled-resolved": ("succeeded", "reconciled"),
+        "two-confirms-stuck-first-retried-resolved": ("succeeded", "completed"),
+        "two-confirms-stuck-second-force-ended-resolved": ("cancelled", "force_ended"),
+        "two-confirms-stuck-in-a-run-of-an-earlier-release-resolved": ("succeeded", "reconciled"),
+        "confirm-stuck-beside-an-interim-failure-reconciled-resolved": ("succeeded", "reconciled"),
+        "two-steps-after-the-pivot-fail-together-resolved": ("succeeded", "completed"),
+        "hold-expired-while-a-body-step-waits-for-recovery-resolved": ("failed", "cancelled"),
+        "hold-expired-while-a-read-waits-for-recovery-resolved": ("failed", "cancelled"),
+        "read-fails-beside-the-decision-resolved": ("succeeded", "completed"),
+        "read-fails-beside-the-decision-that-fails": ("failed", "cancelled"),
+        "a-call-ends-badly-after-its-time-and-it-happened": ("succeeded", "completed"),
+        "a-run-failure-beside-a-transaction-that-finishes": ("failed", "completed"),
     }
 
 
