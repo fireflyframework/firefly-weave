@@ -31,6 +31,7 @@ import {
 import { ApiError, type Diagnostic, type StudioApi } from "../../api";
 import { describeError } from "../../errors";
 import { isJsonObject, type JsonObject } from "../../forms/core/json";
+import { Icon } from "../../icon";
 import type { Workflow } from "../../model";
 import {
   readDeclaration,
@@ -53,7 +54,7 @@ import {
   type EventRowAnswer,
 } from "./event-activation-row";
 import { joined } from "./event-bindings";
-import { eventResultView, eventRowView } from "./event-rows";
+import { eventResultView, eventRowView, resultIcon } from "./event-rows";
 import {
   triggerPlan,
   withStop,
@@ -104,7 +105,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
 @Component({
   selector: "weave-activation-steps",
   standalone: true,
-  imports: [EventActivationRow],
+  imports: [EventActivationRow, Icon],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `@if (state() === "loading") {
       <p class="dialog-status" role="status">
@@ -146,9 +147,14 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
                   (answer)="answer($index, $event)"
                 />
               } @else {
-                <span [id]="'trigger-row-' + $index">{{
-                  result ? result.text : row.text
-                }}</span>
+                <span class="activation-said">
+                  @if (result) {
+                    <weave-icon [name]="resultIcon(result.status)" size="16" />
+                  }
+                  <span [id]="'trigger-row-' + $index">{{
+                    result ? result.text : row.text
+                  }}</span>
+                </span>
               }
               @if (!row.event && result?.status === "failed") {
                 <button
@@ -261,6 +267,17 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
       border-radius: var(--radius-sm);
       overflow-wrap: anywhere;
     }
+    /* What happened, after its icon, as a platform event trigger's row says it. */
+    .activation-said {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-3);
+      min-width: 0;
+    }
+    .activation-said weave-icon {
+      flex: none;
+      margin-top: 2px;
+    }
     /* A platform event trigger's row lays its own text and controls out. */
     .activation-row.event-row {
       align-items: flex-start;
@@ -313,6 +330,7 @@ export class ActivationSteps implements OnInit {
   /** The editor's last check of the workflow, for a callee that refuses this caller. */
   readonly diagnostics = input<readonly Diagnostic[]>([]);
 
+  readonly resultIcon = resultIcon;
   readonly state = signal<"loading" | "ready">("loading");
   readonly stop = signal<string | null>(null);
   readonly callees = signal<CalleeRow[]>([]);

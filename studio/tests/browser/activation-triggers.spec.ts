@@ -98,6 +98,16 @@ async function storedChoice(
   return saved.triggers?.find((intent) => intent["id"] === WEBHOOK) ?? null;
 }
 
+/** A token's color, as the browser computes it. */
+const inkOf = (page: Page, token: string) =>
+  page.evaluate((name) => {
+    const probe = document.body.appendChild(document.createElement("span"));
+    probe.style.color = `var(${name})`;
+    const { color } = getComputedStyle(probe);
+    probe.remove();
+    return color;
+  }, token);
+
 test("a new webhook is created for the activation, kept for the environment, and moved by the next one", async ({
   page,
 }) => {
@@ -200,6 +210,103 @@ test("a trigger that can't be created says why with Retry, and the activation st
   expect(await storedChoice(page)).toMatchObject({
     resources: { development: "w-new" },
   });
+});
+
+test("what happened to each trigger has an icon beside its words, and what wasn't set up yet has none", async ({
+  page,
+}) => {
+  await platform(page);
+  await routeWebhooks(page);
+  const webhook = (id: string, name: string, activation: string) => ({
+    id,
+    name,
+    kind: "run",
+    activation_id: activation,
+    secret_ref: "orders-signing",
+    payload_schema: { type: "object" },
+    max_body_bytes: 1048576,
+    tolerance_seconds: 300,
+    principal_id: "p-1",
+    disabled: false,
+    revision: 3,
+  });
+  const moving = webhook("w-1", "orders-in", "activation");
+  const left = webhook("w-2", "orders-old", "activation");
+  const idle = webhook("w-3", "orders-older", "activation");
+  // The list, a move, a stop, and a create: one name is refused once.
+  await page.route(/\/environments\/development\/triggers(?:[/?].*)?$/, (r) => {
+    const { pathname } = new URL(r.request().url());
+    if (r.request().method() === "GET")
+      return r.fulfill({
+        json: { items: [moving, left, idle], next_cursor: null },
+      });
+    if (pathname.endsWith("/w-1/retarget"))
+      return r.fulfill({ json: { ...moving, revision: 4 } });
+    if (pathname.endsWith("/w-2/disable"))
+      return r.fulfill({ json: { ...left, disabled: true, revision: 4 } });
+    const { name } = r.request().postDataJSON() as { name: string };
+    return name === "orders-out"
+      ? r.fulfill({ status: 201, json: webhook("w-4", name, "activation") })
+      : r.fulfill({
+          status: 500,
+          json: { code: "WV-INTERNAL", message: "Broken" },
+        });
+  });
+  await open(page, {
+    ...canvas,
+    triggers: [
+      {
+        ...canvas.triggers[0],
+        resources: { development: "w-1" },
+      },
+      {
+        id: "trigger-2c3d4e5f",
+        kind: "webhook",
+        name: "orders-out",
+        secretRef: "orders-signing",
+      },
+      {
+        id: "trigger-3d4e5f6a",
+        kind: "webhook",
+        name: "orders-back",
+        secretRef: "orders-signing",
+      },
+    ],
+  });
+  const dialog = await activateDialog(page);
+  const rows = dialog
+    .getByRole("list", { name: "Triggers" })
+    .getByRole("listitem");
+  await expect(rows).toHaveCount(5);
+  await expect(rows.locator("weave-icon")).toHaveCount(0);
+  await rows
+    .filter({ hasText: "orders-old keeps running" })
+    .getByRole("checkbox", { name: "Stop it" })
+    .check();
+  await dialog
+    .getByRole("button", { name: "Activate version", exact: true })
+    .click();
+  const row = (text: RegExp) => rows.filter({ hasText: text });
+  for (const [text, icon, ink] of [
+    [/^\s*Moved webhook orders-in/, "ok", "--success-ink"],
+    [/^\s*Created webhook orders-out/, "ok", "--success-ink"],
+    [/^\s*Couldn't create webhook orders-back/, "failCircle", "--danger-ink"],
+    [/^\s*Stopped webhook orders-old/, "ok", "--success-ink"],
+  ] as const) {
+    const drawn = row(text).locator("weave-icon");
+    await expect(drawn).toHaveAttribute("data-icon", icon);
+    // The icon is in the row's own ink, left of its words.
+    await expect(drawn).toHaveCSS("color", await inkOf(page, ink));
+    const [at, words] = [
+      (await drawn.boundingBox())!,
+      (await row(text).locator("[id^='trigger-row-']").boundingBox())!,
+    ];
+    expect([at.width, at.height]).toEqual([16, 16]);
+    expect(words.x - (at.x + at.width)).toBe(12);
+  }
+  await expect(
+    row(/orders-older keeps running/).locator("weave-icon"),
+  ).toHaveCount(0);
 });
 
 test("a new Kafka trigger asks for its Kafka connection, of any version, and is created on it", async ({

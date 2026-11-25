@@ -31,6 +31,7 @@ import {
   owedStop,
   type EventResult,
   type EventRow,
+  type EventStatus,
 } from "./event-bindings";
 
 export type RowTone = "plain" | "muted" | "warning" | "danger" | "success";
@@ -69,6 +70,9 @@ const SUCCESS = { tone: "success", icon: "ok" } as const;
 const DANGER = { tone: "danger", icon: "failCircle" } as const;
 const WARNING = { tone: "warning", icon: "warning" } as const;
 const LEFT_ALONE = { tone: "muted", icon: "lock" } as const;
+/** The icon of what happened to any other kind of trigger: set up or stopped, or not. */
+export const resultIcon = (status: EventStatus): IconName =>
+  status === "failed" ? DANGER.icon : SUCCESS.icon;
 
 /** "Needs attention and Undone": every event, in the order people choose them in. */
 const events = (declaration: EventDeclaration) =>
