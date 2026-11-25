@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // size, and what a person must see first is in view.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { caller, ids, loop, runs } from "../transaction-incidents-fixture";
+import { otherRuns } from "../operate-transactions-fixture";
 import { environment } from "./incidents-po";
 import {
   operator,
@@ -302,6 +303,37 @@ for (const size of sizes)
         .getByRole("button", { name: "Hide transaction move[1]" })
         .click();
       await expect(block(page, "move[1]")).toHaveCSS("padding", "8px 12px");
+    });
+
+    test("the longest state of a transaction stays whole in its block", async ({
+      page,
+    }) => {
+      const platform = await transactionsPlatform(page);
+      platform.transaction(otherRuns.open, { state: "deciding" });
+      await openRunDetail(page, otherRuns.open);
+      const held = block(page, "move");
+      const pill = held.locator(".txn-title .status-pill");
+      await expect(pill).toHaveText(
+        "Waiting for submit, which can't be undone",
+      );
+      const [around, words] = [await box(held), await box(pill)];
+      expect(words.x).toBeGreaterThanOrEqual(around.x + 12 - 0.5);
+      expect(words.right).toBeLessThanOrEqual(around.right - 12 + 0.5);
+      // Its lines stay inside the pill, too.
+      const lines = await pill.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const text = range.getBoundingClientRect();
+        const pill = element.getBoundingClientRect();
+        return {
+          above: text.top - pill.top,
+          below: pill.bottom - text.bottom,
+          after: pill.right - text.right,
+        };
+      });
+      for (const space of Object.values(lines))
+        expect(space).toBeGreaterThanOrEqual(0);
+      await expectNoSideways(page, held);
     });
 
     test("a run in doubt shows its notice and its actions first", async ({

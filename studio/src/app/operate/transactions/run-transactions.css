@@ -81,6 +81,13 @@ SPDX-License-Identifier: Apache-2.0
   font: var(--type-label);
   color: var(--text);
 }
+/* A long state ("Waiting for submit, which can't be undone") wraps in a narrow
+   block instead of running out of it. */
+.txn-title .status-pill {
+  height: auto;
+  min-height: 22px;
+  white-space: normal;
+}
 .txn-title h4 code,
 .txn-resolution code {
   font: var(--type-mono);
