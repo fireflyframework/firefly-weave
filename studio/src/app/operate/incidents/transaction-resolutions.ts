@@ -106,6 +106,20 @@ const DECISIONS: Readonly<
     help: "Ends the transaction and the run as they are. Nothing more is done or undone.",
   },
 };
+/** A transaction a person already ended keeps no incident open for a decision. */
+const ENDED_BY_A_PERSON = new Set(["reconciled", "force_ended"]);
+/**
+ * Closing an incident an earlier decision left: the platform's `retry_safe`
+ * runs nothing again for one, so it isn't offered as a retry.
+ */
+const CLOSE_LEFTOVER = {
+  kind: "retry_safe",
+  label: "Close incident",
+  help: "A person already decided this transaction, so this incident has nothing left to decide. Closes it and lets the run go on; nothing runs again.",
+} as const;
+/** Whether an incident in doubt was left behind by a decision on its transaction. */
+const leftOver = (incident: Pick<IncidentView, "transaction">) =>
+  ENDED_BY_A_PERSON.has(incident.transaction?.state ?? "");
 /** Force end on a run held whole ends every transaction it has. */
 const HELD_RUN_HELP =
   "Ends the run and its transactions as they are. Weave starts and undoes nothing more, but a step that is already running may still finish. Open the run to see what stays done in other systems.";
@@ -139,7 +153,9 @@ export function transactionActions(
     );
   const retry = retryLabel(incident.code);
   const offers: ActionOffer[] = [];
-  if (retry) {
+  if (leftOver(incident))
+    offers.push(offer("retry", CLOSE_LEFTOVER, ["incident.resolve"]));
+  else if (retry) {
     offers.push(
       offer(
         "retry",
@@ -640,6 +656,7 @@ export function decisionText(
   if (incident.priority !== "high") return resolutionLabel(resolution.kind);
   switch (resolution.kind) {
     case "retry_safe":
+      if (resolution.leftover) return CLOSE_LEFTOVER.label;
       return retryLabel(incident.code) ?? resolutionLabel(resolution.kind);
     case "terminate":
       return RESOLUTION_LABELS.force_end;

@@ -223,6 +223,20 @@ describe("a recorded decision", () => {
     );
   });
 
+  it("names the close of an incident an earlier decision left as it was offered", () => {
+    // The platform ran nothing again: no retry is named.
+    for (const incident of [called, caller, loop])
+      expect(
+        decisionText(
+          resolved(incident, { kind: "retry_safe", leftover: true }),
+        ),
+      ).toBe("Close incident");
+    // A stop or Force end that closed one still ended the run.
+    expect(
+      decisionText(resolved(called, { kind: "terminate", leftover: true })),
+    ).toBe("Force end");
+  });
+
   it("names the other decisions of a transaction as they are offered", () => {
     const said = (
       incident: IncidentView,

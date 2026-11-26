@@ -99,6 +99,29 @@ describe("the decisions an incident in doubt offers", () => {
     expect(labels({ ...called, status: "closed" })).toEqual([]);
   });
 
+  it("of a transaction a person already ended, only closing the incident or Force end", () => {
+    for (const incident of [called, caller, unknown])
+      for (const state of ["reconciled", "force_ended"] as const) {
+        const left: IncidentView = {
+          ...incident,
+          transaction: { ...incident.transaction!, state },
+        };
+        const offers = transactionActions(left, everything);
+        expect(
+          offers.map(({ action, kind, label }) => [action, kind, label]),
+          `${incident.code} ${state}`,
+        ).toEqual([
+          ["retry", "retry_safe", "Close incident"],
+          ["force_end", "terminate", "Force end"],
+        ]);
+        // Closing it runs nothing again, so it needs no reconciler.
+        expect(offers[0].needs).toEqual(["incident.resolve"]);
+        expect(offers[0].help).toBe(
+          "A person already decided this transaction, so this incident has nothing left to decide. Closes it and lets the run go on; nothing runs again.",
+        );
+      }
+  });
+
   it("no Mark as reconciled without the record its checklist comes from", () => {
     const { transaction: _record, ...withheld } = called;
     expect(labels(withheld)).toEqual(["Retry the undo", "Force end"]);
