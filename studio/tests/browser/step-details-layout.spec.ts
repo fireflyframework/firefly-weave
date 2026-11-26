@@ -1124,7 +1124,15 @@ for (const size of [
       const settings = await textBox(
         tabs.getByRole("tab", { name: "Settings" }),
       );
-      const docs = await textBox(tabs.getByRole("link", { name: "Docs" }));
+      // The tab list holds only tabs: Docs is beside it.
+      expect(
+        await tabs.evaluate((list) =>
+          [...list.children].map((item) => item.getAttribute("role")),
+        ),
+      ).toEqual(["tab", "tab"]);
+      await expect(tabs.getByRole("link")).toHaveCount(0);
+      const docsLink = dialog.getByRole("link", { name: "Docs", exact: true });
+      const docs = await textBox(docsLink);
       expectAligned(
         [parameters.bottom, settings.bottom, docs.bottom],
         "tab and Docs baselines",
@@ -1141,7 +1149,7 @@ for (const size of [
         "Parameters pane left edge",
       );
       // One right edge: More, Docs and the field menus.
-      const docsBox = await box(tabs.getByRole("link", { name: "Docs" }));
+      const docsBox = await box(docsLink);
       expectAligned(
         [edge.right, more.right, docsBox.right],
         "Parameters pane right edge",

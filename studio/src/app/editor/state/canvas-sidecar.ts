@@ -44,7 +44,8 @@ export type TriggerKind =
   | "broker"
   | "email"
   | "provider"
-  | "called";
+  | "called"
+  | "event";
 export const TRIGGER_KINDS: readonly TriggerKind[] = [
   "manual",
   "webhook",
@@ -53,7 +54,12 @@ export const TRIGGER_KINDS: readonly TriggerKind[] = [
   "email",
   "provider",
   "called",
+  "event",
 ];
+/** The triggers the definition declares, and the field that declares each. */
+const DECLARED = { called: "callable", event: "eventTrigger" } as const;
+const isDeclared = (kind: unknown): kind is keyof typeof DECLARED =>
+  kind === "called" || kind === "event";
 export const MAX_NOTES = 200;
 export const MAX_NOTE_TEXT = 4000;
 export const MAX_STEP_NOTE_TEXT = 2000;
@@ -324,11 +330,11 @@ function readTriggers(value: unknown, problem: Problem): TriggerIntent[] {
     if (!TRIGGER_KINDS.includes(item["kind"] as TriggerKind)) {
       problem(
         `${at}/kind`,
-        "use manual, webhook, schedule, broker, email, provider or called.",
+        "use manual, webhook, schedule, broker, email, provider, called or event.",
       );
       fine = false;
-    } else if (item["kind"] === "manual" || item["kind"] === "called") {
-      // One input form, and one Called by a workflow (spec.callable).
+    } else if (item["kind"] === "manual" || isDeclared(item["kind"])) {
+      // One input form, one Called by a workflow and one Platform event.
       if (once.has(item["kind"])) {
         problem(`${at}/kind`, `use one ${item["kind"]} trigger at most.`);
         fine = false;
@@ -569,8 +575,8 @@ export function canvasFromStored(
   const base = read.ok ? read.canvas : emptyCanvas();
   const pruned = pruneCanvas(base, present);
   return {
-    // Called by a workflow follows spec.callable, the source of truth.
-    canvas: syncCalled(pruned, workflow, present.size > 0),
+    // Called by a workflow and Platform event follow the definition, the source of truth.
+    canvas: syncDeclared(pruned, workflow, present.size > 0),
     problems: read.ok ? [] : read.problems,
     dropped: pruned !== base,
   };
@@ -734,9 +740,9 @@ export function withTriggerIntents(
 ): CanvasSidecar {
   const kept = triggers.slice(0, MAX_TRIGGERS);
   const seen = new Set<string>();
-  for (const kind of ["manual", "called"] as const)
+  for (const kind of ["manual", "called", "event"] as const)
     if (kept.filter((intent) => intent.kind === kind).length > 1)
-      throw Error("Keep one manual trigger and one called trigger at most.");
+      throw Error("Keep one manual, one called and one event trigger at most.");
   for (const intent of kept) {
     if (typeof intent.id !== "string" || !TRIGGER_ID.test(intent.id))
       throw Error(
@@ -746,7 +752,7 @@ export function withTriggerIntents(
     seen.add(intent.id);
     if (!TRIGGER_KINDS.includes(intent.kind))
       throw Error(
-        "Use manual, webhook, schedule, broker, email, provider or called for a trigger.",
+        "Use manual, webhook, schedule, broker, email, provider, called or event for a trigger.",
       );
   }
   if (same(triggerIntents(canvas), kept)) return canvas;
@@ -766,7 +772,7 @@ export function randomHex(): string {
 }
 const HEX = /^[0-9a-f]{8}$/;
 /** "<prefix>-" and 8 hexadecimal digits no ID in `taken` has. */
-function freshId(
+export function freshId(
   prefix: "note" | "trigger",
   taken: ReadonlySet<string>,
   random: () => string,
@@ -878,16 +884,8 @@ export function triggerInputs(
     return list.map((intent) => ({ id: intent.id, kind: intent.kind }));
   return hasSteps ? [{ id: "manual", kind: "manual" }] : [];
 }
-export interface TriggerChange {
-  canvas: CanvasSidecar;
-  /** The new trigger's ID. */
-  id: string;
-  /** The definition when the choice changes it (Called by a workflow), else null. */
-  workflow: Workflow | null;
-}
-
 /** The choices a new trigger joins: a workflow with steps keeps its input form. */
-function choicesBefore(
+export function choicesBefore(
   canvas: CanvasSidecar,
   hasSteps: boolean,
   random: () => string,
@@ -895,37 +893,6 @@ function choicesBefore(
   const list = triggerIntents(canvas);
   if (list.length || !hasSteps) return [...list];
   return [{ id: freshId("trigger", new Set(), random), kind: "manual" }];
-}
-
-export function addTrigger(
-  canvas: CanvasSidecar,
-  workflow: Workflow,
-  kind: TriggerKind,
-  hasSteps: boolean,
-  random: () => string = randomHex,
-): TriggerChange {
-  const list = triggerIntents(canvas);
-  const has = (wanted: TriggerKind) =>
-    list.some((intent) => intent.kind === wanted);
-  if (kind === "manual" && (has("manual") || (!list.length && hasSteps)))
-    throw Error("This workflow already starts from its input form.");
-  if (kind === "called" && has("called"))
-    throw Error("Other workflows can already call this one.");
-  const base = choicesBefore(canvas, hasSteps, random);
-  if (base.length >= MAX_TRIGGERS)
-    throw Error(`A workflow can have at most ${MAX_TRIGGERS} triggers.`);
-  const id = freshId(
-    "trigger",
-    new Set(base.map((intent) => intent.id)),
-    random,
-  );
-  const next = withTriggerIntents(canvas, [...base, { id, kind }]);
-  let changed: Workflow | null = null;
-  if (kind === "called" && !isRecord(workflow.spec["callable"])) {
-    changed = structuredClone(workflow);
-    changed.spec["callable"] = {};
-  }
-  return { canvas: next, id, workflow: changed };
 }
 
 export function removeTrigger(
@@ -940,29 +907,53 @@ export function removeTrigger(
     canvas,
     list.filter((item) => item.id !== id),
   );
-  if (intent.kind !== "called" || !("callable" in workflow.spec))
+  const field = isDeclared(intent.kind) ? DECLARED[intent.kind] : null;
+  if (!field || !(field in workflow.spec))
     return { canvas: next, workflow: null };
   const changed = structuredClone(workflow);
-  delete changed.spec["callable"];
+  delete changed.spec[field];
   return { canvas: next, workflow: changed };
 }
 
 /** A workflow with `spec.callable` shows Called by a workflow, and only then. */
-export function syncCalled(
+export const syncCalled = (
   canvas: CanvasSidecar,
   workflow: Workflow,
   hasSteps: boolean,
   random: () => string = randomHex,
+) => mirrored("called", canvas, workflow, hasSteps, random);
+
+/** A workflow with `spec.eventTrigger` shows Platform event, and only then. */
+export const syncEvent = (
+  canvas: CanvasSidecar,
+  workflow: Workflow,
+  hasSteps: boolean,
+  random: () => string = randomHex,
+) => mirrored("event", canvas, workflow, hasSteps, random);
+
+/** Called by a workflow and Platform event, as the definition declares them. */
+export const syncDeclared = (
+  canvas: CanvasSidecar,
+  workflow: Workflow,
+  hasSteps: boolean,
+) => syncEvent(syncCalled(canvas, workflow, hasSteps), workflow, hasSteps);
+
+function mirrored(
+  kind: keyof typeof DECLARED,
+  canvas: CanvasSidecar,
+  workflow: Workflow,
+  hasSteps: boolean,
+  random: () => string,
 ): CanvasSidecar {
   const list = triggerIntents(canvas);
-  const callable = isRecord(workflow.spec["callable"]);
-  const shown = list.some((intent) => intent.kind === "called");
-  if (callable === shown) return canvas;
+  const declared = isRecord(workflow.spec[DECLARED[kind]]);
+  const shown = list.some((intent) => intent.kind === kind);
+  if (declared === shown) return canvas;
   try {
-    if (!callable)
+    if (!declared)
       return withTriggerIntents(
         canvas,
-        list.filter((intent) => intent.kind !== "called"),
+        list.filter((intent) => intent.kind !== kind),
       );
     const base = choicesBefore(canvas, hasSteps, random);
     if (base.length >= MAX_TRIGGERS) return canvas;
@@ -971,7 +962,7 @@ export function syncCalled(
       new Set(base.map((intent) => intent.id)),
       random,
     );
-    return withTriggerIntents(canvas, [...base, { id, kind: "called" }]);
+    return withTriggerIntents(canvas, [...base, { id, kind }]);
   } catch {
     // A canvas at its size cap keeps what it has; the definition stays the source of truth.
     return canvas;

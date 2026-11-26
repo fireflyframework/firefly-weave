@@ -46,6 +46,7 @@ export { REF_MIME } from "../params/drag-map";
           row.label +
           ', ' +
           row.typeLabel +
+          (row.optional ? ', optional' : '') +
           (mapped().includes(row.ref ?? '') ? ', mapped in this step' : '')
         "
         (dragstart)="drag($event, row)"
@@ -63,7 +64,10 @@ export { REF_MIME } from "../params/drag-map";
           ><weave-icon [name]="icon(row)" [size]="16"
         /></span>
         <span class="data-key">{{ row.label }}</span>
-        <span class="data-kind">{{ row.typeLabel }}</span>
+        <!-- Its icon says the type of a field only some events carry. -->
+        <span class="data-kind">{{
+          row.optional ? "Optional" : row.typeLabel
+        }}</span>
         @if (row.sample !== undefined) {
           <span class="data-sample" [attr.title]="row.sample">{{
             row.sample

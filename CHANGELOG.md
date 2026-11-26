@@ -258,6 +258,28 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Studio, desktop app, and CLI
 
+- Studio builds workflows that start from platform events, for example to tell a
+  team that a transaction needs attention. **+ › Triggers › Platform event** adds
+  the trigger; its step details choose the events and the workflows, check the
+  workflow's input, and generate or paste a sample event for test runs. Activating
+  the workflow creates the trigger, moves it to the new version, or replaces it
+  when the version reacts to other events or workflows: the dialog shows what
+  reacts now beside what will, asks before a stop that skips waiting events, names
+  the events a stop ends when the two triggers share none, and offers a stop it still
+  owes at the next activation.
+  The **Starts** tab shows what the trigger started, why an event started nothing,
+  **Open run**, and **Stop it** for a second trigger that still reacts. Diagnostics
+  opens the trigger on what fixes it. See "React to a transaction" in the Studio
+  guide.
+- Studio activates a later version of a workflow on a platform: it names the
+  activation it replaces, says when someone activated the workflow meanwhile, and
+  activates only in the environment, and as the person, its dialog opened with.
+  Before, the platform refused every activation after the first. Each trigger's
+  result after an activation has an icon.
+- Test data, pasted or loaded from a file, no longer keeps a real platform event's
+  event, run, and incident IDs.
+- In step details, a field's name shows whole beside its test value, and **Docs**
+  is no longer one of the tabs for screen readers.
 - Studio handles step errors. A step's **On error** setting (stop the run,
   continue, or continue with error output) and its **Result on error** are in
   step details; the canvas draws an error path under the step with its Success

@@ -1,0 +1,85 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1180" viewBox="0 0 1120 1180" role="img" aria-labelledby="title desc">
+<title id="title">From choosing events in Studio to the runs a transaction event starts</title>
+<desc id="desc">Read from top to bottom. 1: Studio writes the workflow’s eventTrigger and takes the platform event as its input, activates the published version, then creates the trigger. 2: when a transaction of another workflow needs attention, the platform records transaction.in_doubt in the source run’s own commit, with one start for each matching trigger; the recovery loop takes a start and starts a run of the reacting workflow as the trigger’s owner. 3: Studio reads the trigger’s starts: started, skipped, or refused. Takeaway: each event starts each matching trigger’s workflow once, as the trigger’s owner.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#62645B"/></marker><marker id="arrow-main" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10z" fill="#855414"/></marker></defs>
+<style>text{font-family:Arial,Helvetica,sans-serif}.edge,.back,.main{fill:none;stroke:#62645B;stroke-width:2.5;marker-end:url(#arrow)}.back{stroke-dasharray:8 6}.main{stroke:#855414;stroke-width:3.5;marker-end:url(#arrow-main)}</style>
+<rect width="1120" height="1080" rx="24" fill="#F3F1EB"/>
+<text x="40" y="66" font-size="30" font-weight="700" fill="#272820">A transaction event starts a workflow</text>
+<text x="40" y="104" font-size="20" fill="#272820">You choose the events in Studio. The platform records each one with the transaction and</text>
+<text x="40" y="132" font-size="20" fill="#272820">starts your workflow; Starts shows what happened.</text>
+<path d="M135 250V1052" stroke="#BFB8AB" stroke-width="2" stroke-dasharray="4 7"/>
+<path d="M347 250V1052" stroke="#BFB8AB" stroke-width="2" stroke-dasharray="4 7"/>
+<path d="M560 250V1052" stroke="#BFB8AB" stroke-width="2" stroke-dasharray="4 7"/>
+<path d="M772 250V1052" stroke="#BFB8AB" stroke-width="2" stroke-dasharray="4 7"/>
+<path d="M985 250V1052" stroke="#BFB8AB" stroke-width="2" stroke-dasharray="4 7"/>
+<rect x="40" y="286" width="1040" height="42" rx="12" fill="#EAE7DF"/>
+<text x="58" y="314" font-size="19" font-weight="700" fill="#855414" text-anchor="start">1. Build and activate</text>
+<path class="edge" d="M139 350h34a8 8 0 0 1 8 8v18a8 8 0 0 1 -8 8H141"/>
+<rect x="191" y="354" width="295.8" height="26" rx="4" fill="#F3F1EB"/>
+<text x="197" y="373" font-size="18" font-weight="400" fill="#272820" text-anchor="start">writes eventTrigger and the input</text>
+<path class="edge" d="M139 440H343"/>
+<rect x="144.7" y="406" width="192.6" height="24" rx="4" fill="#F3F1EB"/>
+<text x="241.0" y="425" font-size="18" font-weight="400" fill="#272820" text-anchor="middle">activates the version</text>
+<path class="main" d="M139 500H343"/>
+<rect x="153.3" y="466" width="175.4" height="24" rx="4" fill="#F3F1EB"/>
+<text x="241.0" y="485" font-size="18" font-weight="700" fill="#855414" text-anchor="middle">creates the trigger</text>
+<rect x="40" y="536" width="1040" height="42" rx="12" fill="#EAE7DF"/>
+<text x="58" y="564" font-size="19" font-weight="700" fill="#855414" text-anchor="start">2. A transaction of another workflow needs attention</text>
+<path class="edge" d="M564 626H768"/>
+<rect x="574.0" y="592" width="184.0" height="24" rx="4" fill="#F3F1EB"/>
+<text x="666.0" y="611" font-size="18" font-weight="400" fill="#272820" text-anchor="middle">transaction.in_doubt</text>
+<path class="edge" d="M776 650h34a8 8 0 0 1 8 8v18a8 8 0 0 1 -8 8H778"/>
+<rect x="828" y="654" width="175.4" height="26" rx="4" fill="#F3F1EB"/>
+<text x="834" y="673" font-size="18" font-weight="400" fill="#272820" text-anchor="start">a start per trigger</text>
+<path class="edge" d="M981 740H776"/>
+<rect x="816.6" y="706" width="123.8" height="24" rx="4" fill="#F3F1EB"/>
+<text x="878.5" y="725" font-size="18" font-weight="400" fill="#272820" text-anchor="middle">takes a start</text>
+<path class="edge" d="M981 766h-34a8 8 0 0 0 -8 8v18a8 8 0 0 0 8 8H979"/>
+<rect x="630.0" y="770" width="299.0" height="26" rx="4" fill="#F3F1EB"/>
+<text x="923" y="789" font-size="18" font-weight="400" fill="#272820" text-anchor="end">starts a run as the trigger’s owner</text>
+<rect x="40" y="836" width="1040" height="42" rx="12" fill="#EAE7DF"/>
+<text x="58" y="864" font-size="19" font-weight="700" fill="#855414" text-anchor="start">3. See what it started</text>
+<path class="edge" d="M139 926H343"/>
+<rect x="166.2" y="892" width="149.6" height="24" rx="4" fill="#F3F1EB"/>
+<text x="241.0" y="911" font-size="18" font-weight="400" fill="#272820" text-anchor="middle">reads the starts</text>
+<path class="back" d="M343 990H139"/>
+<rect x="127.5" y="956" width="227.0" height="24" rx="4" fill="#F3F1EB"/>
+<text x="241.0" y="975" font-size="18" font-weight="400" fill="#272820" text-anchor="middle">started, skipped, refused</text>
+<rect x="40.0" y="170" width="190" height="80" rx="14" fill="white" stroke="#BFB8AB" stroke-width="2"/>
+<text x="135" y="204" font-size="21" font-weight="700" fill="#272820" text-anchor="middle">Studio</text>
+<text x="135" y="231" font-size="16" font-weight="400" fill="#62645B" text-anchor="middle">the editor</text>
+<rect x="252.0" y="170" width="190" height="80" rx="14" fill="white" stroke="#BFB8AB" stroke-width="2"/>
+<text x="347" y="204" font-size="21" font-weight="700" fill="#272820" text-anchor="middle">Platform API</text>
+<text x="347" y="231" font-size="16" font-weight="400" fill="#62645B" text-anchor="middle">event triggers</text>
+<rect x="465.0" y="170" width="190" height="80" rx="14" fill="#E6E8E6" stroke="#BFB8AB" stroke-width="2"/>
+<text x="560" y="204" font-size="21" font-weight="700" fill="#272820" text-anchor="middle">Source run</text>
+<text x="560" y="231" font-size="16" font-weight="400" fill="#62645B" text-anchor="middle">move-between-systems</text>
+<rect x="677.0" y="170" width="190" height="80" rx="14" fill="#E6E8E6" stroke="#4A5D65" stroke-width="2"/>
+<text x="772" y="204" font-size="21" font-weight="700" fill="#272820" text-anchor="middle">Platform events</text>
+<text x="772" y="231" font-size="16" font-weight="400" fill="#62645B" text-anchor="middle">in the run’s commit</text>
+<rect x="890.0" y="170" width="190" height="80" rx="14" fill="#E6E8E6" stroke="#BFB8AB" stroke-width="2"/>
+<text x="985" y="204" font-size="21" font-weight="700" fill="#272820" text-anchor="middle">Recovery loop</text>
+<text x="985" y="231" font-size="16" font-weight="400" fill="#62645B" text-anchor="middle">event starts</text>
+<g id="takeaway">
+<rect x="0" y="1090" width="1120" height="90" rx="16" fill="#EAE7DF"/>
+<text x="36" y="1121" font-size="16" font-weight="700" fill="#855414">Takeaway</text>
+<text x="36" y="1153" font-size="21" fill="#272820">Each event starts each matching trigger’s workflow once, as the trigger’s owner.</text>
+</g>
+</svg>

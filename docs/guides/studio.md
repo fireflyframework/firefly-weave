@@ -1329,12 +1329,12 @@ the local check alone does not prove that actions or worker releases are
 available.
 
 Each diagnostic row shows what is wrong, a hint, and where, such as "Step
-decision-1 · Case 1 condition". Select the location to open the step, or the
-workflow settings, with the field focused. **Details** shows the support code
-and the compiler's own wording. **Apply suggested edit** applies a proposed fix
-as one undoable change. Select **Diagnostics** to fold or unfold the rows. Steps
-on the canvas show the same problems as a red border and a chip such as
-"2 problems".
+decision-1 · Case 1 condition". Select the location to open the step, the
+platform event trigger, or the workflow settings, with the field focused.
+**Details** shows the support code and the compiler's own wording. **Apply
+suggested edit** applies a proposed fix as one undoable change. Select
+**Diagnostics** to fold or unfold the rows. Steps on the canvas show the same
+problems as a red border and a chip such as "2 problems".
 
 ### Execute steps and read the run log
 
@@ -1592,6 +1592,91 @@ sections:
 **Callable by other workflows** in the workflow settings is the same setting.
 Before you remove the trigger or turn that setting off, Studio asks, and names
 the published workflows that call this one, whose next activation would fail.
+
+### React to a transaction
+
+A workflow can start when a transaction of another workflow needs attention or
+ends, for example to tell a team that a move is in doubt. Add the **Platform
+event** trigger: in **+**, choose it under **Triggers**. A workflow has at most
+one, next to its other triggers.
+[React to a transaction](transactions.md#6-react-to-a-transaction) explains the
+events, what a run receives, and how often reactions start.
+
+![From choosing events in Studio to the runs a transaction event starts](../diagrams/react-to-a-transaction.svg)
+
+Studio writes which events the workflow accepts and takes the platform event as
+its input. Activating creates the trigger, which starts a run for each matching
+event, and **Starts** shows what it started.
+[Open diagram at full size](../diagrams/react-to-a-transaction.svg).
+
+1. **Choose the events.** **Which events** lists the six, each with when it
+   happens. **A transaction needs attention** is chosen to begin with, and a
+   trigger needs at least one.
+2. **Choose the workflows.** Under **From which workflows**, select **Any
+   workflow in this project**, or **Only these workflows** and add up to 100
+   names. Studio suggests the project's published workflows and the ones kept on
+   this computer; Enter adds the name as you typed it. A workflow reacts to its
+   own transactions only when its name is in the list, and its reactions then
+   stop after three in a row.
+3. **Check the input.** A run starts with the platform event, so the workflow
+   takes it as its input. Adding the trigger sets that input when the workflow
+   has none. When it has another one, Studio asks whether to **Replace the
+   input** or **Keep the input**; both add the trigger, and one Undo takes both
+   back. While the input doesn't accept the event, the trigger can't start runs:
+   step details say so first, with **Reset the input**.
+4. **Test it with a sample.** Platform events come from transactions, so Studio
+   can't listen for one, and test runs start no reactions. In **Test event**,
+   choose the **Event** and select **Generate sample**, or select **Paste a
+   sample event**. In a pasted event, Studio replaces the event, run, and
+   incident IDs with sample IDs. Test data is shared with everyone who can test
+   the workflow, so use a made-up business key. **Execute workflow** then starts
+   from the sample, and later steps list the event's fields under **Platform
+   event**, with **Optional** on the ones that only some events carry.
+5. **Activate it.** The activation dialog's **Triggers** step creates the
+   trigger, or brings the one an earlier version runs to the new version, as
+   described next.
+
+**What activating does to the trigger:**
+
+| The version reacts to | Studio |
+| --- | --- |
+| Platform events for the first time here | Creates a trigger named after the workflow |
+| The same events and workflows as before | Moves the trigger. Its runs then start as you, including events that wait to start |
+| Other events or workflows | Creates a second trigger, then stops the old one. The row compares **Now** with the new version, with wider workflows in the warning color |
+| No platform events any more | Leaves the trigger running on its version, with **Stop it** off |
+
+Creating, moving, or replacing the trigger needs `trigger.manage`, `run.start`,
+and `run.read`, and also `transaction.reconcile` for a trigger that may resolve
+transactions. Studio never grants that itself: a move or a replace keeps it, and
+the row says so.
+
+- **Two triggers.** Two triggers that react to the same events start the
+  workflow twice for each event they share. The dialog shows the extra one as a
+  row with **Stop it** on, and stops it only after the version's own trigger is
+  set up and still reacts. When the extra one reacts to other events, the row
+  names the events that no longer start the workflow once it's stopped.
+- **Events that wait to start.** Stopping a trigger skips them, so Studio asks
+  first: **Keep it for now** or **Stop now**. **Done** keeps it. A stop you put
+  off, or one that fails, comes back at the next activation and in **Starts**.
+- **Someone else's changes.** Studio reads a trigger again right before it stops
+  it, and stops nothing that changed since the dialog opened. When someone else
+  set up a trigger for any of the same events meanwhile, Studio creates none. A
+  trigger made with the command line for other events stays as it is, and Studio
+  doesn't create the version's own until you change that one or stop it.
+
+**See what it started.** On a platform with platform event triggers, the
+trigger's step details have a **Starts** tab, which needs `trigger.manage` and
+`run.read`. For the connected environment it lists each event offered to the
+trigger, newest first:
+
+- **Started run 9b1c4e2a**, with **Open run**, which opens that run in the
+  **Runs** tab. The tab's **Platform event** filter lists every run that a
+  platform event started.
+- **Waiting to start**, for an event the platform couldn't start a run for yet.
+- **Skipped** and **Couldn't start**, with the reason.
+
+While a stop is owed, the tab has a dot, and Starts begins with the two triggers
+and **Stop it**, with the same checks as the activation dialog.
 
 ### Loop over items
 
@@ -2292,14 +2377,20 @@ The dialog checks the workflow before you activate it:
   orders-in", "Move webhook orders-in from 1.0.0 to 1.1.0 (the URL stays the
   same)", or a trigger an earlier version ran that stays behind, with **Stop
   it**. A new Kafka, email or app event trigger asks for its **Connection** on
-  its row.
+  its row. [React to a transaction](#react-to-a-transaction) describes the rows
+  of a platform event trigger.
 
 After **Activate version**, the dialog stays open while it sets the triggers
-up, each row then reads **Created**, **Moved** or **Stopped**. A trigger that
-can't be set up says why, with **Retry**; the activation stays, and the message
-reads "Activated orders 1.2.0. 1 trigger needs attention." The webhook's step
-details then show its **Production URL** with **Copy URL**; activating a later
-version moves the same webhook, so its URL doesn't change.
+up, each row then reads **Created**, **Moved** or **Stopped**, with an icon. A
+trigger that can't be set up says why, with **Retry**; the activation stays, and
+the message reads "Activated orders 1.2.0. 1 trigger needs attention." The
+webhook's step details then show its **Production URL** with **Copy URL**;
+activating a later version moves the same webhook, so its URL doesn't change.
+
+An activation replaces the workflow's activation that the dialog read. When
+someone activated the workflow there after you opened the dialog, nothing is
+activated and the dialog says so: close it and select **Activate…** again. The
+same goes when the environment or your account changed while it was open.
 
 ## Save, publish, activate and run
 

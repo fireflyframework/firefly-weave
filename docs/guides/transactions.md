@@ -169,6 +169,20 @@ tell a team that a move is in doubt or to open a ticket. The events are
 `transaction.in_doubt`, `transaction.reconciled`, and
 `transaction.force_ended`.
 
+![From choosing events in Studio to the runs a transaction event starts](../diagrams/react-to-a-transaction.svg)
+
+**How to read this diagram:** Read down. Someone creates the trigger once; each
+event of a matching transaction then starts one run as the trigger's owner.
+
+[Open diagram at full size](../diagrams/react-to-a-transaction.svg).
+
+**From Studio,** add the **Platform event** trigger: Studio writes the
+declaration and the input below, tests the workflow with a sample event, creates
+or moves the trigger when you activate, and lists what it started under
+**Starts**. [React to a transaction in Studio](studio.md#react-to-a-transaction)
+has the steps. The rest of this section does the same with a definition file and
+the command line.
+
 ### Declare the events the workflow accepts
 
 The workflow lists the events in `eventTrigger` and takes the platform event as

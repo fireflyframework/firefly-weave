@@ -16,7 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // A trigger choice's Test event pane: what the trigger can do here, and a
-// sample its run starts with. A webhook listens for a test event where Studio
+// sample its run starts with. A platform event has a pane of its own, which
+// builds the sample. A webhook listens for a test event where Studio
 // is connected and test calls are on; anywhere else, and for Kafka, email and
 // app event triggers, the person pastes a sample instead. The sample becomes
 // the workflow's test input, as the input form's Test event does.
@@ -30,6 +31,8 @@ import {
 } from "@angular/core";
 import { connectionsPort } from "../connections/connections-port";
 import type { StepDetailsHost } from "../ndv/step-details-host";
+import { enteredNote } from "./event-sample";
+import { EventSample } from "./event-sample-pane";
 import { listenBlocked, type ListenState } from "./test-listener";
 import { localPlatform, productionUrl, secretCommand } from "./webhook-help";
 import type { FormSession } from "../ndv/params/form-session";
@@ -45,6 +48,7 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
   broker: "message",
   email: "email",
   provider: "event",
+  event: "event",
   schedule: "run input",
 };
 
@@ -52,175 +56,189 @@ const SAMPLE_NOUNS: Partial<Record<TriggerIntent["kind"], string>> = {
   selector: "weave-trigger-event-pane",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
+  imports: [EventSample],
   template: `<header class="sd-pane-head">
       <h3 class="sd-pane-title">Test event</h3>
     </header>
     <div class="sd-pane-body">
-      <div class="pane-content trigger-event">
-        @if (note(); as text) {
-          <p class="pane-empty-text">{{ text }}</p>
-        }
-        @if (canListen()) {
-          @let state = listenState();
-          @switch (state?.kind) {
-            @case ("starting") {
-              <p class="trigger-event-status" role="status">
-                <span class="loading-spinner small"></span>Getting a test URL…
-              </p>
-              @if (alone()) {
-                <button type="button" class="pane-generate" (click)="stop()">
-                  Stop listening
-                </button>
-              }
-            }
-            @case ("listening") {
-              @if (state?.kind === "listening") {
+      @if (trigger().kind === "event") {
+        <div class="pane-content">
+          <weave-event-sample [session]="session()" />
+        </div>
+      } @else {
+        <div class="pane-content trigger-event">
+          @if (note(); as text) {
+            <p class="pane-empty-text">{{ text }}</p>
+          }
+          @if (canListen()) {
+            @let state = listenState();
+            @switch (state?.kind) {
+              @case ("starting") {
                 <p class="trigger-event-status" role="status">
-                  <span class="trigger-event-dot" aria-hidden="true"></span
-                  >Listening for test event
+                  <span class="loading-spinner small"></span>Getting a test URL…
                 </p>
                 @if (alone()) {
-                  <!-- On a phone the header sits with Parameters: stop from right here, in view. -->
                   <button type="button" class="pane-generate" (click)="stop()">
                     Stop listening
                   </button>
                 }
-                <label class="trigger-event-label" [attr.for]="urlId()"
-                  >Make a POST request to:</label
-                >
-                <div class="trigger-event-copy">
-                  <input
-                    class="trigger-event-url"
-                    readonly
-                    [id]="urlId()"
-                    [value]="state.url"
-                  />
-                  <button
-                    type="button"
-                    class="pane-generate"
-                    (click)="copy(state.url, 'the test URL')"
-                  >
-                    Copy URL
-                  </button>
-                </div>
-                @if (testSecretCommand(); as setCommand) {
-                  <p class="trigger-event-label">
-                    Set the test secret's value on a local platform with:
+              }
+              @case ("listening") {
+                @if (state?.kind === "listening") {
+                  <p class="trigger-event-status" role="status">
+                    <span class="trigger-event-dot" aria-hidden="true"></span
+                    >Listening for test event
                   </p>
-                  <div class="trigger-event-copy">
-                    <code
-                      class="trigger-event-code"
-                      aria-label="Set the test secret"
-                      >{{ setCommand }}</code
-                    >
+                  @if (alone()) {
+                    <!-- On a phone the header sits with Parameters: stop from right here, in view. -->
                     <button
                       type="button"
                       class="pane-generate"
-                      (click)="copy(setCommand, 'the command')"
+                      (click)="stop()"
                     >
-                      Copy
+                      Stop listening
+                    </button>
+                  }
+                  <label class="trigger-event-label" [attr.for]="urlId()"
+                    >Make a POST request to:</label
+                  >
+                  <div class="trigger-event-copy">
+                    <input
+                      class="trigger-event-url"
+                      readonly
+                      [id]="urlId()"
+                      [value]="state.url"
+                    />
+                    <button
+                      type="button"
+                      class="pane-generate"
+                      (click)="copy(state.url, 'the test URL')"
+                    >
+                      Copy URL
+                    </button>
+                  </div>
+                  @if (testSecretCommand(); as setCommand) {
+                    <p class="trigger-event-label">
+                      Set the test secret's value on a local platform with:
+                    </p>
+                    <div class="trigger-event-copy">
+                      <code
+                        class="trigger-event-code"
+                        aria-label="Set the test secret"
+                        >{{ setCommand }}</code
+                      >
+                      <button
+                        type="button"
+                        class="pane-generate"
+                        (click)="copy(setCommand, 'the command')"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  }
+                  <pre
+                    class="trigger-event-code trigger-event-curl"
+                    aria-label="Signed cURL"
+                    >{{ state.curl }}</pre
+                  >
+                  <div class="trigger-event-actions">
+                    <button
+                      type="button"
+                      class="pane-generate"
+                      (click)="copy(state.curl, 'the signed cURL')"
+                    >
+                      Copy cURL
                     </button>
                   </div>
                 }
-                <pre
-                  class="trigger-event-code trigger-event-curl"
-                  aria-label="Signed cURL"
-                  >{{ state.curl }}</pre
-                >
-                <div class="trigger-event-actions">
-                  <button
-                    type="button"
-                    class="pane-generate"
-                    (click)="copy(state.curl, 'the signed cURL')"
-                  >
-                    Copy cURL
-                  </button>
-                </div>
               }
-            }
-            @default {
-              @if (state?.kind === "failed") {
-                <p class="pane-empty-text trigger-event-problem" role="alert">
-                  {{ state.message }}
-                </p>
-              } @else if (state?.kind === "received") {
-                <p class="trigger-event-status" role="status">
-                  Received a test event. Its run is open in Runs.
-                </p>
-              } @else {
-                <!-- Listen and Stop listening are the header's: each shows once. -->
-                <p class="pane-empty-text">
-                  Select Listen for test event to get a test URL for this
-                  webhook.
-                </p>
+              @default {
+                @if (state?.kind === "failed") {
+                  <p class="pane-empty-text trigger-event-problem" role="alert">
+                    {{ state.message }}
+                  </p>
+                } @else if (state?.kind === "received") {
+                  <p class="trigger-event-status" role="status">
+                    Received a test event. Its run is open in Runs.
+                  </p>
+                } @else {
+                  <!-- Listen and Stop listening are the header's: each shows once. -->
+                  <p class="pane-empty-text">
+                    Select Listen for test event to get a test URL for this
+                    webhook.
+                  </p>
+                }
               }
             }
           }
-        }
-        @if (production(); as url) {
-          <label class="trigger-event-label" [attr.for]="productionId()"
-            >Production URL</label
-          >
-          <div class="trigger-event-copy">
-            <input
-              class="trigger-event-url"
-              readonly
-              [id]="productionId()"
-              [value]="url"
-              [attr.aria-describedby]="productionId() + '-hint'"
-            />
-            <button
-              type="button"
-              class="pane-generate"
-              (click)="copy(url, 'the production URL')"
+          @if (production(); as url) {
+            <label class="trigger-event-label" [attr.for]="productionId()"
+              >Production URL</label
             >
-              Copy URL
-            </button>
-          </div>
-          <p class="pane-empty-text" [id]="productionId() + '-hint'">
-            Starts runs of the active version, signed with the production
-            secret.
-          </p>
-        } @else if (unactivated(); as environment) {
-          <p class="pane-empty-text">
-            The production URL appears once you activate this workflow in
-            {{ environment }}.
-          </p>
-        }
-        @if (pasting()) {
-          <label class="trigger-event-label" [attr.for]="fieldId()">{{
-            label()
-          }}</label>
-          <textarea
-            class="trigger-event-sample"
-            rows="6"
-            spellcheck="false"
-            [id]="fieldId()"
-            [value]="draft()"
-            (input)="draft.set($any($event.target).value)"
-          ></textarea>
-          @if (problem()) {
-            <p class="pane-empty-text trigger-event-problem" role="alert">
-              {{ problem() }}
+            <div class="trigger-event-copy">
+              <input
+                class="trigger-event-url"
+                readonly
+                [id]="productionId()"
+                [value]="url"
+                [attr.aria-describedby]="productionId() + '-hint'"
+              />
+              <button
+                type="button"
+                class="pane-generate"
+                (click)="copy(url, 'the production URL')"
+              >
+                Copy URL
+              </button>
+            </div>
+            <p class="pane-empty-text" [id]="productionId() + '-hint'">
+              Starts runs of the active version, signed with the production
+              secret.
+            </p>
+          } @else if (unactivated(); as environment) {
+            <p class="pane-empty-text">
+              The production URL appears once you activate this workflow in
+              {{ environment }}.
             </p>
           }
-          <div class="trigger-event-actions">
-            <button type="button" class="pane-generate" (click)="use()">
-              Use this sample
+          @if (pasting()) {
+            <label class="trigger-event-label" [attr.for]="fieldId()">{{
+              label()
+            }}</label>
+            <textarea
+              class="trigger-event-sample"
+              rows="6"
+              spellcheck="false"
+              [id]="fieldId()"
+              [value]="draft()"
+              (input)="draft.set($any($event.target).value)"
+            ></textarea>
+            @if (problem()) {
+              <p class="pane-empty-text trigger-event-problem" role="alert">
+                {{ problem() }}
+              </p>
+            }
+            <div class="trigger-event-actions">
+              <button type="button" class="pane-generate" (click)="use()">
+                Use this sample
+              </button>
+              <button type="button" class="pane-generate" (click)="cancel()">
+                Cancel
+              </button>
+            </div>
+          } @else {
+            <button type="button" class="pane-generate" (click)="paste()">
+              {{ offer() }}
             </button>
-            <button type="button" class="pane-generate" (click)="cancel()">
-              Cancel
-            </button>
-          </div>
-        } @else {
-          <button type="button" class="pane-generate" (click)="paste()">
-            {{ offer() }}
-          </button>
-        }
-        @if (sample() !== undefined) {
-          <pre class="pane-json" aria-label="Test event">{{ shown() }}</pre>
-        }
-      </div>
+          }
+          @if (replaced(); as note) {
+            <p class="pane-empty-text">{{ note }}</p>
+          }
+          @if (sample() !== undefined) {
+            <pre class="pane-json" aria-label="Test event">{{ shown() }}</pre>
+          }
+        </div>
+      }
     </div>`,
   styles: `
     .trigger-event {
@@ -417,6 +435,12 @@ export class TriggerEventPane {
   shown(): string {
     return JSON.stringify(this.sample(), null, 2);
   }
+  /** What Studio replaced in the test event, and why; "" when it replaced nothing, or a later paste was refused. */
+  replaced(): string {
+    return this.problem()
+      ? ""
+      : enteredNote(this.session().controller.replacedIds());
+  }
 
   paste() {
     const current = this.sample();
@@ -447,6 +471,10 @@ export class TriggerEventPane {
     }
     this.pasting.set(false);
     this.problem.set("");
-    session.announce("Pasted a sample test event.");
+    session.announce(
+      ["Pasted a sample test event.", this.replaced()]
+        .filter(Boolean)
+        .join(" "),
+    );
   }
 }

@@ -1487,6 +1487,7 @@ const SPLIT_MIN_WIDTH = 1024;
               [diagnostics]="h.diagnostics!.diagnostics"
               [definition]="h.diagnosticsDefinition"
               [readonly]="h.model.readonly"
+              [stepDetails]="h.stepDetailsOn()"
               (locate)="h.openDiagnostic($event)"
               (apply)="h.applySuggestion($event)"
             />

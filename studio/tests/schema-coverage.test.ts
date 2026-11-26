@@ -229,13 +229,15 @@ describe.skipIf(!available)(
       ]
         .filter((f) => f.scope === "workflow" && f.path[0] === "spec")
         .map((f) => String(f.path[1]));
-      // Canvas owns steps, ConnectionSlotList the slots, and LlmInspector profiles.
+      // Canvas owns steps and the platform event trigger, ConnectionSlotList
+      // the slots, and LlmInspector profiles.
       expect(
         [
           ...new Set([
             ...spec,
             ...settings,
             "steps",
+            "eventTrigger",
             "connections",
             "llmProfiles",
           ]),

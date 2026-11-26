@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // Retry.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { stringify } from "yaml";
-import { platform, revision, versionId } from "./activation-po";
+import { activationsOf, platform, revision, versionId } from "./activation-po";
 import { command } from "./support";
 import { withNewEditor } from "./step-details-po";
 
@@ -123,22 +123,13 @@ async function routes(page: Page) {
       },
     }),
   );
-  await page.route("**/environments/development/activations?*", (r) =>
-    r.fulfill({
-      json: {
-        items: [
-          {
-            id: "activation-old",
-            name: "pets",
-            revision: 1,
-            retired: false,
-            request: { version_id: OLD_VERSION },
-          },
-        ],
-        next_cursor: null,
-      },
-    }),
-  );
+  activationsOf(page).items.push({
+    id: "activation-old",
+    name: "pets",
+    revision: 1,
+    retired: false,
+    request: { version_id: OLD_VERSION },
+  });
   await page.route("**/projects/project/workflows?*", (r) =>
     r.fulfill({
       json: {
