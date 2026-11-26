@@ -161,10 +161,11 @@ incident of a transaction a person already ended, which Retry closes.
 weave runs cancel "$RUN_ID" --request cancel.json   # {"reason": "...", "skip_undo": true}
 ```
 
-While one of the run's transactions is in doubt, this cancel is refused with
-HTTP 409 `WV-TXN-IN-DOUBT` and changes nothing. Resolve that transaction's
-incident instead: its **Force end** is the one way to end a transaction in doubt
-without deciding how it ended.
+A refused cancel answers HTTP 409 `WV-TXN-IN-DOUBT` and changes nothing. A run
+that Weave can't read whole, because it is too large or withheld, takes no
+decision on its incidents, so this cancel isn't refused for it: it is the way
+out. See
+[what refuses a cancel](../reference/incident-operations.md#transactions-in-doubt).
 
 ## 6. React to a transaction
 
