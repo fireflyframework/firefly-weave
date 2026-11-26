@@ -157,7 +157,9 @@ let sequence = 0;
     <div class="publish-callout" [id]="id + '-text'">
       <weave-icon name="failCircle" [size]="16" />
       <p class="publish-count">{{ text() }}</p>
-      <p>Fix them, then publish. Each fix is one undo step.</p>
+      <p>
+        Fix them, then publish. Undo takes back a fix that changes the workflow.
+      </p>
     </div>
     <ul class="publish-problems" aria-label="Problems">
       @for (problem of summary().problems; track $index) {

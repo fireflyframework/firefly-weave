@@ -156,7 +156,7 @@ test.describe("a transaction's problems at 1440x900", () => {
       "This transaction isn't safe to publish: 3 problems",
     );
     await expect(dialog).toContainText(
-      "Fix them, then publish. Each fix is one undo step.",
+      "Fix them, then publish. Undo takes back a fix that changes the workflow.",
     );
     await expect(dialog.getByRole("button", { name: "Close" })).toBeFocused();
     await expect(
