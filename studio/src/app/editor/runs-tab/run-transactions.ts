@@ -85,6 +85,8 @@ const STATES: readonly TransactionState[] = [
 const MODES: readonly UndoMode[] = ["reserve", "compensate", "irreversible"];
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
+/** An incident's ID as Operate opens one (incidentFromQuery). */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const text = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
 const count = (value: unknown): value is number =>
@@ -139,7 +141,8 @@ function viewOf(value: unknown): RunTransactionView | null {
     ...when("decided_at"),
     ...when("ended_at"),
     participants: steps as TransactionParticipantView[],
-    ...(text(value["incident_id"])
+    // Only an incident Operate can open: its ID is a UUID.
+    ...(text(value["incident_id"]) && UUID.test(value["incident_id"])
       ? { incident_id: value["incident_id"] }
       : {}),
   };

@@ -231,6 +231,21 @@ describe("reading a run's transactions", () => {
     expect("views" in read && read.views[0].participants).toHaveLength(3);
   });
 
+  it("keeps an incident only by the UUID Operate opens", async () => {
+    const crafted = {
+      ...VIEWS.stuck,
+      incident_id: `x&incident=${INCIDENT}`,
+    };
+    const read = await readRunTransactions(
+      platform(() => ({ items: [crafted], next_cursor: null })).api,
+      "r",
+    );
+    const kept = "views" in read ? read.views[0] : null;
+    expect(kept?.state).toBe("in_doubt");
+    expect(kept).not.toHaveProperty("incident_id");
+    expect(inDoubtLines(kept!, () => null)?.incident).toBeNull();
+  });
+
   it("is refused without run.read, and missing on a platform without it", async () => {
     expect(
       await readRunTransactions(
