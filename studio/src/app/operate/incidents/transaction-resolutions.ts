@@ -215,21 +215,22 @@ function undoneWords(
 /**
  * Whether Weave knows that a step ended as the transaction is said to have: it
  * stops there, so a step it doesn't know is left as it is for good. A failed
- * step is asked about only when finished, and only when the incident waits for
- * it (`own`): any other one's On error setting may have taken care of it. A
- * status Studio doesn't know is asked about.
+ * step is asked about only when finished, and only when an incident of the
+ * transaction waits for it: the one decided (`own`), or another one, which the
+ * transaction lists among its `stuck_steps`. Any other one's On error setting
+ * may have taken care of it. A status Studio doesn't know is asked about.
  */
 function endedSo(
   { status, mode, instance_key }: TransactionParticipantView,
   as: "compensated" | "completed",
-  own: string | null,
+  waited: ReadonlySet<string>,
 ): boolean {
   switch (status) {
     case "pending":
     case "skipped":
       return true;
     case "failed":
-      return as === "compensated" || instance_key !== own;
+      return as === "compensated" || !waited.has(instance_key);
     case "undone":
     case "cancelled":
       return as === "compensated";
@@ -252,9 +253,13 @@ export function checklistRows(
   const { transaction, run_id } = incident;
   if (!transaction) return [];
   const own = transactionStep(incident);
+  const waited = new Set([
+    ...(transaction.stuck_steps ?? []),
+    ...(own === null ? [] : [own]),
+  ]);
   return recordRows(transaction, run_id).flatMap((row, index) => {
     const participant = transaction.participants[index];
-    if (endedSo(participant, as, own)) return [];
+    if (endedSo(participant, as, waited)) return [];
     const { status, mode } = participant;
     const outcome =
       as === "compensated"

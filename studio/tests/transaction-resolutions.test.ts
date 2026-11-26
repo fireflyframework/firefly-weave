@@ -426,6 +426,28 @@ describe("the checklist", () => {
     );
   });
 
+  it("asks of every failed step with an incident of its own, whichever incident it is decided from", () => {
+    // Two steps after the point of no return failed for good, each behind its own incident.
+    const two = about("WV-TXN-AFTER-PIVOT-STUCK", "notify[2]", [
+      step("notify[1]", "irreversible", "failed"),
+      step("notify[2]", "irreversible", "failed"),
+      step("keep[2]", "reserve", "failed"),
+    ]);
+    const both: IncidentView = {
+      ...two,
+      transaction: {
+        ...two.transaction!,
+        stuck_steps: ["notify[1]", "notify[2]"],
+      },
+    };
+    expect(listed(both, "completed")).toEqual({
+      "notify[1]": "done",
+      "notify[2]": "done",
+    });
+    // Undone asks of no failed step: it applied nothing to undo.
+    expect(listed(both, "compensated")).toEqual({});
+  });
+
   it("is empty without the record it is built from", () => {
     expect(checklistRows(held, "compensated")).toEqual([]);
   });
