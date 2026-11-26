@@ -218,19 +218,6 @@ async def is_test_run(repository: RuntimeRepository, run_id: UUID) -> bool:
     return bool(rows and rows[0]["test"])
 
 
-async def _refuse_past_doubt(repository: RuntimeRepository, run_id: UUID) -> None:
-    """Refuse to stop a run without undoing while it holds an active in-doubt incident, a held run's included: only a
-    person who resolves that incident, by Force end among the rest, decides a transaction in doubt."""
-    from firefly_weave.contracts.transactions import IN_DOUBT_CODES, TRANSACTION_MESSAGES
-
-    if await repository.rows(
-        f"SELECT 1 FROM incidents WHERE {SCOPE} AND run_id=:run AND status='active' AND code=ANY(:codes) LIMIT 1",
-        run=run_id,
-        codes=sorted(IN_DOUBT_CODES),
-    ):
-        raise CatalogError(409, "WV-TXN-IN-DOUBT", TRANSACTION_MESSAGES["WV-TXN-IN-DOUBT"])
-
-
 @service
 class RuntimeService:
     def __init__(self, definitions: DefinitionService) -> None:
@@ -794,7 +781,6 @@ class RuntimeService:
                 raise AccessDenied()
             if skip_undo:
                 self.require(await load_principal(tx.session, actor.id), scope, "transaction.reconcile", context)
-                await _refuse_past_doubt(repository, run_id)
             skipped = {"skip_undo": True} if skip_undo else {}
             # The incidents in doubt a stop closes say who stopped the run.
             doubts = await open_doubts(repository, run_id)

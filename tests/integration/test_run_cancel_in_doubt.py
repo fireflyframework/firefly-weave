@@ -14,8 +14,9 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Canceling without undoing on real PostgreSQL: refused while one of the run's transactions is in doubt, so the
-incident's Force end is the one way past doubt, and refused to anyone without the reconciler role."""
+"""Canceling without undoing on real PostgreSQL: refused while one of the run's transactions is in doubt, so a
+decision on the incident is the way past doubt, unless the run is too large to read and its incident takes no
+decision; and refused to anyone without the reconciler role."""
 
 import asyncio
 import json
@@ -102,27 +103,28 @@ async def test_a_cancel_without_undoing_is_refused_while_a_transaction_is_in_dou
     assert {("run.cancel", "allow"), ("transaction.reconcile", "allow")} <= checked
 
 
-async def test_a_cancel_without_undoing_of_a_held_run_is_refused_and_force_end_still_works(
-    platform, reconciler, monkeypatch
-):
-    from firefly_weave.contracts.operations import IncidentResolution
-    from firefly_weave.runtime import kernel, repository
+async def held_run(platform, monkeypatch):
+    """A run too large to undo its transaction when it times out, held behind its in-doubt incident."""
+    from firefly_weave.runtime import kernel
 
     activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())], timeout=5))
     run = await platform.start(activation)
     await platform.complete(await platform.lease("hold"))
-    # Too large to undo its transaction when it times out: the run is held behind its in-doubt incident.
     monkeypatch.setattr(kernel, "STATE_BYTES", 1)
     await asyncio.sleep(5.2)
     await platform.scan()
     incident = await active(platform, run.id)
     assert (incident["code"], incident["incident_key"]) == ("WV-TXN-RUN-OVERSIZED", "@transactions:0")
-    # Refused whether the run is read whole or is too large to read.
+    return run, incident
+
+
+async def test_a_cancel_without_undoing_of_a_held_run_is_refused_and_force_end_still_works(
+    platform, reconciler, monkeypatch
+):
+    from firefly_weave.contracts.operations import IncidentResolution
+
+    run, incident = await held_run(platform, monkeypatch)
     await refused(platform, run.id, reconciler)
-    fetch = repository.RUN_FETCH_BYTES
-    monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
-    await refused(platform, run.id, reconciler)
-    monkeypatch.setattr(repository, "RUN_FETCH_BYTES", fetch)
     assert (await platform.state(run.id))["status"] == "suspended"
     assert (await platform.record(run.id))["state"] == "open"
     # The incident's Force end is the way past the hold.
@@ -138,6 +140,20 @@ async def test_a_cancel_without_undoing_of_a_held_run_is_refused_and_force_end_s
         )
     assert (await platform.state(run.id))["status"] == "cancelled"
     assert (await platform.record(run.id))["state"] == "force_ended"
+
+
+async def test_a_held_run_too_large_to_read_is_canceled_without_undoing(platform, reconciler, monkeypatch):
+    from firefly_weave.runtime import repository
+
+    run, incident = await held_run(platform, monkeypatch)
+    # Too large to read, its incident takes no decision, so this cancel is the way out.
+    with monkeypatch.context() as large:
+        large.setattr(repository, "RUN_FETCH_BYTES", 1)
+        await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert (await platform.record(run.id))["state"] == "force_ended"
+    [row] = await platform.query("SELECT status,actor_id FROM incidents WHERE id=:id", id=incident["id"])
+    assert (row["status"], row["actor_id"]) == ("resolved", reconciler.id)
 
 
 @pytest.fixture
