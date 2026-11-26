@@ -42,6 +42,8 @@ export const ids = {
   undoStuck: "2b7e4c19-8d0a-4f1b-9c2d-3e4f5a6b7c8d",
   withheld: "7b3e9d10-2c4d-4e5f-a6b7-c8d9e0f1a2b3",
   decided: "5c90e1b7-4d5e-4f6a-8b7c-9d0e1f2a3b4c",
+  afterPivot: "d4e5f6a7-b8c9-4d0e-9f1a-2b3c4d5e6f7a",
+  leftover: "f6a7b8c9-d0e1-4f2a-8b3c-4d5e6f7a8b9c",
   loopInDoubt: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
   loopReconciled: "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
   resolvingRun: "e8f7a6b5-c4d3-4e2f-9a1b-0c9d8e7f6a5b",
@@ -225,6 +227,79 @@ export const decided: IncidentView = {
     ],
     pending: [],
   },
+};
+
+/** Two steps after the point of no return failed for good, each behind its own incident. */
+export const afterPivot: IncidentView = {
+  ...decided,
+  id: ids.afterPivot,
+  incident_key: "notify[5]:0",
+  node_id: "notify",
+  origin_code: "WV-TASK-FAILED",
+  code: "WV-TXN-AFTER-PIVOT-STUCK",
+  status: "active",
+  revision: 4,
+  actor_id: null,
+  resolved_at: null,
+  resolution: null,
+  instance_key: "notify[5]",
+  run_status: "suspended",
+  transaction: {
+    instance_key: "move[5]",
+    state: "in_doubt",
+    business_key: "T-1034",
+    participants: [
+      {
+        node_id: "submit",
+        instance_key: "submit[5]",
+        mode: "irreversible",
+        status: "done",
+        effect: "none",
+      },
+      {
+        node_id: "notify",
+        instance_key: "notify[5]",
+        mode: "irreversible",
+        status: "failed",
+        effect: "none",
+        attempts: 3,
+      },
+      {
+        node_id: "report",
+        instance_key: "report[5]",
+        mode: "irreversible",
+        status: "failed",
+        effect: "none",
+        attempts: 3,
+      },
+    ],
+    pending: [],
+    stuck_steps: ["notify[5]", "report[5]"],
+  },
+};
+
+/** An incident of a transaction a person had already reconciled, closed by a Retry that ran nothing again. */
+const { stuck_steps: _stuck, ...reconciled } = afterPivot.transaction!;
+export const leftover: IncidentView = {
+  ...afterPivot,
+  id: ids.leftover,
+  incident_key: "report[5]:0",
+  node_id: "report",
+  status: "resolved",
+  actor_id: ids.person,
+  resolved_at: "2026-11-22T10:52:00Z",
+  resolution: {
+    receipt_id: ids.receipt,
+    kind: "retry_safe",
+    reason: "The transaction was already reconciled.",
+    output: null,
+    evidence_reference: null,
+    leftover: true,
+  },
+  instance_key: "report[5]",
+  run_status: "running",
+  // Its own incident closed, and the other one was decided too: no step is stuck.
+  transaction: { ...reconciled, state: "reconciled" },
 };
 
 /** A page of a run's transactions inside a loop: undone, in doubt, and reconciled by a person. */

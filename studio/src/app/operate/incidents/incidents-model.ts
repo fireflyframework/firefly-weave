@@ -54,6 +54,12 @@ export interface IncidentTransaction {
   participants: TransactionParticipantView[];
   /** Instance keys of the steps whose results haven't arrived. */
   pending: string[];
+  /**
+   * Instance keys of the steps after the point of no return with an open
+   * incident: a record that says the transaction finished names each one.
+   * Left out when there are none.
+   */
+  stuck_steps?: string[];
 }
 
 /** An incident as the platform reports it (`incidents.list`). */
@@ -77,6 +83,11 @@ export interface IncidentView {
     evidence_reference?: string | null;
     /** The workflow run whose resolve step applied it. */
     workflow_run_id?: string;
+    /**
+     * It closed an incident that an earlier decision left with nothing to
+     * decide; only the platform says so. Left out otherwise.
+     */
+    leftover?: boolean;
   } | null;
   external_effects_may_continue: boolean;
   /** The full step instance; left out for an incident not tied to one. */

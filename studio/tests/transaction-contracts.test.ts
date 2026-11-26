@@ -139,6 +139,8 @@ describe.skipIf(!pythonAvailable)("the platform's transaction answers", () => {
         examples.undoStuck,
         examples.withheldLinks,
         examples.decided,
+        examples.afterPivot,
+        examples.leftover,
         ...highPriority,
         held,
         ...others,
