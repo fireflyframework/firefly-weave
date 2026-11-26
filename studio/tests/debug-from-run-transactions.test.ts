@@ -28,12 +28,20 @@ import {
   UNDO_LEFT_OUT,
   type RunSource,
 } from "../src/app/editor/runs-tab/debug-from-run";
+import { DebugRun, type DebugHost } from "../src/app/editor/runs-tab/debug-run";
+import type { RunData } from "../src/app/editor/runs-tab/run-data";
 import type { RunRecord } from "../src/app/editor/runs-tab/run-record";
+import type { ChosenRun } from "../src/app/editor/runs-tab/runs-tab-state";
 import type { RunTransactionView } from "../src/app/editor/runs-tab/run-transactions";
 import type { StepFingerprints } from "../src/app/editor/state/fingerprints";
-import { fitsTestData } from "../src/app/editor/state/test-data-ops";
+import {
+  emptyTestData,
+  fitsTestData,
+} from "../src/app/editor/state/test-data-ops";
+import type { TestDataService } from "../src/app/editor/state/test-data-service";
+import type { StudioTestData } from "../src/app/editor/state/test-data";
 import { readTestData } from "../src/app/editor/state/test-data-read";
-import type { Workflow } from "../src/app/model";
+import { StructuredCanvasAdapter, type Workflow } from "../src/app/model";
 import type { StepFact } from "../src/app/operate/run-contracts";
 import { python, pythonAvailable, repository } from "./python-path";
 
@@ -399,5 +407,79 @@ describe("Debug in editor on a run whose transaction was undone", () => {
   it("copies what it always did when the run's transactions weren't read", () => {
     const { data } = built(source("failed", undefined));
     expect(data.errors).toBeUndefined();
+  });
+});
+
+describe("Debug in editor from the Runs tab", () => {
+  /** Studio's shell around Debug in editor; the test data service keeps what it is given. */
+  function debugHost() {
+    const kept: StudioTestData[] = [];
+    const model = new StructuredCanvasAdapter();
+    model.definition = move();
+    const testData = {
+      place: () => ({ kind: "connected", draftId: "d-1" }),
+      data: () => emptyTestData(NOW),
+      keepFromRun: async (next: StudioTestData) => {
+        kept.push(next);
+        return { ok: true, previous: next, version: 1, refused: [] };
+      },
+    } as unknown as TestDataService;
+    const host: DebugHost = {
+      profile: { environmentId: ENV },
+      api: {
+        environment: ENV,
+        request: async <T>(path: string) => {
+          expect(path).toContain(`/runs/${RUN}/steps`);
+          return { items: FACTS, next_cursor: null } as T;
+        },
+      },
+      draftId: "d-1",
+      model,
+      stepDataScope: "account-a|env-1",
+      testData,
+      dialogs: { choose: async () => null },
+      runNotice: null,
+      can: () => true,
+      notify: () => undefined,
+      selectTab: async () => true,
+      executeIn: async () => ({ kind: "stale" }),
+      openStepDetails: async () => true,
+    };
+    return { host, kept };
+  }
+  const chosen = (transactions: ChosenRun["transactions"]): ChosenRun => ({
+    id: RUN,
+    summary: null,
+    record: record("failed"),
+    definition: move(),
+    overlay: null,
+    // Debug in editor only asks whether the run's data was read.
+    data: {} as RunData,
+    following: false,
+    stopped: false,
+    limited: false,
+    error: null,
+    transactions,
+  });
+
+  it("copies the failure that undid the run's transaction, with its effect, from what the tab read", async () => {
+    const { host, kept } = debugHost();
+    const outcome = await new DebugRun().run(
+      host,
+      chosen({ views: [UNDONE], more: false }),
+      "debug",
+    );
+    expect(outcome).toEqual({ kind: "done", stoppedAt: null });
+    expect(kept).toHaveLength(1);
+    expect(kept[0].errors).toEqual({
+      submit: {
+        code: "REQUEST_REFUSED",
+        attempts: 2,
+        effect: "none",
+        source: "run",
+        runId: RUN,
+        runEnvironmentId: ENV,
+      },
+    });
   });
 });
