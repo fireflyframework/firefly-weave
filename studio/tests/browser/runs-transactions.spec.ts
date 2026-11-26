@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // mocked platform: the frame's state and each step's word, the point of no
 // return, the header and list captions of a run in doubt, its incident in
 // Operate, and never a business key.
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { RunSummary, StepFact } from "../../src/app/operate/run-contracts";
 import { CanvasPage } from "./canvas-po";
 import {
@@ -378,6 +378,27 @@ const transactionReads = (platform: RunsPlatform, id: string) =>
   platform.requests.filter((url) =>
     url.pathname.endsWith(`/runs/${id}/transactions`),
   );
+/** The run header's caption parts that a line break splits in two. */
+const splitParts = (header: Locator) =>
+  header
+    .locator(".run-caption > span:not(.run-in-doubt), .run-in-doubt-part")
+    .evaluateAll((parts) =>
+      parts
+        .filter((part) => part.getClientRects().length > 1)
+        .map((part) => part.textContent?.trim()),
+    );
+/** Where the caption's first in-doubt part sits: at the start of a line of
+ * its own below "Following this run", or after something on its line. */
+const firstDoubtPart = (header: Locator) =>
+  header.locator(".run-caption").evaluate((caption) => {
+    const first = caption.querySelector(".run-in-doubt-part")!;
+    const follow = caption.querySelector(".run-follow-caption")!;
+    const part = first.getBoundingClientRect();
+    return {
+      indent: Math.round(part.left - caption.getBoundingClientRect().left),
+      belowFollow: part.top >= follow.getBoundingClientRect().bottom - 1,
+    };
+  });
 
 test.describe("a recorded run's transactions at 1440x900", () => {
   test.use({
@@ -432,6 +453,9 @@ test.describe("a recorded run's transactions at 1440x900", () => {
     await expect(header.locator(".run-in-doubt")).toHaveText(
       "Failed at submit: REQUEST_REFUSED · transaction move is in doubt · WV-TXN-UNDO-STUCK",
     );
+    // The caption wraps only between whole parts: when it started and how
+    // long it ran never split.
+    expect(await splitParts(header)).toEqual([]);
     await expect(runs.row(IDS.doubt).locator(".run-caption-line")).toHaveText(
       "Failed at submit · move in doubt",
     );
@@ -545,6 +569,21 @@ test.describe("a recorded run in doubt on a phone", () => {
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(390);
     }
+    const header = runs.canvas.locator(".run-header");
+    expect(await splitParts(header)).toEqual([]);
+    // "Following this run" has a line of its own, so the next line starts
+    // with the step that failed, never with a separator.
+    expect(await firstDoubtPart(header)).toEqual({
+      indent: 0,
+      belowFollow: true,
+    });
+    // Also where both would fit on one line.
+    await page.setViewportSize({ width: 470, height: 844 });
+    expect(await firstDoubtPart(header)).toEqual({
+      indent: 0,
+      belowFollow: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
     await runs.canvas.getByRole("button", { name: "Back to runs" }).click();
     const caption = runs.row(IDS.doubt).locator(".run-caption-line");
     await expect(caption).toHaveText("Failed at submit · move in doubt");

@@ -167,6 +167,23 @@ button.icon-button.run-copy {
   white-space: normal;
   line-height: 18px;
 }
+/* When it started and how long it ran stay whole too. */
+.run-caption:has(.run-in-doubt) > span:not(.run-in-doubt) {
+  white-space: nowrap;
+}
+/* Below 480 px "Following this run" leads a caption in doubt on a line of its
+   own, so the next line starts with the step that failed, not a separator. */
+@media (max-width: 479px) {
+  .run-caption:has(.run-in-doubt) > span.run-follow-caption {
+    display: flex;
+    width: max-content;
+  }
+  .run-caption:has(.run-in-doubt)
+    > span.run-follow-caption
+    + span.run-in-doubt::before {
+    content: none;
+  }
+}
 .run-in-doubt {
   color: var(--warning-ink);
   font-weight: 600;
