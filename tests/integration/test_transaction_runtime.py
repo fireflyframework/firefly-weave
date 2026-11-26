@@ -27,7 +27,9 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 async def platform(worker_setup, services, access_db, monkeypatch):
-    return await build(worker_setup, services, access_db, monkeypatch)
+    platform = await build(worker_setup, services, access_db, monkeypatch)
+    yield platform
+    await platform.shows_every_incident()
 
 
 async def test_a_transaction_commits_and_confirms_its_reservation_with_one_key_per_phase(platform):
@@ -56,6 +58,15 @@ async def test_a_transaction_commits_and_confirms_its_reservation_with_one_key_p
     facts = await platform.query("SELECT transaction_state FROM run_facts WHERE run_id=:run", run=run.id)
     assert facts[0]["transaction_state"] == "completed"
     assert await platform.keys(run.id) == ["hold", "add", "submit", "hold#confirm"]
+
+
+async def test_only_a_run_with_a_transaction_starts_under_the_transaction_rules_of_this_release(platform):
+    pause = {"id": "pause", "kind": "wait", "durationSeconds": 3600}
+    for steps, rules in (([transaction(hold(), submit())], 2), ([pause], None)):
+        run = await platform.start(await platform.publish(workflow(f"move-{rules}", steps)))
+        [started] = await platform.query("SELECT data FROM run_events WHERE run_id=:run AND type='started'", run=run.id)
+        assert started["data"].get("transaction_rules") == rules
+        assert (await platform.state(run.id)).get("transaction_rules") == rules
 
 
 async def test_a_failure_undoes_every_step_in_reverse_and_fails_the_run_without_an_incident(platform):

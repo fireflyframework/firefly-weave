@@ -24,7 +24,16 @@ from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "runtime"))
 
-from transaction_support import INPUT, add, compiled, hold, submit, transaction  # noqa: E402
+from transaction_support import (  # noqa: E402
+    INPUT,
+    add,
+    compiled,
+    hold,
+    lookup,
+    parallel,
+    submit,
+    transaction,
+)
 
 from firefly_weave.cli.main import cli  # noqa: E402
 
@@ -63,6 +72,22 @@ def test_simulate_prints_each_transaction(tmp_path):
     result = simulate(request(tmp_path, errors=UNDO_STUCK))
     assert result.exit_code == 1, result.output
     assert "Transaction move: in doubt (WV-TXN-UNDO-STUCK at add#undo:10)." in result.output
+
+
+def test_simulate_prints_a_step_that_failed_beside_the_decision_as_one_that_failed_after_it(tmp_path):
+    flow = compiled([transaction([hold(), parallel(lookup(), submit())])])
+    body = {
+        "artifact": json.loads(flow.to_bytes()),
+        "mocks": {key: MOCKS[key] for key in ("node:hold", "node:submit")},
+        "errors": {"node:lookup": {"code": "REJECTED"}},
+        "input": INPUT,
+        "now": "2026-11-12T00:00:00Z",
+    }
+    path = tmp_path / "beside.json"
+    path.write_text(json.dumps(body))
+    result = simulate(path)
+    assert result.exit_code == 1, result.output
+    assert "Transaction move: in doubt (WV-TXN-AFTER-PIVOT-STUCK at lookup:1)." in result.output
 
 
 def test_simulate_takes_pending_keys(tmp_path):

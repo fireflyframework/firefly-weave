@@ -1471,6 +1471,11 @@ runtime. **Execute step** still simulates on this computer, and
   the cost: "This calls qwen3:4b on OpenAI (openai-prod) and may incur cost."
   When several releases could run the step, Studio asks which one and
   remembers the answer for this session.
+- **What must be finished.** An AI task runs once the steps its prompt and
+  context read, and the blocks around it, are finished; the rest of the workflow
+  needn't be. What they read is checked as a compile checks it, so an AI task
+  doesn't run when that check finds a value marked secret in its prompt or
+  context.
 - **Before it runs.** Studio saves the draft first, and publishes the
   workflow's own actions when the step calls one that isn't published yet. A
   step without a connection for its slot says so, with **Fix**, and its tile

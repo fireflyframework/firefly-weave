@@ -21,11 +21,27 @@ import json
 from uuid import uuid4
 
 import pytest
+from stuck_transactions import (
+    NOTIFY,
+    PAUSE,
+    active,
+    beside,
+    by_key,
+    confirm_stuck,
+    due,
+    left_by_an_earlier_version,
+    resolve,
+    stuck,
+    stuck_beside_a_called_confirm_that_ended,
+    two_stuck,
+    with_a_called_step,
+)
 from transaction_platform import add, build, hold, submit, transaction, workflow
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.runtime.transactions import HELD_INCIDENT
 
 pytestmark = pytest.mark.integration
 SATURATE = (
@@ -37,7 +53,9 @@ SATURATE = (
 
 @pytest.fixture
 async def platform(worker_setup, services, access_db, monkeypatch):
-    return await build(worker_setup, services, access_db, monkeypatch)
+    platform = await build(worker_setup, services, access_db, monkeypatch)
+    yield platform
+    await platform.shows_every_incident()
 
 
 @pytest.fixture
@@ -62,6 +80,14 @@ async def cancel(platform, run_id, *, actor=None, skip_undo=False):
         )
 
 
+async def stop_audited(platform, run_id) -> dict:
+    [row] = await platform.query(
+        "SELECT event->'details' AS details FROM access_audit WHERE action='run.cancel' AND target=:target",
+        target=str(run_id),
+    )
+    return row["details"]
+
+
 async def test_skip_undo_needs_the_reconcile_capability(platform, reconciler):
     activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
     run = await platform.start(activation)
@@ -79,7 +105,7 @@ async def test_skip_undo_needs_the_reconcile_capability(platform, reconciler):
     assert adding.operation_key == f"{run.id}:add"
 
 
-async def test_skip_undo_ends_a_run_in_doubt(platform, reconciler):
+async def test_skip_undo_is_refused_while_the_step_that_cant_be_undone_is_unknown(platform, reconciler):
     activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
     run = await platform.start(activation)
     await platform.complete(await platform.lease("hold"))
@@ -87,10 +113,201 @@ async def test_skip_undo_ends_a_run_in_doubt(platform, reconciler):
     await platform.fail(await platform.lease("submit"), "UNAVAILABLE")
     await platform.scan()
     assert (await platform.record(run.id))["state"] == "in_doubt"
+    with pytest.raises(CatalogError) as refused:
+        await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    assert (refused.value.status, refused.value.code) == (409, "WV-TXN-IN-DOUBT")
+    # The incident stays open: a person says whether the step happened, or force ends the run from it.
+    assert (await platform.record(run.id))["state"] == "in_doubt"
+    [incident] = await platform.query("SELECT code FROM incidents WHERE run_id=:run AND status='active'", run=run.id)
+    assert incident == {"code": "WV-TXN-PIVOT-UNKNOWN"}
+
+
+@pytest.mark.parametrize("skip_undo", [False, True])
+async def test_a_leftover_does_not_refuse_a_cancel(platform, reconciler, monkeypatch, skip_undo):
+    run, _ = await left_by_an_earlier_version(platform, reconciler, monkeypatch)
+    view = await cancel(platform, run.id, actor=reconciler, skip_undo=skip_undo)
+    assert view.state.status == "cancelled"
+    # What the person said of the transaction stays.
+    assert (await platform.record(run.id))["state"] == "reconciled"
+
+
+@pytest.mark.parametrize("skip_undo", [False, True])
+async def test_a_run_stops_only_when_no_open_transaction_is_in_doubt(platform, reconciler, monkeypatch, skip_undo):
+    other = {**transaction(hold("hold3"), add("add3")), "id": "other"}
+    run, left = await left_by_an_earlier_version(platform, reconciler, monkeypatch, others=[other])
+    # The incident in doubt is a leftover, and the transaction beside it is still open.
+    before = await platform.state(run.id)
+    with pytest.raises(CatalogError) as refused:
+        await cancel(platform, run.id, actor=reconciler, skip_undo=skip_undo)
+    assert (refused.value.status, refused.value.code) == (409, "WV-TXN-IN-DOUBT")
+    assert await platform.state(run.id) == before
+    # Closing it is the way on.
+    await resolve(platform, left, "retry_safe")
+    await cancel(platform, run.id, actor=reconciler, skip_undo=skip_undo)
+    assert (await platform.state(run.id)).get("ending") is not None or skip_undo
+
+
+@pytest.mark.parametrize("skip_undo", [False, True])
+async def test_a_stop_that_closes_a_doubt_records_who_stopped_it(platform, reconciler, monkeypatch, skip_undo):
+    run, left = await left_by_an_earlier_version(platform, reconciler, monkeypatch)
+    await cancel(platform, run.id, actor=reconciler, skip_undo=skip_undo)
+    [event] = await platform.query(
+        "SELECT id,created_at FROM run_events WHERE run_id=:run AND type='cancelled'", run=run.id
+    )
+    [row] = await platform.query("SELECT * FROM incidents WHERE id=:id", id=left["id"])
+    assert (row["status"], row["actor_id"], row["resolved_at"]) == ("resolved", reconciler.id, event["created_at"])
+    assert row["resolution"] == {
+        "receipt_id": str(event["id"]),
+        "kind": "terminate",
+        "reason": "stop",
+        "output": None,
+        "evidence_reference": None,
+        "leftover": True,
+    }
+    assert row["revision"] > left["revision"]
+    assert (await stop_audited(platform, run.id))["closed"] == [str(left["id"])]
+
+
+@pytest.mark.parametrize("too_large", ["to read", "for the kernel"])
+@pytest.mark.parametrize("skip_undo", [False, True])
+async def test_a_stop_of_a_run_too_large_keeps_what_an_earlier_decision_left(
+    platform, reconciler, monkeypatch, skip_undo, too_large
+):
+    from firefly_weave.runtime import kernel, repository
+
+    run, left = await left_by_an_earlier_version(platform, reconciler, monkeypatch)
+    with monkeypatch.context() as large:
+        if too_large == "to read":
+            large.setattr(repository, "RUN_FETCH_BYTES", 1)
+        else:
+            large.setattr(kernel, "STATE_BYTES", 1)
+        await cancel(platform, run.id, actor=reconciler, skip_undo=skip_undo)
+    [row] = await platform.query("SELECT * FROM incidents WHERE id=:id", id=left["id"])
+    assert (row["status"], row["actor_id"]) == ("resolved", reconciler.id)
+    assert (row["resolution"]["kind"], row["resolution"].get("leftover")) == ("terminate", True)
+    assert (await stop_audited(platform, run.id))["closed"] == [str(left["id"])]
+
+
+@pytest.mark.parametrize("too_large", ["to read", "for the kernel"])
+async def test_a_stop_of_a_run_too_large_keeps_a_doubt_apart_from_what_was_left(
+    platform, reconciler, monkeypatch, too_large
+):
+    from firefly_weave.runtime import kernel, repository
+
+    run, incident = await confirm_stuck(platform)
+    with monkeypatch.context() as large:
+        if too_large == "to read":
+            large.setattr(repository, "RUN_FETCH_BYTES", 1)
+            await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+        else:
+            large.setattr(kernel, "STATE_BYTES", 1)
+            await resolve(platform, incident, "terminate", actor=reconciler)
+    [row] = await platform.query("SELECT * FROM incidents WHERE id=:id", id=incident["id"])
+    assert (row["status"], row["resolution"]["kind"]) == ("resolved", "terminate")
+    # It was still to be decided, and this stop decided it.
+    assert "leftover" not in row["resolution"]
+
+
+async def test_force_end_of_a_held_run_keeps_what_an_earlier_decision_left(platform, reconciler, monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    other = {**transaction(hold("hold3", holdSeconds=600), add("add3")), "id": "other"}
+    run, left = await left_by_an_earlier_version(platform, reconciler, monkeypatch, others=[other])
+    await due(platform, run.id, "other#hold", "transactions", "other", "hold_by")
+    with monkeypatch.context() as large:
+        large.setattr(kernel, "STATE_BYTES", 1)
+        await platform.scan()
+        held = (await by_key(platform, run.id))[HELD_INCIDENT]
+        await resolve(platform, held, "terminate", actor=reconciler)
+    ended = await by_key(platform, run.id, "resolved")
+    assert ended[left["incident_key"]]["resolution"]["leftover"] is True
+    assert "leftover" not in ended[HELD_INCIDENT]["resolution"]
+
+
+async def test_a_stop_closes_any_other_incident_without_a_person(platform, reconciler):
+    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
+    run = await platform.start(activation)
+    await platform.fail(await platform.lease("hold"), "UNAVAILABLE")
+    failed = await active(platform, run.id)
+    assert failed["code"] == "WV-TASK-FAILED"
+    await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    [row] = await platform.query("SELECT status,actor_id,resolution FROM incidents WHERE id=:id", id=failed["id"])
+    assert row == {"status": "closed", "actor_id": None, "resolution": None}
+
+
+async def test_a_stop_of_a_withheld_run_records_who_stopped_it(platform, reconciler):
+    run, held = await two_stuck(platform)
+    await platform.execute(
+        "UPDATE runs SET state=jsonb_set(state,'{unavailable}','true'::jsonb) WHERE id=:run", run=run.id
+    )
+    await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    ended = await by_key(platform, run.id, "resolved")
+    assert {key: (row["actor_id"], row["resolution"]["reason"]) for key, row in ended.items()} == dict.fromkeys(
+        held, (reconciler.id, "WV-LEGACY-UNAVAILABLE")
+    )
+    closed = sorted(str(row["id"]) for row in held.values())
+    assert (await stop_audited(platform, run.id))["closed"] == closed
+
+
+async def test_a_doubt_of_another_run_refuses_no_stop(platform, reconciler):
+    doubtful, held = await two_stuck(platform)
+    run = await platform.start(await platform.publish(workflow("move-b", [transaction(hold(), add())])), "M-2")
+    await platform.complete(await platform.lease("hold"))
+    await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert await by_key(platform, doubtful.id) == held
+    assert "closed" not in await stop_audited(platform, run.id)
+
+
+async def test_force_end_of_a_held_run_the_kernel_takes_again_ends_all_of_it(platform, reconciler, monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    other = {**transaction(hold("hold3", holdSeconds=600), add("add3")), "id": "other"}
+    run = await platform.start(await platform.publish(workflow("move", [beside(transaction(hold(), submit()), other)])))
+    await platform.complete(await platform.lease("hold"))
+    await platform.complete(platform.leased.pop("hold3"))
+    await platform.complete(await platform.lease("submit"))
+    await stuck(platform, run.id, "hold#confirm")
+    await due(platform, run.id, "other#hold", "transactions", "other", "hold_by")
+    with monkeypatch.context() as large:
+        large.setattr(kernel, "STATE_BYTES", 1)
+        await platform.scan()
+    rows = await by_key(platform, run.id)
+    await resolve(platform, rows[HELD_INCIDENT], "terminate", actor=reconciler)
+    ended = await by_key(platform, run.id, "resolved")
+    assert {key: row["actor_id"] for key, row in ended.items()} == dict.fromkeys(rows, reconciler.id)
+    # Each names its own incident, if it had one: the hold was about no one transaction.
+    records = [await platform.record(run.id, key) for key in ("move", "other")]
+    assert [record["state"] for record in records] == ["force_ended"] * 2
+    assert [record["incident_key"] for record in records] == ["hold#confirm:1", None]
+
+
+async def test_a_doubt_no_row_shows_refuses_no_stop_without_undoing(platform, reconciler):
+    run, incident = await confirm_stuck(platform)
+    # An earlier version left the state with an incident no row showed.
+    await platform.execute("UPDATE incidents SET status='closed' WHERE id=:id", id=incident["id"])
+    with pytest.raises(CatalogError) as refused:
+        await cancel(platform, run.id)
+    assert refused.value.code == "WV-TXN-IN-DOUBT"
     view = await cancel(platform, run.id, actor=reconciler, skip_undo=True)
     assert view.state.status == "cancelled"
     assert (await platform.record(run.id))["state"] == "force_ended"
-    assert await platform.query("SELECT 1 FROM incidents WHERE run_id=:run AND status='active'", run=run.id) == []
+
+
+async def test_a_run_in_doubt_too_large_to_read_is_still_stopped_without_undoing(platform, reconciler, monkeypatch):
+    from firefly_weave.runtime import repository
+
+    run, incident = await confirm_stuck(platform)
+    with monkeypatch.context() as large:
+        large.setattr(repository, "RUN_FETCH_BYTES", 1)
+        # Nobody can decide it, so this stop is its way out.
+        with pytest.raises(CatalogError) as refused:
+            await resolve(platform, incident, "terminate", actor=reconciler)
+        assert refused.value.code == "WV-RUNTIME-LIMIT"
+        await cancel(platform, run.id, actor=reconciler, skip_undo=True)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    [row] = await platform.query("SELECT status,actor_id,resolution FROM incidents WHERE id=:id", id=incident["id"])
+    assert (row["status"], row["actor_id"], row["resolution"]["kind"]) == ("resolved", reconciler.id, "terminate")
 
 
 async def test_a_rollback_finishes_at_a_full_byte_quota(platform):
@@ -245,3 +462,123 @@ async def test_force_end_works_at_a_full_byte_quota(platform, reconciler):
         )
     assert (await platform.state(run.id))["status"] == "cancelled"
     assert (await platform.record(run.id))["state"] == "force_ended"
+
+
+async def test_force_end_works_at_a_full_byte_quota_while_another_transaction_goes_back(platform, reconciler):
+    """Stuck after its point of no return, and another transaction to undo: Force end leaves the run ending."""
+    other = {**transaction(hold("hold3"), add("add3")), "id": "other"}
+    run = await platform.start(await platform.publish(workflow("move", [beside(transaction(submit(), NOTIFY), other)])))
+    await platform.complete(await platform.lease("submit"))
+    await platform.complete(platform.leased.pop("hold3"))
+    held = await stuck(platform, run.id, "notify")
+    await platform.execute(SATURATE, tenant=platform.scope.tenant_id, project=platform.scope.project_id)
+    await resolve(platform, held["notify:1"], "terminate", actor=reconciler)
+    state = await platform.state(run.id)
+    assert (state["status"], state["ending"]["status"]) == ("waiting", "cancelled")
+    assert (await platform.record(run.id))["state"] == "force_ended"
+    await platform.fail(platform.leased.pop("add3"), "REFUSED", outcome="failed")
+    await platform.scan()
+    await platform.complete(await platform.lease("add3#undo"))
+    await platform.complete(await platform.lease("hold3#cancel"))
+    assert (await platform.state(run.id))["status"] == "cancelled"
+
+
+async def test_a_retry_after_the_point_of_no_return_waits_for_quota_like_forward_work(platform):
+    other = {**transaction(hold("hold3"), add("add3")), "id": "other"}
+    run = await platform.start(await platform.publish(workflow("move", [beside(transaction(submit(), NOTIFY), other)])))
+    await platform.complete(await platform.lease("submit"))
+    held = await stuck(platform, run.id, "notify")
+    await platform.execute(SATURATE, tenant=platform.scope.tenant_id, project=platform.scope.project_id)
+    with pytest.raises(CatalogError) as refused:
+        await resolve(platform, held["notify:1"], "retry_safe")
+    assert (refused.value.status, refused.value.code) == (429, "WV-OPERATION-CAPACITY")
+
+
+APPROVAL = {
+    "id": "approval",
+    "kind": "signal",
+    "name": "approve",
+    "timeoutSeconds": 600,
+    "payloadSchema": {"type": "integer"},
+}
+
+
+async def a_wait_is_due(platform, run_id) -> None:
+    await due(platform, run_id, "pause", "waits", "pause")
+
+
+async def a_signal_is_kept(platform, run_id) -> None:
+    await platform.execute(
+        "INSERT INTO signal_receipts SELECT gen_random_uuid(),tenant_id,project_id,environment_id,id,'kept','approve',"
+        "'1',repeat('0',64),clock_timestamp(),false FROM runs WHERE id=:run",
+        run=run_id,
+    )
+
+
+@pytest.mark.parametrize("arrives", [a_wait_is_due, a_signal_is_kept])
+@pytest.mark.parametrize(
+    ("held", "decided"),
+    [(False, "hold#confirm:1"), (True, HELD_INCIDENT), (True, "hold#confirm:1")],
+    ids=["stuck confirm", "held for its size", "stuck confirm of a run held for its size"],
+)
+async def test_force_end_of_a_run_too_large_for_the_kernel_applies_nothing_else(
+    platform, reconciler, monkeypatch, held, decided, arrives
+):
+    from firefly_weave.runtime import kernel
+
+    other = {**transaction(hold("hold3", holdSeconds=600), add("add3")), "id": "other"}
+    block = beside(transaction(hold(), submit()), other, PAUSE, APPROVAL)
+    run = await platform.start(await platform.publish(workflow("move", [block])))
+    await platform.complete(await platform.lease("hold"))
+    await platform.complete(platform.leased.pop("hold3"))
+    await platform.complete(await platform.lease("submit"))
+    await stuck(platform, run.id, "hold#confirm")
+    if held:
+        await due(platform, run.id, "other#hold", "transactions", "other", "hold_by")
+    monkeypatch.setattr(kernel, "STATE_BYTES", 1)
+    if held:
+        await platform.scan()
+    await arrives(platform, run.id)
+    rows = await by_key(platform, run.id)
+    assert (HELD_INCIDENT in rows) is held
+    # It can't be applied, and nothing has to be before a run ends: the first Force end is taken.
+    await resolve(platform, rows[decided], "terminate", actor=reconciler)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert {(await platform.record(run.id, key))["state"] for key in ("move", "other")} == {"force_ended"}
+    # Whoever ended the run decided every incident in doubt it had.
+    ended = await by_key(platform, run.id, "resolved")
+    assert {key: (row["actor_id"], row["resolution"]["kind"]) for key, row in ended.items()} == dict.fromkeys(
+        rows, (reconciler.id, "terminate")
+    )
+
+
+async def test_force_end_of_a_run_too_large_for_the_kernel_applies_no_called_result(platform, reconciler, monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    run, incident = await stuck_beside_a_called_confirm_that_ended(platform)
+    monkeypatch.setattr(kernel, "STATE_BYTES", 1)
+    await resolve(platform, incident, "terminate", actor=reconciler)
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert (await platform.record(run.id))["state"] == "force_ended"
+
+
+async def test_force_end_applies_nothing_else_after_it_either(platform, reconciler, monkeypatch):
+    """Force end leaves another transaction to undo, and what that one waits for is too large to apply."""
+    from firefly_weave.runtime import kernel
+    from firefly_weave.runtime.capacity import RuntimeCapacityError
+
+    async def too_large(*_):
+        raise RuntimeCapacityError()
+
+    run, held, cancel_child = await with_a_called_step(platform)
+    await cancel_child()
+    applies = kernel.transition_async
+    monkeypatch.setattr(kernel, "transition_async", too_large)
+    await resolve(platform, held, "terminate", actor=reconciler)
+    state = await platform.state(run.id)
+    assert (state["status"], state["ending"]["status"]) == ("waiting", "cancelled")
+    monkeypatch.setattr(kernel, "transition_async", applies)
+    await platform.scan()
+    await platform.complete(await platform.lease("hold3#cancel"))
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert (await platform.record(run.id, "other"))["state"] == "cancelled"

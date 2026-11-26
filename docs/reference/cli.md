@@ -651,6 +651,7 @@ weave runs calls "$RUN_ID" --output json
 # List a run's transactions: state, steps, cause and resolution, never business values.
 weave runs transactions "$RUN_ID" --output json
 # Cancel without undoing open transactions (needs transaction.reconcile); cancel.json has "skip_undo": true.
+# Refused with WV-TXN-IN-DOUBT while a transaction waits for a person: resolve its incident first.
 weave runs cancel "$RUN_ID" --request cancel.json --output json
 # Retire an activation a running transaction may still need to undo a step (needs transaction.reconcile).
 weave definitions activations retire "$ACTIVATION_ID" --request retire.json --revision 3 \

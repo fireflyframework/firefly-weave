@@ -90,13 +90,13 @@ async def test_a_crash_at_each_durable_step_still_finishes_with_every_phase_sent
     original = settlement.project_transactions
     crashed: list[str] = []
 
-    async def crashing(repository, view, result, event):
+    async def crashing(repository, view, result, event, incidents):
         record = result.state.transactions.get("move")
         if not crashed and record is not None and CRASHES[point](record):
             crashed.append(point)
             # The server dies before the transaction commits: nothing of this transition is kept.
             raise RuntimeError("crash")
-        await original(repository, view, result, event)
+        await original(repository, view, result, event, incidents)
 
     monkeypatch.setattr(settlement, "project_transactions", crashing)
     document = workflow("move", [transaction(hold(), add(), add("add2"), submit())])

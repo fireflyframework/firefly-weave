@@ -120,7 +120,7 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
     data = dict(event.data)
     omissions: list[Omission] = []
     fields = {
-        "started": {"admission_policy", "origin", "run_id", "not_after"},
+        "started": {"admission_policy", "origin", "run_id", "not_after", "transaction_rules"},
         # A review's decision carries the digest of the input it approved: a digest, never the input.
         "human_completed": {"node_id", "task_id", "actor_id", "output", "input_digest"},
         "paused": {"actor_id", "reason", "control_revision"},
@@ -141,6 +141,9 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
             "evidence_reference",
             "code",
             "attempts",
+            # Which rules the run's transactions follow from here, and the transaction the incident belongs to.
+            "transaction_rules",
+            "transaction",
         },
         "cancelled": {"actor_id", "reason", "code", "skip_undo"},
         "timed_out": {"node_id", "deadline", "wait_id", "code"},

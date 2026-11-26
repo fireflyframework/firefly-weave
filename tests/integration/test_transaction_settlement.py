@@ -52,7 +52,9 @@ def beside(*steps: dict) -> list[dict]:
 
 @pytest.fixture
 async def platform(worker_setup, services, access_db, monkeypatch):
-    return await build(worker_setup, services, access_db, monkeypatch)
+    platform = await build(worker_setup, services, access_db, monkeypatch)
+    yield platform
+    await platform.shows_every_incident()
 
 
 async def pause(platform, run_id, paused: bool = True) -> None:

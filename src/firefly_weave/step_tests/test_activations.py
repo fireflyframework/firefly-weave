@@ -25,7 +25,7 @@ audits record identities and effects, never values.
 
 import copy
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -55,7 +55,7 @@ from firefly_weave.contracts.step_tests import (
     DraftTestRunRequest,
 )
 from firefly_weave.contracts.values import JsonObject
-from firefly_weave.definitions.ai import validate_ai_bindings, validate_ai_reserved
+from firefly_weave.definitions.ai import uses_ai, validate_ai_bindings, validate_ai_reserved
 from firefly_weave.definitions.calls import (
     SIDE_EFFECTS,
     call_pins,
@@ -181,12 +181,6 @@ def not_found() -> CatalogError:
 
 def expired() -> CatalogError:
     return CatalogError(410, "WV-TESTACTIVATION-EXPIRED", "This test activation has expired")
-
-
-def uses_ai(nodes: Iterable[object]) -> bool:
-    return any(
-        isinstance(node, AgentNode) or (isinstance(node, ActionNode) and node.llm_profile is not None) for node in nodes
-    )
 
 
 @service

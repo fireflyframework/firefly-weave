@@ -29,6 +29,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.contracts.instance_keys import instance_view, node_of
 from firefly_weave.contracts.transactions import (
+    IN_DOUBT_CODES,
     TRANSACTION_STATE_ORDER,
     dispatch_effect,
     participants_view,
@@ -36,8 +37,8 @@ from firefly_weave.contracts.transactions import (
 )
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.operations.facts import task_fact_update
-from firefly_weave.runtime.models import ControlCommand, RuntimeEvent, TransactionRecord, Transition
-from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
+from firefly_weave.runtime.models import ControlCommand, RunState, RuntimeEvent, TransactionRecord, Transition
+from firefly_weave.runtime.repository import SCOPE, IncidentChanges, RuntimeRepository
 
 if TYPE_CHECKING:
     from firefly_weave.compiler.api import CompiledArtifact
@@ -56,14 +57,17 @@ def spends_reserve(event: RuntimeEvent, result: Transition) -> bool:
     """Whether a transition is settlement work, which spends the run's control reserve like a stop does.
 
     Undoing a transaction is part of stopping its run, so it never waits for quota: a cancel or timeout that undoes
-    transactions first, a transaction's own deadlines, results of confirms, cancels and undos, and results of steps
-    still in flight while their transaction goes back. A transition that ends the run is a stop already.
+    transactions first, a force end that leaves others to undo, a transaction's own deadlines, results of confirms,
+    cancels and undos, and results of steps still in flight while their transaction goes back. A transition that ends
+    the run is a stop already.
     """
     state = result.state
     if state.status in {"succeeded", "failed", "cancelled", "timed_out"} or state.unavailable:
         return False
     if event.type in {"cancelled", "timed_out"}:
         return state.ending is not None
+    if event.type == "incident_resolved" and event.data.get("kind") == "terminate" and state.ending is not None:
+        return True
     return settling(event, result) and only_settlement(result)
 
 
@@ -471,9 +475,16 @@ async def emit(
 
 
 async def write_record(
-    repository: RuntimeRepository, run_id: UUID, key: str, record: TransactionRecord, decided: datetime | None
+    repository: RuntimeRepository,
+    run_id: UUID,
+    key: str,
+    record: TransactionRecord,
+    decided: datetime | None,
+    *,
+    resolved: str | None = None,
 ) -> bool:
-    """Write one transaction's record, unless the row already holds this revision or a later one; True when written."""
+    """Write one transaction's record, unless the row already holds this revision or a later one; True when written.
+    ``resolved`` is the incident whose decision ended it, which the record names from then on."""
     rows = await repository.rows(
         "INSERT INTO run_transactions(tenant_id,project_id,environment_id,run_id,instance_key,node_id,state,"
         "business_key,cause,participants,revision,opened_at,decided_at,ended_at,incident_key) VALUES(:tenant,"
@@ -496,7 +507,7 @@ async def write_record(
         opened=record.opened_at,
         decided=decided,
         ended=record.ended_at,
-        incident=record.incident,
+        incident=resolved if resolved is not None else record.incident,
     )
     return bool(rows)
 
@@ -511,11 +522,65 @@ async def refresh_transaction_state(repository: RuntimeRepository, run_id: UUID)
     )
 
 
+async def open_doubts_of(
+    repository: RuntimeRepository, run_id: UUID, state: RunState, incidents: IncidentChanges
+) -> tuple[dict[str, list[str]], set[str]]:
+    """The open in-doubt incidents of each transaction, and the transactions whose set of them this event changed."""
+    from firefly_weave.compiler.api import import_artifact
+    from firefly_weave.runtime.kernel import workflow
+    from firefly_weave.runtime.transactions import incident_transaction, shapes
+
+    doubts = {name: item for name, item in state.incidents.items() if item.code in IN_DOUBT_CODES}
+    if not doubts:
+        return {}, set()
+    rows = await repository.rows(f"SELECT artifact FROM runs WHERE {SCOPE} AND id=:run", run=run_id)
+    facts = shapes(workflow(import_artifact(rows[0]["artifact"])))
+    if facts is None:
+        return {}, set()
+    held: dict[str, list[str]] = {}
+    moved: set[str] = set()
+    for name, item in doubts.items():
+        owner = incident_transaction(facts, item.node_id, item.code)
+        if owner is not None:
+            held.setdefault(owner, []).append(name)
+            if name in incidents.opened:
+                moved.add(owner)
+    for node_id, code in incidents.closed:
+        owner = incident_transaction(facts, node_id, code) if node_id is not None and code in IN_DOUBT_CODES else None
+        if owner is not None:
+            moved.add(owner)
+    return held, moved
+
+
+async def raise_revisions(repository: RuntimeRepository, run_id: UUID, keys: list[str], at: datetime) -> None:
+    """A decision on these incidents must be made again: what their transaction says has changed."""
+    await repository.execute(
+        f"WITH raised AS (UPDATE incidents SET revision=revision+1 WHERE {SCOPE} AND run_id=:run AND status='active' "
+        "AND incident_key=ANY(cast(:keys AS text[])) RETURNING id) UPDATE incident_facts SET updated_at=:at "
+        f"WHERE {SCOPE} AND incident_id IN (SELECT id FROM raised)",
+        run=run_id,
+        keys=keys,
+        at=at,
+    )
+
+
+def step_statuses(participants: list[JsonObject]) -> dict[str, object]:
+    return {str(item["instance_key"]): item["status"] for item in participants}
+
+
 async def project_transactions(
-    repository: RuntimeRepository, view: "RunView", result: Transition, event: RuntimeEvent
+    repository: RuntimeRepository,
+    view: "RunView",
+    result: Transition,
+    event: RuntimeEvent,
+    incidents: IncidentChanges,
 ) -> None:
     """Write the record of every transaction this transition changed, then the run's transaction state. A transaction
     that ended with its loop iteration is no longer in the state: its final record is the one the transition released.
+
+    The open in-doubt incidents of a transaction get a new revision when what a person decides about changed: the
+    state of its record, the status of one of its steps, or which of them are open. ``incidents`` is what this event
+    already did to the incident rows. An attempt or an effect that changes nothing else raises none.
     """
     changed = list(
         dict.fromkeys(
@@ -530,21 +595,44 @@ async def project_transactions(
     if not changed:
         return
     before = {
-        row["instance_key"]: row["state"]
+        row["instance_key"]: row
         for row in await repository.rows(
-            f"SELECT instance_key,state FROM run_transactions WHERE {SCOPE} AND run_id=:run "
+            f"SELECT instance_key,state,incident_key,participants FROM run_transactions WHERE {SCOPE} AND run_id=:run "
             "AND instance_key=ANY(cast(:keys AS text[]))",
             run=view.id,
             keys=changed,
         )
     }
+    held, moved = await open_doubts_of(repository, view.id, result.state, incidents)
     facts: dict[str, Any] | None = None
     for key in changed:
         record = result.transaction(key)
+        prior = before.get(key)
+        was = prior["state"] if prior is not None else None
         decided = event.timestamp if record.decided_at_sequence == event.sequence else None
-        await write_record(repository, view.id, key, record, decided)
-        if record.status in EVENT_STATES and before.get(key) != record.status:
-            measure = transaction_measure(record, result.state.incidents)
+        # The run's details find a person's reason and evidence through the incident their decision was on.
+        resolved = (
+            str(event.data["incident_key"])
+            if event.type == "incident_resolved"
+            and event.data.get("transaction") == key
+            and record.status in {"reconciled", "force_ended"}
+            else None
+        )
+        await write_record(repository, view.id, key, record, decided, resolved=resolved)
+        if prior is not None and (
+            key in moved
+            or was != record.status
+            or step_statuses(prior["participants"]) != step_statuses(participants_view(record.participants))
+        ):
+            # A row this event opened, or that says something else since, has its new revision already.
+            again = [name for name in held.get(key, ()) if name not in incidents.opened]
+            if again:
+                await raise_revisions(repository, view.id, again, event.timestamp)
+        reached = record.status in EVENT_STATES and was != record.status
+        # It stays in doubt behind another incident, which a subscriber learns; it is counted once.
+        renamed = record.status == was == "in_doubt" and prior is not None and prior["incident_key"] != record.incident
+        if reached or renamed:
+            measure = transaction_measure(record, result.state.incidents) if reached else None
             if measure is not None:
                 repository.tx.record(
                     "transaction",

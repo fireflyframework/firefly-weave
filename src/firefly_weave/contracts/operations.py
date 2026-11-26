@@ -53,6 +53,9 @@ class RecordedResolution(ContractModel):
     evidence_reference: str | None = Field(default=None, min_length=1, max_length=2000)
     # The workflow run whose resolve step applied this resolution; only the platform sets it.
     workflow_run_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
+    # It closed an incident an earlier decision left nothing to decide about. A Retry of one dispatches nothing;
+    # terminate ends the run, which can still undo other transactions. Only the platform sets it.
+    leftover: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("reason", "evidence_reference")
     @classmethod
@@ -66,14 +69,18 @@ class IncidentResolution(RecordedResolution):
     """A resolution request. An unset `output` is left out (the API refuses any output, null included, for
     retry_safe and terminate); an explicit null is sent, as accepting a null result needs."""
 
-    # Never part of a request: only the platform names the workflow run that resolved an incident.
+    # Never part of a request: only the platform names the workflow run that resolved an incident, and says that an
+    # incident was a leftover.
     workflow_run_id: SkipJsonSchema[None] = Field(default=None, exclude=True)
+    leftover: SkipJsonSchema[Literal[False]] = Field(default=False, exclude=True)
 
     @model_validator(mode="before")
     @classmethod
-    def no_workflow_run(cls, data: Any) -> Any:
+    def only_the_platform_says(cls, data: Any) -> Any:
         if isinstance(data, dict) and "workflow_run_id" in data:
             raise ValueError("Only the platform names the workflow run that resolved an incident")
+        if isinstance(data, dict) and "leftover" in data:
+            raise ValueError("Only the platform says that an incident was a leftover")
         return data
 
     @model_serializer(mode="wrap")
@@ -102,6 +109,10 @@ class IncidentTransaction(ContractModel):
     business_key: str | None = Field(default=None, max_length=200, exclude_if=lambda value: value is None)
     participants: list[TransactionParticipantView] = Field(max_length=MAX_TRANSACTION_PARTICIPANTS)
     pending: list[InstanceKeyText] = Field(max_length=MAX_TRANSACTION_PARTICIPANTS)
+    # The steps with an open WV-TXN-AFTER-PIVOT-STUCK incident: a record that says the transaction completed names each.
+    stuck_steps: list[InstanceKeyText] = Field(
+        default_factory=list, max_length=MAX_TRANSACTION_PARTICIPANTS, exclude_if=lambda value: not value
+    )
 
 
 class IncidentView(ContractModel):

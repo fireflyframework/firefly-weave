@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from firefly_weave.compiler.action_config import ActionConfigValidator
-from firefly_weave.compiler.analyzer import analyze, analyze_authoring, analyze_partial
+from firefly_weave.compiler.analyzer import AnalysisResult, analyze, analyze_authoring, analyze_partial
 from firefly_weave.compiler.canonical import canonical_bytes, canonical_digest
 from firefly_weave.compiler.catalog import CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.expressions import ExpressionFailure, measure_value
@@ -105,6 +105,8 @@ class CompileResult:
     error_count: int = 0
     omitted_count: int = 0
     schema_truncated: bool = False
+    # What the analysis found, even where it refuses the source; None when the source never reached it.
+    analysis: AnalysisResult | None = field(default=None, repr=False, compare=False)
 
     @property
     def diagnostics(self) -> tuple[Diagnostic, ...]:
@@ -196,6 +198,7 @@ def _compile(
             error_count=analysis.error_count,
             omitted_count=analysis.omitted_count,
             schema_truncated=analysis.schema_truncated,
+            analysis=analysis,
         )
     try:
         executable = lower(analysis, limits=artifact_limits)
@@ -231,10 +234,18 @@ def _compile(
             omitted += len(issues) - limits.max_diagnostics
             issues = issues[: limits.max_diagnostics - 1] + [issues[-1]]
         return CompileResult(
-            tuple(issues), error_count=1, omitted_count=omitted, schema_truncated=analysis.schema_truncated
+            tuple(issues),
+            error_count=1,
+            omitted_count=omitted,
+            schema_truncated=analysis.schema_truncated,
+            analysis=analysis,
         )
     return CompileResult(
-        diagnostics, artifact=artifact, omitted_count=analysis.omitted_count, schema_truncated=analysis.schema_truncated
+        diagnostics,
+        artifact=artifact,
+        omitted_count=analysis.omitted_count,
+        schema_truncated=analysis.schema_truncated,
+        analysis=analysis,
     )
 
 

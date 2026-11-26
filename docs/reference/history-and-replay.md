@@ -239,7 +239,12 @@ person retries a settle timeout) and `move#decide`. A step's final failure is a
 whose `effect` is `none` only when the worker's release proved nothing was
 applied; exports keep it and the `effect` of `task_failed`,
 `recovery_scheduled` and `call_completed`, the `run_id` a transaction's run
-starts with, and `skip_undo` of a cancel. A resolution of a transaction in doubt
+starts with, and `skip_undo` of a cancel. The start of a run with a transaction,
+and each resolution of one of its incidents, also says `transaction_rules`, which
+is how replay knows the rules the run's transactions follow: a run started by an
+earlier version keeps the earlier ones until a decision moves it on, and a
+history that lost the field replays `inconsistent`. A resolution of a transaction
+in doubt names the `transaction` it decides and
 records the incident's `code`, so its `output` (the step's output, or a
 reconciliation record whose `blockOutput` is classified by the block's output
 schema) is exported safely. Replay checks the resolution through the kernel and

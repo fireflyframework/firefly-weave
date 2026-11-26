@@ -515,9 +515,10 @@ in `firefly_weave.contracts.step_tests` and the TypeScript types in
 - **Refusal results.** `WV-STEPTEST-CONFIRM` carries
   `{side_effect, action, environment}`; `WV-STEPTEST-INPUT`
   `{diagnostics: [{path, code}]}`; `WV-SCHEMA-SECRET_VALUE` `{paths}`;
-  `WV-STEPTEST-CONNECTION` `{slots: {slot: reason}}`. `WV-STEPTEST-BUSY` comes
-  with `Retry-After`: a person runs at most 4 step tests at once, and starts at
-  most 30 a minute, per environment.
+  `WV-STEPTEST-CONNECTION` `{slots: {slot: reason}}`; `WV-STEPTEST-DRAFT`
+  `{diagnostics: [{path, code}]}`, with the message Studio shows.
+  `WV-STEPTEST-BUSY` comes with `Retry-After`: a person runs at most 4 step
+  tests at once, and starts at most 30 a minute, per environment.
 - **Who the change is for.** Every change Studio sends to the platform carries
   `X-Weave-Principal` with the principal Studio shows as signed in. When the
   platform's sign-in now belongs to someone else, it refuses the change with
@@ -552,9 +553,9 @@ in `firefly_weave.contracts.step_tests` and the TypeScript types in
 | 404 | `WV-NOT-FOUND` |
 | 409 | `WV-STEPTEST-CONFIRM`, `WV-REVISION`, `WV-PRINCIPAL-CHANGED` |
 | 410 | `WV-TESTACTIVATION-EXPIRED` |
-| 422 | `WV-STEPTEST-INPUT`, `WV-SCHEMA-SECRET_VALUE`, `WV-STEPTEST-CONNECTION`, `WV-STEPTEST-RELEASE`, `WV-STEPTEST-KIND`, `WV-STEPTEST-TOOL-MOCK`, `WV-TESTACTIVATION-COMPILE`, `WV-TESTACTIVATION-LIFETIME`, `WV-ETAG` |
+| 422 | `WV-STEPTEST-INPUT`, `WV-SCHEMA-SECRET_VALUE`, `WV-STEPTEST-CONNECTION`, `WV-STEPTEST-RELEASE`, `WV-STEPTEST-KIND`, `WV-STEPTEST-DRAFT`, `WV-STEPTEST-TOOL-MOCK`, `WV-ACTIVATION-AI-PROVIDER`, `WV-ACTIVATION-AI-MODEL`, `WV-ACTIVATION-AI-RESERVED`, `WV-TESTACTIVATION-COMPILE`, `WV-TESTACTIVATION-LIFETIME`, `WV-ETAG` |
 | 429 | `WV-STEPTEST-BUSY` |
-| 503 | `WV-COMPATIBILITY` |
+| 503 | `WV-COMPATIBILITY`, `WV-AI-POLICY` |
 
 ## What an undo step reads
 
