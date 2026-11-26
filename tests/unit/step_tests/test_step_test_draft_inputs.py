@@ -16,11 +16,12 @@
 """A step test checks what an AI step's texts read in the saved draft like a compile, on the draft up to the step."""
 
 import copy
-from typing import get_args
+from typing import get_args, get_origin, get_type_hints
 
 import pytest
 from pydantic import BaseModel
 
+from firefly_weave.compiler.agents import expression_references
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.calls import workflow_steps
 from firefly_weave.compiler.catalog import CatalogSnapshot
@@ -1056,19 +1057,37 @@ def test_every_expression_of_a_step_is_followed():
                 pending.extend([part.__value__] if hasattr(part, "__value__") else [])
         return types
 
-    names, models, seen = set(), list(get_args(get_args(Step.__value__)[0])), {ObjectExpression}
-    while models:
-        model = models.pop()
-        if model in seen:
-            continue
-        seen.add(model)
+    marker = ref("/steps/marker/output")
+
+    def holding(model, seen):
+        """Each place in the model where an expression may sit, with a step as saved that holds ``marker`` there."""
+        # Some fields name the models they hold before those are defined.
+        hints = get_type_hints(model, include_extras=True)
         for name, field in model.model_fields.items():
-            types = within(field.annotation)
+            key, types = field.alias or name, within(hints[name])
             if Expression in types or ObjectExpression in types:
-                names.add(field.alias or name)
-            models.extend(part for part in types if isinstance(part, type) and issubclass(part, BaseModel))
-    # An agent's memory has a name or an expression as its key.
-    assert names == {*inputs.EXPRESSIONS, "key"}
+                yield (key,), {key: marker}
+            origins = {get_origin(part) for part in types}
+            for part in types:
+                if isinstance(part, type) and issubclass(part, BaseModel) and part not in seen:
+                    for place, inner in holding(part, seen | {part}):
+                        held = [inner] if list in origins else {"one": inner} if dict in origins else inner
+                        yield (key, *place), {key: held}
+
+    places = set()
+    for model in get_args(get_args(Step.__value__)[0]):
+        for place, step in holding(model, frozenset({model, ObjectExpression})):
+            places.add((model.__name__, *place))
+            read = {
+                pointer for expression in inputs._expressions(step) for pointer in expression_references(expression)
+            }
+            assert "/steps/marker/output" in read, (model.__name__, place)
+    # The walk resolves the models a field names before they are defined, and goes into lists and maps.
+    assert {("ActionStep", "errorPath", "output"), ("SwitchStep", "cases", "when")} <= places
+    assert ("ParallelStep", "branches", "output") in places
+    # Nothing the first walk follows is gone from the steps; an agent's memory has a name or an expression as its key.
+    assert {place[-1] for place in places} == {*inputs.EXPRESSIONS, "key"}
+    assert {place[1] for place in places if len(place) > 2} == {*inputs.PARTS, *inputs.LISTS_OF_PARTS, "memory"}
 
 
 def test_a_text_may_read_a_call_that_doesnt_wait():
