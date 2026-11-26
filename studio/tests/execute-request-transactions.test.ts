@@ -164,8 +164,9 @@ describe("an execution of a transaction with simulated failures", () => {
     };
     expect(executeRequest(parts(testData)).errors).toEqual({
       "node:hold": { code: "VALIDATION", effect: "none" },
-      "node:hold#cancel": { code: "TIMEOUT", attempts: 3 },
-      "node:hold[2]#confirm": { code: "TIMEOUT", attempts: 3 },
+      // An undo step fails every one of the transaction's tries (10 by default).
+      "node:hold#cancel": { code: "TIMEOUT", attempts: 10 },
+      "node:hold[2]#confirm": { code: "TIMEOUT", attempts: 10 },
       "node:add#undo": { code: "UNAVAILABLE", attempts: 10 },
       "node:submit": { code: "REFUSED", outcome: "unknown", effect: "unknown" },
       "node:after": { code: "REFUSED" },
@@ -180,8 +181,42 @@ describe("an execution of a transaction with simulated failures", () => {
       }).errors,
     ).toEqual({
       "node:hold": { code: "VALIDATION", effect: "none" },
+      "node:hold#cancel": { code: "TIMEOUT", attempts: 10 },
+      "node:hold[2]#confirm": { code: "TIMEOUT", attempts: 10 },
+    });
+  });
+
+  it("fails an undo step as often as the transaction's Max tries say when it runs, 1,000 at most", () => {
+    const withTries = (maxAttempts: number) => {
+      const workflow = structuredClone(MOVE);
+      Object.assign(workflow.spec.steps[0], {
+        policy: {
+          holdSeconds: 900,
+          undoRetry: {
+            maxAttempts,
+            initialDelaySeconds: 2,
+            maxDelaySeconds: 300,
+          },
+          undoTimeoutSeconds: 86_400,
+        },
+      });
+      return workflow;
+    };
+    // Saved while Max tries was 10, and once without its tries.
+    const testData: Partial<StudioTestData> = {
+      errors: {
+        "add#undo": { code: "UNAVAILABLE", attempts: 10, source: "manual" },
+        "hold#cancel": { code: "TIMEOUT", source: "manual" },
+      },
+    };
+    expect(executeRequest(parts(testData, withTries(3))).errors).toEqual({
+      "node:add#undo": { code: "UNAVAILABLE", attempts: 3 },
       "node:hold#cancel": { code: "TIMEOUT", attempts: 3 },
-      "node:hold[2]#confirm": { code: "TIMEOUT", attempts: 3 },
+    });
+    // The host takes 1,000 tries at most.
+    expect(executeRequest(parts(testData, withTries(5000))).errors).toEqual({
+      "node:add#undo": { code: "UNAVAILABLE", attempts: 1000 },
+      "node:hold#cancel": { code: "TIMEOUT", attempts: 1000 },
     });
   });
 

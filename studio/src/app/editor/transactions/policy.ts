@@ -35,3 +35,10 @@ export function triesOf(transaction: Step): number {
   const tries = policy?.undoRetry?.maxAttempts;
   return typeof tries === "number" ? tries : POLICY.undoRetry.maxAttempts;
 }
+
+/** The most tries a simulated failure takes (the host's ScriptedFailure). */
+const MOST_TRIES = 1000;
+/** How often Execute fails an undo step that keeps failing: the Max tries, up to what the host takes. */
+export function undoTries(transaction: Step): number {
+  return Math.min(triesOf(transaction), MOST_TRIES);
+}

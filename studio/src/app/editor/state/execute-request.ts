@@ -27,6 +27,7 @@ import { blockSteps } from "../ndv/step-walk";
 import { blocksOf } from "../step-blocks";
 import { splitPhase } from "../transactions/phase-keys";
 import { phaseOperation } from "../transactions/phases";
+import { undoTries } from "../transactions/policy";
 import { undoChoiceOf } from "../transactions/points";
 import type { Json } from "../ndv/registry";
 import type {
@@ -137,21 +138,23 @@ export interface ExecuteParts {
 export function executeRequest(parts: ExecuteParts): ExecuteRequest {
   const { testData, results, workflow } = parts;
   const steps = new Map<string, Step>();
-  /** The steps a transaction holds. */
-  const inside = new Set<string>();
-  const visit = (list: Step[], held: boolean) => {
+  /** The steps a transaction holds, each to that transaction. */
+  const inside = new Map<string, Step>();
+  const visit = (list: Step[], held: Step | null) => {
     for (const step of list) {
       steps.set(step.id, step);
-      if (held) inside.add(step.id);
+      if (held) inside.set(step.id, held);
       for (const block of blocksOf(step))
         visit(
           blockSteps(block),
-          held ||
-            ((step.kind as string) === "transaction" && block.kind === "body"),
+          held ??
+            ((step.kind as string) === "transaction" && block.kind === "body"
+              ? step
+              : null),
         );
     }
   };
-  visit(workflow.spec.steps ?? [], false);
+  visit(workflow.spec.steps ?? [], null);
   /** The step a key's undo step belongs to while it has it; null for any other key. */
   const undoes = (key: string): Step | null => {
     const named = splitPhase(key);
@@ -184,8 +187,13 @@ export function executeRequest(parts: ExecuteParts): ExecuteRequest {
   const errors: Record<MockKey, ScriptedFailure> = {};
   for (const [key, entry] of Object.entries(failures)) {
     if (!sent(key)) continue;
-    const { code, outcome, attempts } = entry;
+    const { code, outcome } = entry;
     const step = steps.get(instanceStep(key))!;
+    // An undo step fails every one of its transaction's tries as they are
+    // now, whatever they were when the failure was saved.
+    const attempts = splitPhase(key)
+      ? undoTries(inside.get(step.id)!)
+      : entry.attempts;
     // What a failure changed is for a step of a transaction that is undone or
     // can't be; the host refuses it anywhere else. Set before the step was
     // in one, an unknown outcome says so itself: the host would go by the code.

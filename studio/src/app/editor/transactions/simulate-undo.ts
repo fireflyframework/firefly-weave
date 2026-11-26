@@ -244,13 +244,9 @@ export function bannerSentence(
         : "This step's";
   return `${whose} ${PHASE_NOUNS[phase]} fails when you execute it in Studio. Real runs ignore it.`;
 }
-/** What the banner says after the code: "Undo of add · fails all 10 tries". */
-export function bannerLine(
-  step: string,
-  phase: Phase,
-  { attempts = 1 }: Pick<ErrorEntry, "attempts">,
-): string {
-  const times = attempts > 1 ? `fails all ${attempts} tries` : "fails once";
+/** What the banner says after the code: "Undo of add · fails all 10 tries", the transaction's Max tries now. */
+export function bannerLine(step: string, phase: Phase, tries: number): string {
+  const times = tries > 1 ? `fails all ${tries} tries` : "fails once";
   return `${phaseRowText(phase, step)} · ${times}`;
 }
 /** The Output pane's pill: "Undo fails when executed". */

@@ -456,10 +456,11 @@ describe("the banner of a failing undo step", () => {
     expect(bannerSentence("confirm", "every")).toBe(
       "Every item's confirm fails when you execute it in Studio. Real runs ignore it.",
     );
-    expect(bannerLine("add", "undo", { attempts: 10 })).toBe(
+    // The transaction's Max tries now, whatever it was when the failure was saved.
+    expect(bannerLine("add", "undo", 10)).toBe(
       "Undo of add · fails all 10 tries",
     );
-    expect(bannerLine("hold", "cancel", {})).toBe(
+    expect(bannerLine("hold", "cancel", 1)).toBe(
       "Release of hold · fails once",
     );
   });
@@ -620,7 +621,7 @@ describe("an undo step in step details", () => {
 });
 
 describe("what an answer of the dialog writes", () => {
-  it("starts on each part's own failure, and writes the chosen one alone, at every try of an undo", async () => {
+  it("starts on each part's own failure, and writes the chosen one alone, an undo's without its tries", async () => {
     const { controller } = controllerOf();
     await controller.setFailure("add", { code: "VALIDATION", effect: "none" });
     await controller.setFailure("add#undo", { code: "TIMEOUT", attempts: 3 });
@@ -640,8 +641,9 @@ describe("what an answer of the dialog writes", () => {
         "add",
       ),
     ).toEqual({
+      // Execute sends the transaction's Max tries at the time it runs.
       key: "add#undo",
-      entry: { code: "UNAVAILABLE", attempts: 10 },
+      entry: { code: "UNAVAILABLE" },
       replacing: "add#undo",
     });
     expect(

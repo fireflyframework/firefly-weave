@@ -92,6 +92,8 @@ export class FailureBanner {
   /** The step it is over, and which of its undo steps fails; null when the step does. */
   step = input("");
   phase = input<Phase | null>(null);
+  /** How often a failing undo step runs: its transaction's Max tries now. */
+  tries = input(1);
   /** "step" outside loops; inside one, the picked item's own or every item's. */
   scope = input<"step" | "item" | "every">("step");
   /** The platform can't save simulated failures: this one lasts for the session. */
@@ -123,7 +125,7 @@ export class FailureBanner {
   /** After an undo step's code: which undo step, and how often it fails. */
   undoLine(): string | null {
     const phase = this.phase();
-    return phase && bannerLine(this.step(), phase, this.failure());
+    return phase && bannerLine(this.step(), phase, this.tries());
   }
   codeLine(): string {
     const { code, outcome } = this.failure();

@@ -488,6 +488,7 @@ import { describeError } from "../../../errors";
               [failure]="undo.entry"
               [step]="session().target"
               [phase]="undo.phase"
+              [tries]="undo.tries"
               [scope]="undo.scope"
               [leftOut]="undo.leftOut"
               [overPin]="undo.overPin"
@@ -1602,6 +1603,8 @@ export class OutputPane {
     leftOut: string | null;
     /** Its test output is there too, kept while the failure is. */
     overPin: boolean;
+    /** How often it fails: the transaction's Max tries now. */
+    tries: number;
   }[] {
     const { controller, target } = this.session();
     if (controller.viewingRuns() || target.startsWith("$")) return [];
@@ -1609,6 +1612,7 @@ export class OutputPane {
     data.version();
     if (!Object.keys(data.data().errors ?? {}).some(splitPhase)) return [];
     const key = controller.pinKey(target);
+    const tries = controller.transactionFailure(target)?.tries ?? 1;
     return PHASES.flatMap((phase) => {
       const own = phaseKey(key, phase);
       const found = failureOf(data.data(), own);
@@ -1623,6 +1627,7 @@ export class OutputPane {
                 ? null
                 : `Execute leaves this failure out. ${target} has no ${PHASE_NOUNS[phase]} anymore.`,
               overPin: !!controller.phasePin(target, phase),
+              tries,
             } as const,
           ]
         : [];

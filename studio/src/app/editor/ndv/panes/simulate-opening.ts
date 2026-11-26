@@ -149,9 +149,10 @@ export function failureWritten(
   return {
     key: failureKey(open.key, choice.every, phase),
     // "failed" is the platform's default: it isn't written. An undo step
-    // fails every one of the transaction's tries.
+    // fails every one of the transaction's tries, which Execute reads when
+    // it runs: they aren't written either.
     entry: phase
-      ? { code, attempts: open.inside?.tries ?? 1 }
+      ? { code }
       : {
           code,
           ...(outcome !== "failed" ? { outcome } : {}),
