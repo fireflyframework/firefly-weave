@@ -237,4 +237,6 @@ export const TRANSACTION_CODE_TEXT: Readonly<Record<string, string>> = {
     "A transaction that is still running may need this activation to undo a step.",
   "WV-TXN-RECONCILE-DENIED":
     "This run isn't allowed to resolve the transaction.",
+  "WV-TXN-RECONCILE-INCOMPLETE":
+    "Say what happened to every step whose end isn't known.",
 };
