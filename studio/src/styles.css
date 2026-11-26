@@ -1185,8 +1185,9 @@ dd {
 .modal-panel:focus {
   outline: none;
 }
-/* A panel whose content scrolls is a Tab stop of its own: from the keyboard
-   it shows the focus ring, inside its edge. */
+/* When focus sits on the panel itself from the keyboard (content that
+   scrolls, a dialog with no control, or focus moved there after a keyboard
+   action), it shows the focus ring, inside its edge. */
 .modal-panel:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
