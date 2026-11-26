@@ -369,7 +369,11 @@ class FactRepository:
             at=at,
         )
 
-    async def project_run(self, view: RunView | TerminalControl, event: RuntimeEvent, result: Transition) -> None:
+    async def project_run(
+        self, view: RunView | TerminalControl, event: RuntimeEvent, result: Transition, *, leftover: bool = False
+    ) -> None:
+        """Project an accepted event; ``leftover`` when it resolved an incident that left nothing to decide, so a Retry
+        of it runs nothing again."""
         failed = None
         if result.state.status == "failed":
             key = next(
@@ -474,6 +478,7 @@ class FactRepository:
                 isinstance(node, str)
                 and event.type == "incident_resolved"
                 and event.data.get("kind") == "retry_safe"
+                and not leftover
                 and result.state.status not in TERMINAL
             ):
                 add(node, "scheduled")

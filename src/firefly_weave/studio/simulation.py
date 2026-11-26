@@ -45,16 +45,20 @@ logger = logging.getLogger(__name__)
 
 
 def _branches(step: JsonObject) -> list[JsonObject]:
-    """The step lists a container holds, each with its own ``steps`` and ``output``."""
+    """The step lists a container holds, each with its own ``steps`` and ``output``; a block that isn't one is none."""
     kind = step.get("kind")
     # A step's error path is a block too; it comes after the step's own blocks.
     path = [cast(JsonObject, step["errorPath"])] if isinstance(step.get("errorPath"), dict) else []
     if kind == "switch":
-        return [*cast(list[JsonObject], step.get("cases") or []), cast(JsonObject, step.get("default") or {})]
+        cases = step.get("cases")
+        blocks = [*(cases if isinstance(cases, list) else []), step.get("default")]
+        return [block for block in blocks if isinstance(block, dict)]
     if kind == "parallel":
-        return list(cast(dict[str, JsonObject], step.get("branches") or {}).values())
+        branches = step.get("branches")
+        return [block for block in branches.values() if isinstance(block, dict)] if isinstance(branches, dict) else []
     if kind == "forEach":
-        return [cast(JsonObject, step.get("body") or {})]
+        body = step.get("body")
+        return [body] if isinstance(body, dict) else []
     if kind == "transaction":
         return [step, *path]
     return path
@@ -74,6 +78,8 @@ def steps_of(steps: object) -> Iterator[JsonObject]:
 def _cut(steps: list[JsonObject], step_id: str) -> list[JsonObject] | None:
     """The steps up to ``step_id``: those before it, then it (or the container holding it, cut inside)."""
     for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
         if step.get("id") == step_id:
             return steps[: index + 1]
         inner = _cut_inside(step, step_id)

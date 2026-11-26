@@ -352,8 +352,9 @@ created: a step whose `provider` differs from its connection's provider answers
 422 `WV-ACTIVATION-AI-PROVIDER`, and a model the policy does not approve for the
 connection's exact endpoint answers 422 `WV-ACTIVATION-AI-MODEL`. While the
 mounted file cannot be read, activations with AI task steps answer 503
-`WV-AI-POLICY`; other activations are not affected. Without the setting,
-activation does not check AI steps and the worker remains the only judge.
+`WV-AI-POLICY`; other activations are not affected. A step test of an AI task is
+checked the same way. Without the setting, activation does not check AI steps and
+the worker remains the only judge.
 Activations created before a policy change keep running, and the worker still
 refuses their calls with `LLM_POLICY` when the model is no longer approved.
 

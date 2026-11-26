@@ -17,6 +17,7 @@
 """Revision-fenced operational decisions over the shared accepted-event runtime."""
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Final, Literal, cast, get_args
@@ -41,17 +42,19 @@ from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import IncidentResolution, IncidentView
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.step_errors import confirmable
-from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase, unsaid_message
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.fact_positions import RunPosition
 from firefly_weave.operations.fact_reads import (
+    TRANSACTION_BYTES,
     FactReadRepository,
     incident_of,
     participants_with_children,
     transaction_facts,
 )
 from firefly_weave.operations.facts import task_fact_update
+from firefly_weave.persistence.paging import PAGE_BYTES
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.agent_tools import reconciled_schema
 from firefly_weave.runtime.kernel import error_policy, validate, validate_action, workflow
@@ -59,7 +62,15 @@ from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RunState, RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService, event_hash, view_of
-from firefly_weave.runtime.transactions import shapes
+from firefly_weave.runtime.settlement import UNFINISHED_TASK_STATUSES
+from firefly_weave.runtime.transactions import (
+    HELD_INCIDENT,
+    TRANSACTION_RULES,
+    doubted_steps,
+    incident_transaction,
+    leftover,
+    shapes,
+)
 from firefly_weave.runtime.waits import TERMINAL, settle
 from firefly_weave.workers.control import revoke_attempts
 from firefly_weave.workers.leases import TaskService
@@ -85,19 +96,51 @@ def reads_every_incident(authorization: AuthorizationService, principals: tuple[
     return all(authorization.allows(principal, scope, "incident.read") for principal in principals)
 
 
-def failure_in_progress(ir: WorkflowIR, state: RunState, transaction: str) -> bool:
-    """Whether a step, confirm, cancel or undo of the transaction instance has a failed attempt that recovery hasn't
-    decided yet: its interim incident closes only when recovery tries the step again or reports it failed for good.
-    Recovery never decides a step the run no longer waits for, so its incident doesn't count."""
+def closed_beside(
+    ir: WorkflowIR, before: RunState, after: RunState, resolved: str, transaction: str | None, *, every: bool
+) -> list[str]:
+    """The keys of the other incidents a decision closed with its transaction, or with ``every`` transaction a force
+    end of the whole run ended, the hold of a run too large included: that person decided them too. Any other incident
+    that closed with the run closed."""
     facts = shapes(ir)
-    return facts is not None and any(
-        item.code == "WV-TASK-FAILED" and item.node_id in state.active and facts.owner_key(item.node_id) == transaction
-        for item in state.incidents.values()
+    if facts is None or (transaction is None and not every):
+        return []
+    owners = {
+        key: incident_transaction(facts, item.node_id, item.code)
+        for key, item in before.incidents.items()
+        if key != resolved and key not in after.incidents
+    }
+    return sorted(
+        key
+        for key, owner in owners.items()
+        if (owner is not None and (every or owner == transaction)) or (every and key == HELD_INCIDENT)
     )
 
 
-def incident_view(row: dict[str, Any], transaction: dict[str, Any] | None = None) -> IncidentView:
-    """An incident from its own row; an in-doubt one with its priority and, given its record, its transaction."""
+def stuck_steps(incidents: Sequence[dict[str, Any]]) -> tuple[str, ...]:
+    """The steps after the point of no return with an open incident, from the run's incident rows."""
+    return tuple(
+        item["node_id"]
+        for item in incidents
+        if item["status"] == "active" and item["code"] == "WV-TXN-AFTER-PIVOT-STUCK"
+    )
+
+
+async def unfinished_task(repository: RuntimeRepository, run_id: UUID, node_id: str) -> dict[str, Any] | None:
+    """The task of a step its run no longer waits for, while nothing has ended it yet."""
+    rows = await repository.rows(
+        f"SELECT * FROM task_intents WHERE {SCOPE} AND run_id=:run AND node_id=:node FOR UPDATE",
+        run=run_id,
+        node=node_id,
+    )
+    return next((row for row in rows if row["status"] in UNFINISHED_TASK_STATUSES), None)
+
+
+def incident_view(
+    row: dict[str, Any], transaction: dict[str, Any] | None = None, stuck: Sequence[str] = ()
+) -> IncidentView:
+    """An incident from its own row; an in-doubt one with its priority and, given its record, its transaction, whose
+    steps with an open incident after the point of no return are among ``stuck``."""
     fields = {name: row[name] for name in IncidentView.model_fields if name in row}
     fields["external_effects_may_continue"] = bool(row["resolution"] and row["resolution"]["kind"] == "terminate")
     held = {"code": row["code"]} | (
@@ -106,6 +149,7 @@ def incident_view(row: dict[str, Any], transaction: dict[str, Any] | None = None
             "txn_state": transaction["state"],
             "txn_business_key": transaction["business_key"],
             "txn_participants": transaction["participants"],
+            "txn_stuck": stuck,
         }
         if transaction is not None
         else {}
@@ -152,21 +196,59 @@ class IncidentService:
         async with self.runtime.definitions.transaction(scope, tx, mutation=False) as tx:
             self.runtime.require(await self.access.load_principal(actor.id, tx=tx), scope, "incident.read", context)
             repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
-            view_of(await repository.run(run_id))
-            records = {
-                row["incident_key"]: row
-                for row in await repository.rows(
-                    _RECORDS + f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
-                    "AND t.incident_key IS NOT NULL",
+            row = await repository.run(run_id)
+            view_of(row)
+            [measured] = await repository.rows(
+                "SELECT coalesce(sum(octet_length(to_jsonb(i)::text)),0) AS bytes FROM incidents i "
+                f"WHERE {SCOPE} AND run_id=:run",
+                run=run_id,
+            )
+            if measured["bytes"] > PAGE_BYTES:
+                raise CatalogError(429, "WV-PAGE-LIMIT", "The run's incidents exceed the logical byte limit")
+            incidents = await repository.rows(
+                f"SELECT * FROM incidents WHERE {SCOPE} AND run_id=:run ORDER BY incident_key", run=run_id
+            )
+            facts = shapes(workflow(import_artifact(row["artifact"])))
+            owners = {
+                item["incident_key"]: owner
+                for item in incidents
+                if facts is not None and item["node_id"] is not None and item["code"] in IN_DOUBT_CODES
+                if (owner := incident_transaction(facts, item["node_id"], item["code"])) is not None
+            }
+            # Measured as they are sent: each called step with the run of its latest call.
+            sizes = {
+                record["instance_key"]: record["bytes"]
+                for record in await repository.rows(
+                    f"SELECT r.instance_key,{TRANSACTION_BYTES.format('r')} AS bytes FROM ("
+                    + _RECORDS
+                    + f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
+                    "AND t.instance_key=ANY(cast(:keys AS text[]))) r",
                     run=run_id,
+                    keys=sorted(set(owners.values())),
                 )
             }
-            return [
-                incident_view(row, records.get(row["incident_key"]))
-                for row in await repository.rows(
-                    f"SELECT * FROM incidents WHERE {SCOPE} AND run_id=:run ORDER BY incident_key", run=run_id
+            # One answer has no page to end early. Past the budget each transaction is shown once, with the first
+            # incident a person can decide or else the first one, and the answer is refused only when even that passes.
+            budget = PAGE_BYTES - measured["bytes"]
+            if sum(sizes.get(owner, 0) for owner in owners.values()) > budget:
+                first: dict[str, str] = {}
+                for item in sorted(incidents, key=lambda item: item["status"] != "active"):
+                    if item["incident_key"] in owners:
+                        first.setdefault(owners[item["incident_key"]], item["incident_key"])
+                owners = {key: owner for owner, key in first.items()}
+                if sum(sizes.values()) > budget:
+                    raise CatalogError(429, "WV-PAGE-LIMIT", "The run's incidents exceed the logical byte limit")
+            records = {
+                record["instance_key"]: record
+                for record in await repository.rows(
+                    _RECORDS + f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
+                    "AND t.instance_key=ANY(cast(:keys AS text[]))",
+                    run=run_id,
+                    keys=sorted(sizes),
                 )
-            ]
+            }
+            stuck = stuck_steps(incidents)
+            return [incident_view(item, records.get(owners.get(item["incident_key"], "")), stuck) for item in incidents]
 
     async def resolve(
         self,
@@ -212,15 +294,27 @@ class IncidentService:
                 if prior["actor_id"] != actor.id or prior["request_hash"] != fingerprint:
                     raise CatalogError(409, "WV-INCIDENT-RECEIPT-CONFLICT", "Resolution receipt payload conflict")
                 return IncidentView.model_validate_json(json.dumps(prior["response"]))
+            if await repository.receipt_used(row["id"], request.receipt_id):
+                raise CatalogError(409, "WV-INCIDENT-RECEIPT-CONFLICT", "Another decision of this run has this receipt")
             if request.kind != "terminate":
                 self.runtime.definitions.registry.require_operational()
             if incident["revision"] != expected_revision:
                 raise CatalogError(409, "WV-INCIDENT-REVISION", "Incident revision changed")
-            await settle(repository, row)
+            # What fell due is applied before the decision, so the person must have read what it left. A refused
+            # decision applies none of it: the next scan does, and the person reads it then. A run that recovery
+            # leaves alone is decided as it was read, or its decision would wait for a scan that never comes. Force
+            # end needs nothing but what ends the run either, so a run too large to take the rest still ends.
+            only_ends = (request.kind == "terminate" and incident["code"] in IN_DOUBT_CODES) or (
+                await repository.capacity_blocked(row["id"])
+            )
+            await settle(repository, row, terminal_only=only_ends)
             row = await repository.run(row["id"])
             previous = view_of(row)
+            incident = (await repository.rows(f"SELECT * FROM incidents WHERE {SCOPE} AND id=:id", id=incident_id))[0]
             if incident["status"] != "active" or previous.state.status != "suspended":
                 raise CatalogError(409, "WV-RUNTIME-STATE", "Incident is no longer active")
+            if incident["revision"] != expected_revision:
+                raise CatalogError(409, "WV-INCIDENT-REVISION", "Incident revision changed")
             artifact = import_artifact(row["artifact"])
             ir = workflow(artifact)
             # A run-wide incident has no step; a step incident names its instance key.
@@ -230,18 +324,31 @@ class IncidentService:
             call = None
             ready: tuple[dict[str, Any], int] | None = None
             transaction_key: str | None = None
+            # An earlier decision, or the end of what it was about, left nothing to decide about this incident.
+            opened = previous.state.incidents.get(incident["incident_key"])
+            facts = shapes(ir)
+            left = opened is not None and facts is not None and leftover(facts, previous.state, opened)
             # Dispatched on the incident's code first: a transaction in doubt moves only through its own resolutions,
             # where accept_reconciled_failure is "It didn't happen" and a step's On error setting never applies.
             if incident["code"] in IN_DOUBT_CODES:
-                if request.kind == "accept_reconciled_failure" and incident["code"] != "WV-TXN-PIVOT-UNKNOWN":
+                if (
+                    request.kind == "accept_reconciled_failure"
+                    and incident["code"] != "WV-TXN-PIVOT-UNKNOWN"
+                    and not left
+                ):
                     raise CatalogError(
                         409,
                         "WV-RUNTIME-RECONCILIATION_REQUIRED",
                         "Only the step that can't be undone can be said not to have happened",
                     )
                 transaction_key, task, call, ready = await self._transaction_resolution(
-                    repository, ir, previous, incident, request, actor=actor, scope=scope, context=context
+                    repository, ir, previous, incident, request, left=left, actor=actor, scope=scope, context=context
                 )
+            elif left and request.kind != "terminate":
+                # The run no longer waits for the step, so no policy, deadline or attempt of it is asked about.
+                if request.kind != "retry_safe":
+                    raise CatalogError(409, "WV-RUNTIME-STATE", "The run no longer waits for this step")
+                task = await unfinished_task(repository, previous.id, incident["node_id"])
             elif request.kind == "accept_reconciled_failure" and (
                 isinstance(node, CallWorkflowNode) or not confirmable(incident["node_id"] or "", incident["code"])
             ):
@@ -345,6 +452,9 @@ class IncidentService:
                     "actor_id": str(actor.id),
                     # An in-doubt incident's code says what the output is: the step's, or a reconciliation record.
                     **({"code": incident["code"]} if incident["code"] in IN_DOUBT_CODES else {}),
+                    # The rules the run's transactions follow from this decision, and the transaction it decides.
+                    **({"transaction_rules": TRANSACTION_RULES} if previous.state.run_id is not None else {}),
+                    **({"transaction": transaction_key} if transaction_key is not None else {}),
                     # Attempts a worker started; the step's error object reports them. A transaction in doubt hands
                     # nothing to the step, so it records none.
                     **(
@@ -375,16 +485,18 @@ class IncidentService:
 
             failures = capacity_failures.get()
             marked = list(failures) if failures is not None else None
+            ends_every_transaction = incident["incident_key"] == HELD_INCIDENT
             try:
                 result = await transition(previous.state, event, artifact)
             except RuntimeCapacityError:
                 if request.kind != "terminate" or incident["code"] not in IN_DOUBT_CODES:
                     raise
                 # A run too large for the kernel is force ended in SQL: its transactions end where they are, and the
-                # run stops as a force cancel stops it.
+                # run stops as a cancel without undoing stops it.
                 if failures is not None and marked is not None:
                     failures[:] = marked
                 result = await self._force_end_in_sql(repository, row, event, actor)
+                ends_every_transaction = True
             else:
                 if incident["incident_key"] in result.state.incidents:
                     # Evaluation failure can atomically restore pre-event state. Do not
@@ -399,7 +511,7 @@ class IncidentService:
                 if result.state.status in TERMINAL:
                     # A resolution that ends the run is a stop: it spends the run's reserve, so it works at full quota.
                     await repository.execute("SELECT weave_control_begin('run',:id)", id=previous.id)
-                await repository.persist(view, event, result, event_hash(event))
+                await repository.persist(view, event, result, event_hash(event), leftover=left)
             if task is not None and result.state.status not in TERMINAL:
                 if request.kind == "retry_safe":
                     # A run that no longer waits for the step (a person ended its transaction) never tries it again.
@@ -433,24 +545,40 @@ class IncidentService:
                     id=again["id"],
                     deadline=(event.timestamp + timedelta(seconds=seconds)).isoformat(),
                 )
-            await repository.execute(
-                "WITH changed AS (UPDATE incidents SET status='resolved',actor_id=:actor,resolved_at=:now,"
-                "resolution=cast(:resolution AS jsonb) "
-                f"WHERE {SCOPE} AND id=:id RETURNING id) UPDATE incident_facts SET updated_at=:now "
-                f"WHERE {SCOPE} AND incident_id IN (SELECT id FROM changed)",
-                id=incident_id,
-                actor=actor.id,
-                now=event.timestamp,
-                resolution=request.recorded().model_dump_json(),
+            recorded = request.recorded().model_copy(update={"leftover": left})
+            beside = closed_beside(
+                ir,
+                previous.state,
+                result.state,
+                incident["incident_key"],
+                transaction_key,
+                every=ends_every_transaction,
+            )
+            closed: list[str] = []
+            for was in (False, True):
+                # Each of them says for itself whether an earlier decision had left it.
+                keys = [
+                    key
+                    for key in beside
+                    if (facts is not None and leftover(facts, previous.state, previous.state.incidents[key])) is was
+                ]
+                said = recorded.model_copy(update={"output": None, "leftover": was})
+                closed += await repository.resolve_incidents(previous.id, keys, actor.id, event.timestamp, said)
+            await repository.resolve_incidents(
+                previous.id, [incident["incident_key"]], actor.id, event.timestamp, recorded
             )
             records = await repository.rows(
-                _RECORDS + f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run AND t.incident_key=:key",
+                _RECORDS + f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run AND CASE "
+                "WHEN cast(:transaction AS text) IS NULL THEN t.incident_key=:key ELSE t.instance_key=:transaction END",
                 run=previous.id,
                 key=incident["incident_key"],
+                transaction=transaction_key,
             )
+            now = await repository.rows(f"SELECT * FROM incidents WHERE {SCOPE} AND run_id=:run", run=previous.id)
             resolved = incident_view(
-                (await repository.rows(f"SELECT * FROM incidents WHERE {SCOPE} AND id=:id", id=incident_id))[0],
+                next(item for item in now if item["id"] == incident_id),
                 records[0] if records else None,
+                stuck_steps(now),
             )
             await repository.execute(
                 "INSERT INTO incident_resolution_receipts "
@@ -475,6 +603,8 @@ class IncidentService:
                     "receipt_id": str(request.receipt_id),
                     "evidence_reference": request.evidence_reference,
                     **({"transaction": transaction_key} if transaction_key is not None else {}),
+                    **({"closed": sorted(closed)} if closed else {}),
+                    **({"leftover": True} if left else {}),
                     **(
                         {"as": request.output["as"]}
                         if transaction_key is not None
@@ -484,7 +614,7 @@ class IncidentService:
                     ),
                 },
             )
-            await settle(repository, await repository.run(previous.id))
+            await settle(repository, await repository.run(previous.id), terminal_only=only_ends)
             return resolved
 
     async def read(
@@ -576,6 +706,7 @@ class IncidentService:
         incident: dict[str, Any],
         request: IncidentResolution,
         *,
+        left: bool,
         actor: Principal,
         scope: Scope,
         context: AuditContext,
@@ -593,17 +724,18 @@ class IncidentService:
             called_workflow,
             check_reconciliation,
             completes,
+            unsaid_steps,
             validate,
         )
-        from firefly_weave.runtime.transactions import HELD_INCIDENT
 
         key = incident["incident_key"]
         state = previous.state
         if key not in state.incidents:
             raise CatalogError(409, "WV-RUNTIME-STATE", "Incident is no longer active")
         held = key == HELD_INCIDENT
-        owner = next((name for name, record in state.transactions.items() if record.incident == key), None)
-        if owner is None and not held:
+        facts = shapes(ir)
+        owner = None if held or facts is None else incident_transaction(facts, incident["node_id"], incident["code"])
+        if owner not in state.transactions and not held:
             raise CatalogError(409, "WV-RUNTIME-STATE", "No transaction in doubt matches this incident")
         if request.kind != "retry_safe":
             # Saying how a transaction ended, or ending it, takes a reconciler as well as a resolver.
@@ -611,6 +743,11 @@ class IncidentService:
             self.runtime.require(
                 await self.access.load_principal(actor.id, tx=repository.tx), scope, "transaction.reconcile", context
             )
+        if left:
+            # Closing it decides nothing more about its transaction; ending the run from it still does.
+            if request.kind not in {"retry_safe", "terminate"}:
+                raise CatalogError(409, "WV-RUNTIME-STATE", "A person already ended this transaction")
+            return owner, None, None, None
         if request.kind in {"accept_reconciled_result", "accept_reconciled_failure"} and not request.evidence_reference:
             raise CatalogError(409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "Evidence is required")
         if request.kind == "accept_reconciled_result" and "output" not in request.model_fields_set:
@@ -703,25 +840,23 @@ class IncidentService:
                 node=name,
             )
             return owner, tasks[0] if tasks else None, None, None
-        if failure_in_progress(ir, state, cast(str, owner)):
-            # Ending the transaction cancels that step's task, and then nothing could close its interim incident.
-            raise CatalogError(
-                409,
-                "WV-RUNTIME-STATE",
-                "An attempt of this transaction failed and that failure is still being handled; try again in a moment",
-            )
         record = state.transactions[cast(str, owner)]
+        doubted = doubted_steps(facts, state, cast(str, owner)) if facts is not None else frozenset()
+        block = nodes[node_of(cast(str, owner))]
+        said = request.output.get("as") if isinstance(request.output, dict) else None
+        if said == "completed" and state.ending is None and not completes(ir, block):
+            # Before the steps it leaves out: nobody is asked to name them for an ending that is then refused.
+            raise CatalogError(
+                422,
+                "WV-RUNTIME-OUTPUT",
+                "The block can never complete, because every way through it reaches a Fail step: "
+                "use Force end, or compensated if everything was undone",
+            )
+        if unsaid := unsaid_steps(record, request.output, doubted):
+            raise CatalogError(422, "WV-TXN-RECONCILE-INCOMPLETE", unsaid_message(unsaid))
         try:
-            ending, _, output = check_reconciliation(record, request.output)
+            ending, _, output = check_reconciliation(record, request.output, complete=True, doubted=doubted)
             if ending == "completed":
-                block = nodes[node_of(cast(str, owner))]
-                if state.ending is None and not completes(ir, block):
-                    raise CatalogError(
-                        422,
-                        "WV-RUNTIME-OUTPUT",
-                        "The block can never complete, because every way through it reaches a Fail step: "
-                        "use Force end, or compensated if everything was undone",
-                    )
                 block_output(ir, block, output, goes_on=state.ending is None)
         except (KernelError, ValueError) as error:
             raise CatalogError(
@@ -804,13 +939,13 @@ class IncidentService:
             if run_id is not None and not await repository.run_exists(run_id):
                 raise CatalogError(404, "WV-NOT-FOUND", "Run not found")
             rows = await repository.incident_rows(query, position, run_id)
-            visible = rows[: query.limit]
-            details = {
-                row["id"]: row for row in await repository.incident_details([row["id"] for row in visible], links=links)
-            }
+            selected = [row["id"] for row in rows[: query.limit]]
+            details = {row["id"]: row for row in await repository.incident_details(selected, links=links)}
+            # The page may end before its limit, at the byte budget; its cursor then continues there.
+            visible = [row for row in rows if row["id"] in details]
             items = [incident_of(details[row["id"]]).model_dump(mode="json") for row in visible]
             next_cursor = None
-            if len(rows) > query.limit:
+            if len(rows) > len(visible):
                 last = visible[-1]
                 collection = query.cursor_collection(run_id)
                 if query.order == "id":

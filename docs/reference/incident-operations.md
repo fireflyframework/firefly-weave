@@ -234,12 +234,16 @@ most 2,000 characters). Only `accept_reconciled_result` takes an `output`;
 `retry_safe` and `terminate` reject any `output`, even `null`. A reconciled output
 is checked against the 1 MiB payload limit before anything is stored. The same
 person resending the same request with the original revision gets the original
-receipt; a different request with that receipt ID conflicts; two competing
-receipts for one revision cannot both win. Authority is checked before a resend
+receipt; a different request with that receipt ID conflicts, and so does a
+decision on another incident of the same run; two competing receipts for one
+revision cannot both win. Authority is checked before a resend
 is honored, so removing a grant also stops resends.
 Two decisions sent at once on one incident queue: the later one waits up to 2
 seconds for the earlier one, then answers HTTP 409 `WV-INCIDENT-REVISION` (or
-429 `WV-OPERATION-CAPACITY` if the wait runs out). A caller without
+429 `WV-OPERATION-CAPACITY` if the wait runs out). Decisions on two incidents of
+one transaction, or a decision and a cancel, don't queue for each other: the later
+one answers 429 `WV-OPERATION-CAPACITY` and changes nothing. Read the incident
+again and decide again. A caller without
 `incident.resolve` is refused with HTTP 403 `WV-FORBIDDEN` at once and never
 waits.
 
@@ -264,29 +268,29 @@ receipt; they never advance the run.
 An incident whose code starts with `WV-TXN-` holds a workflow transaction that
 Weave can't finish on its own. Its view has `priority: "high"` and a
 `transaction` object: the transaction's instance key, state and business key,
-each step (`node_id`, `instance_key`, `mode`, `status`, `effect`, `attempts`)
-and the keys of the steps still `pending`, with no business values. Nothing but
-one of these decisions closes it; a plain cancel is refused with HTTP 409
-`WV-TXN-IN-DOUBT`.
+each step (`node_id`, `instance_key`, `mode`, `status`, `effect`, `attempts`),
+the keys of the steps still `pending`, and, when there are any, the steps with an
+open `WV-TXN-AFTER-PIVOT-STUCK` incident (`stuck_steps`), with no business
+values. Each incident of a transaction shows it, however many it has; only the
+earlier array of a run's incidents shows it once, when it would be
+[too large](api.md) otherwise. Nothing but one of these decisions closes it; a
+plain cancel is refused with HTTP 409 `WV-TXN-IN-DOUBT` while the run has an open
+transaction.
 
 | Decision | `kind` | Needs | Effect |
 | --- | --- | --- | --- |
 | Retry the undo, the confirm, or a step after the point of no return | `retry_safe` | `incident.resolve` | The stuck step's task is made ready again with the same operation key and a fresh time limit (`undoTimeoutSeconds` for an undo, confirm or cancel); a called undo starts the next generation of its call. Refused for the step that can't be undone. After a settle timeout, it waits again for the steps still in flight |
-| Mark as reconciled | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is `{"as": "compensated" \| "completed", "participants": [{"instance_key", "outcome": "undone" \| "confirmed" \| "done"}], "blockOutput"}`. Every stuck step must be named; `blockOutput` is required with `completed` (checked against the block's output) and refused with `compensated`. While the run would go on after the block, `completed` is refused (`422 WV-RUNTIME-OUTPUT`) when the block can never complete, because every way through it reaches a Fail step. The rest of the transaction does not run; the block fails with `WV-TXN-ROLLED-BACK` or completes with `blockOutput` |
+| Mark as reconciled | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is `{"as": "compensated" \| "completed", "participants": [{"instance_key", "outcome": "undone" \| "confirmed" \| "done"}], "blockOutput"}`. Every step whose end isn't known for that ending must be named ([below](#what-mark-as-reconciled-must-name)); `blockOutput` is required with `completed` (checked against the block's output) and refused with `compensated`. While the run would go on after the block, `completed` is refused (`422 WV-RUNTIME-OUTPUT`) when the block can never complete, because every way through it reaches a Fail step. The rest of the transaction does not run; the block fails with `WV-TXN-ROLLED-BACK` or completes with `blockOutput` |
 | It happened (`WV-TXN-PIVOT-UNKNOWN` only) | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is the step's own output; the transaction goes ahead: confirms, then the steps after it |
 | It didn't happen (`WV-TXN-PIVOT-UNKNOWN` only) | `accept_reconciled_failure` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | The transaction undoes the steps before it |
 | Force end | `terminate` | `incident.resolve`, `transaction.reconcile` | The transaction ends `force_ended` and the run `cancelled`, `external_effects_may_continue: true`. On a run held behind `WV-TXN-RUN-OVERSIZED`, every open transaction ends this way |
 
 Any decision while the stuck step's latest attempt or child run is still running
-is refused (HTTP 409 `WV-RUNTIME-STATE`). After a settle timeout the steps still
+is refused (HTTP 409 `WV-RUNTIME-STATE`), Force end included. When a called run
+doesn't end, cancel that run, then decide. After a settle timeout the steps still
 in flight are what you decide about: Mark as reconciled and Force end settle
 them (their leases are revoked and their child runs asked to stop), they don't
-wait for them. Mark as reconciled is also refused (HTTP 409 `WV-RUNTIME-STATE`)
-while an attempt of any step, confirm, cancel, or undo of the transaction has
-failed and recovery hasn't decided what follows; send it again after the next
-recovery scan. Only a failure that recovery still handles is refused. Force end
-doesn't wait. A record that doesn't fit the transaction answers HTTP 422
-`WV-RUNTIME-OUTPUT`. The audit record adds the transaction's key and, for a
+wait for them. The audit record adds the transaction's key and, for a
 reconciliation, how it ended.
 
 A refused decision changes nothing:
@@ -295,16 +299,18 @@ A refused decision changes nothing:
 | --- | --- | --- |
 | HTTP 403 `WV-FORBIDDEN` | The token, or the principal it names, lacks `incident.resolve`, or `transaction.reconcile` for anything but `retry_safe` | Ask someone who holds both for the whole environment |
 | HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` on `WV-TXN-PIVOT-UNKNOWN`, anything but `terminate` on `WV-TXN-RUN-OVERSIZED`, `accept_reconciled_failure` on any other code or without `evidence_reference`, or `accept_reconciled_result` without `evidence_reference` or `output` | Send a decision that fits the code: `accept_reconciled_result` needs both fields, `accept_reconciled_failure` only `evidence_reference` |
-| HTTP 409 `WV-RUNTIME-STATE` | The step's latest attempt or child run is still running, a failure of the transaction is still handled, or the incident is no longer active | Read the incident again; decide once the step ended or the next recovery scan ran |
-| HTTP 409 `WV-INCIDENT-REVISION` | The incident changed since you read it | Read it again, and check every step again |
+| HTTP 409 `WV-RUNTIME-STATE` | The step's latest attempt or child run is still running, or the incident is no longer active | Read the incident again; decide once the step ended. When a called run doesn't end, cancel that run first |
+| HTTP 409 `WV-RUNTIME-STATE` | `accept_reconciled_result` or `accept_reconciled_failure` on an incident with nothing left to decide, which an earlier version left | Send `retry_safe`, which closes it, or `terminate` |
+| HTTP 409 `WV-INCIDENT-REVISION` | The incident or its transaction changed since you read it, or a deadline passed or a called run ended that your view doesn't show yet | Read it again, and check every step again |
+| HTTP 409 `WV-INCIDENT-RECEIPT-CONFLICT` | The `receipt_id` was sent before with a different body or revision, by another person, or for another incident of the run | Resend the original request unchanged, or send a new decision with a new `receipt_id` |
+| HTTP 422 `WV-TXN-RECONCILE-INCOMPLETE` | The record leaves out a step whose end Weave doesn't know for the ending you chose | Check the steps the message lists and add them; see [what Mark as reconciled must name](#what-mark-as-reconciled-must-name) |
 | HTTP 422 `WV-RUNTIME-OUTPUT` | The record doesn't fit the transaction, or the output doesn't fit its schema | Read the incident again: a step may have changed. Then correct the record |
 | HTTP 422 `WV-RUNTIME-OUTPUT` | `completed` for a block that can never complete, because every way through it reaches a Fail step, while the run would go on after it | Send `compensated` if everything was undone, or `terminate` |
 
-**Name every step you checked.** The platform refuses a record that leaves out a
-stuck step. It accepts one that leaves out a step that is still running or whose
-result it doesn't have, and then stops that step where it is. Studio's
-**Mark as reconciled** asks about each of those steps for the ending you choose,
-and sends the ones you tick.
+**Name every step Weave asks about.** The platform refuses a record that leaves
+out a step whose end it doesn't know for the ending you choose. Studio's
+**Mark as reconciled** lists each of those steps for that ending, and sends the
+record once you tick every line.
 
 **Cases.** When a transaction's settle timeout waits for a called run whose own
 transaction is in doubt, the two incidents name each other: `waits_on` on the
@@ -312,22 +318,90 @@ caller's, `held_by` on the called run's. Resolve the called run's first; then
 the caller's `waits_on` is left out, and `retry_safe` waits again for its steps.
 The [API reference](api.md) lists the fields and who sees them.
 
-When the rollback stops a failed step before recovery decides what follows (for
-example, the hold time passes or the run is canceled), recovery no longer
-handles that failure. It never refuses a record, but its `WV-TASK-FAILED`
-incident stays open until the run ends. After a `completed` record, a run that
-isn't already ending stays `suspended` behind that incident: `terminate` is the
-only decision it takes, and the others answer HTTP 409. Such a run can only be
-ended: resolve the incident with `terminate`, or cancel the run.
+A transaction can have more than one open incident. Retry, It happened, and It
+didn't happen decide one of them, and the transaction stays in doubt behind the
+others. The incidents of a transaction get a new revision when its state, the
+status of one of its steps, or the set of them changes, so a decision made on an
+older view answers HTTP 409 `WV-INCIDENT-REVISION`. An attempt that fails and is
+tried again raises no revision.
+
+What already happened counts too. A deadline that passed or a called run that
+ended is applied before the revision is checked, so a decision on a view that
+doesn't have it yet is refused as well. The refusal applies nothing. The next
+recovery scan does, and the incident then shows it. Force end waits for none of
+it: only what ends the run, such as its own time limit, is applied around it.
+A called run that already ended keeps its outcome on its own run; the
+transaction's record shows the step as it was when you decided.
+
+A decision that ends a transaction, or stops steps of it, closes their open
+incidents too, a failure that recovery still handles included. Each one ends
+`resolved` with the same actor, time, receipt, kind, reason, and evidence
+reference, without an output, and at a higher revision. The audit record lists
+their IDs in `closed`.
+
+An incident can open again after it ended, at the same ID and a higher revision,
+with a new `opened_at` and without the earlier resolution: a retried confirm, for
+example, that no worker claims before its time passes. The earlier decision stays
+in its receipt and its audit record. A suspended run that shows no active
+incident at all, left by an earlier version, gets its incident back when someone
+pauses the run.
+
+`WV-TXN-AFTER-PIVOT-STUCK` also covers a step that failed beside the step that
+can't be undone, once that one went through. Until then the failure opens no
+incident. Such a step changes nothing, so a record can't name it. Retrying a step
+that fails at once again, such as a Fail step, answers HTTP 409
+`WV-RUNTIME-RESOLUTION`.
+
+A run that an earlier version left suspended can hold an incident with nothing
+left to decide: its transaction is already `reconciled` or `force_ended`, or the
+run no longer waits for its step. Such an incident takes `retry_safe`, which runs
+nothing again, closes it, and lets the run go on, and `terminate`, which ends the
+run. The two other kinds answer HTTP 409 `WV-RUNTIME-STATE`. The recorded
+resolution and the audit record say `leftover: true`.
+
+#### What Mark as reconciled must name
+
+A record names each step (`participants`) whose end Weave doesn't know for the
+ending you state, by the status the incident's `transaction` shows:
+
+| `as` | Must be named | Not asked |
+| --- | --- | --- |
+| `completed` | `dispatched`, `unknown`, `confirming`, `confirm_stuck`, `cancelling`, `cancelled`, `cancel_stuck`, `undoing`, `undone`, `undo_stuck`; `done` of a reservation; `failed` of a step in `stuck_steps` | `confirmed`, any other `done`, any other `failed`, `skipped`, `pending` |
+| `compensated` | `dispatched`, `unknown`, `done`, `confirming`, `confirmed`, `confirm_stuck`, `cancelling`, `cancel_stuck`, `undoing`, `undo_stuck` | `undone`, `cancelled`, `failed`, `skipped`, `pending` |
+
+A record that leaves one of them out answers HTTP 422
+`WV-TXN-RECONCILE-INCOMPLETE` with a message such as
+`Say what happened to: hold, add2.`, which lists the first 20 and counts the
+rest. A record that doesn't fit the transaction in another way answers HTTP 422
+`WV-RUNTIME-OUTPUT`. Neither changes anything. You may name more steps than
+these; a step that confirmed while you decided stays `confirmed`.
 
 A reconciler can also cancel a run without undoing its open transactions:
 `{"reason": "...", "skip_undo": true}` needs `transaction.reconcile`, ends them
-`force_ended`, and answers `external_effects_may_continue: true`. While the run
-holds an active in-doubt incident, that cancel is refused (HTTP 409
-`WV-TXN-IN-DOUBT`) and changes nothing, because Force end on the incident is
-the way past a transaction in doubt. Retiring an
-activation that a running transaction may still need to undo a step is refused
-(HTTP 409 `WV-TXN-UNDO-PINNED`) unless the request has `?force=true`, a
+`force_ended`, and answers `external_effects_may_continue: true`.
+
+That cancel is refused too (HTTP 409 `WV-TXN-IN-DOUBT`) and changes nothing in two
+cases: while the run is held behind `WV-TXN-RUN-OVERSIZED`, and while the run has
+an open transaction and any incident in doubt is open. The second counts an
+incident of a transaction that a person already ended, too. The ways past it are
+decisions on the incident:
+
+| What holds the run | The way past it |
+| --- | --- |
+| A transaction in doubt | Any decision on its incident; Force end if nothing else fits |
+| An incident of a transaction a person already ended | Retry (`retry_safe`), which closes it |
+| A step in doubt whose called run still runs | Cancel the called run, then decide |
+| `WV-TXN-RUN-OVERSIZED` | Force end on that incident |
+
+It isn't refused for a run over the fetch budget of retained runs, whose incidents
+take no decision.
+
+An incident in doubt that a cancel closes ends `resolved` with the kind
+`terminate`, the cancel's actor and reason, and the cancel event's ID as its
+receipt. The cancel's audit record lists the incident IDs in `closed`.
+
+Retiring an activation that a running transaction may still need to undo a step is
+refused (HTTP 409 `WV-TXN-UNDO-PINNED`) unless the request has `?force=true`, a
 `reason` in its body (HTTP 422 `WV-RETIRE-REASON` without one), and the caller
 holds `transaction.reconcile`; the audit records both. If that undo is needed
 later, its call can't start and the transaction is in doubt for a person.
@@ -336,8 +410,8 @@ A run too large to undo its transactions is held behind one run-level incident,
 `WV-TXN-RUN-OVERSIZED`; its transactions stay `open` and emit no
 `transaction.in_doubt` (a subscriber sees the run's `run.transition` to
 `suspended`). Force end on that incident ends each of them `force_ended` and
-emits `transaction.force_ended`, as for any other transaction; every cancel of
-the held run is refused, a cancel with `skip_undo` included.
+emits `transaction.force_ended`, as for any other
+transaction.
 
 **Several incidents.** Each resolution stores the actor, reason, kind, evidence,
 time, and receipt. Independent incidents on different nodes or generations share a
@@ -471,7 +545,8 @@ Some runs created before the current admission policy cannot be shown safely.
 | What you see | Why | What to do |
 | --- | --- | --- |
 | HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` was used for an action that is not safe to repeat, the incident is not tied to an action (only `terminate` works), a reconciled result lacks `output` or `evidence_reference`, or `accept_reconciled_failure` was used for a step without an On error setting, without `evidence_reference`, for a call, or for a transaction in doubt other than `WV-TXN-PIVOT-UNKNOWN` | Reconcile externally and use `accept_reconciled_result` with both fields, or `terminate` |
-| HTTP 409 `WV-INCIDENT-REVISION` | Another decision changed the incident since you read it | Read the incident again; decide only if it is still active |
+| HTTP 409 `WV-INCIDENT-REVISION` | Another decision changed the incident since you read it, or its transaction changed | Read the incident again; decide only if it is still active |
+| HTTP 422 `WV-TXN-RECONCILE-INCOMPLETE` | The record leaves out a step whose end isn't known | Check the steps it names and add them; see [what Mark as reconciled must name](#what-mark-as-reconciled-must-name) |
 | A task incident keyed `send[2]:0` | A task failed in iteration 2 of a loop; the other iterations' results wait behind the incident | Decide it like any task incident; `retry_safe` retries only that iteration |
 | An incident at `support#2` or `support#2.1` | A turn or a tool call of the AI agent step `support` failed, and the agent waits behind the incident | See [AI agent incidents](#ai-agent-incidents) |
 | `WV-RUNTIME-LOOP-ITEMS`, `WV-RUNTIME-LOOP-LIMIT`, or `WV-RUNTIME-LOOP-OUTPUT` | A loop's list was not a list, was longer than `maxItems`, or its results exceeded the payload limit; see [loops at run time](compiler.md#loops-at-run-time) | Only `terminate` applies; fix the workflow and start a new run |
@@ -480,7 +555,7 @@ Some runs created before the current admission policy cannot be shown safely.
 | HTTP 409 `WV-RUNTIME-STATE` on a call incident | The call's child run has not ended yet | Wait for the child, or cancel it, and decide again |
 | HTTP 409 `WV-RUNTIME-DEADLINE` on `retry_safe` | The action's original deadline has passed | Use `terminate`, then start a linked retry of the whole run |
 | HTTP 422 `WV-RUNTIME-OUTPUT` | The reconciled `output` does not match the action's pinned output schema or exceeds the payload limit, or an `output` was sent with `retry_safe` or `terminate` | Fix the output to match that schema; leave `output` out for the other decisions |
-| HTTP 409 `WV-INCIDENT-RECEIPT-CONFLICT` | You reused a `receipt_id` with a different body or revision, or another person used it | Resend the original request unchanged, or generate a new `receipt_id` for a new decision |
+| HTTP 409 `WV-INCIDENT-RECEIPT-CONFLICT` | You reused a `receipt_id` with a different body or revision, another person used it, or another incident of the run was decided with it | Resend the original request unchanged, or generate a new `receipt_id` for a new decision |
 | The run stays suspended after a resolution | Another incident is still active, or a deadline applies | List the run's incidents again and resolve each active one |
 | `retry` is rejected, for example with HTTP 409 `WV-RUNTIME-STATE` | The parent run has not finished, or the start request is invalid | Wait for the run to finish, or cancel it first; check the input |
 | `external_effects_may_continue: true` after cancel | Work was already sent to another system | Check that system and compensate there if needed |

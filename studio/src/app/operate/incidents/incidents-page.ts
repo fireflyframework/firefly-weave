@@ -769,7 +769,8 @@ interface Band {
         </button>
       } @else if (list.next) {
         <p class="list-limit" role="status">
-          Showing the first 500 incidents. Narrow the filters to see others.
+          Showing the first {{ list.items.length }} incidents. Narrow the
+          filters to see others.
         </p>
       }
     </ng-template>

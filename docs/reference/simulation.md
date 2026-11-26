@@ -605,7 +605,9 @@ The steps a resolution releases run on the next `next` or `continue`.
 
 **Cancel a simulated run.** The `cancel` command cancels the simulated run as a
 person's cancel does: its open transactions are undone first, or force ended
-with `"skip_undo": true`. Follow it with `next` or `continue`.
+with `"skip_undo": true`. Follow it with `next` or `continue`. While a
+transaction is in doubt it answers `WV-DEBUG-STATE`, as a platform does:
+resolve the incident first.
 
 **What a simulation can't show.** A platform's own retries of a confirm,
 cancel, or undo before it is stuck; a result that arrives after its deadline; a
@@ -899,7 +901,7 @@ fingerprints.
 | Status `waiting` | The run waits for time, a signal, or a person | Send the signal or decision, or advance time, then continue |
 | `WV-DEBUG-SIGNAL` | No step waits for a signal with that name | Use the `name` declared on the **Wait for signal** step |
 | `WV-DEBUG-HUMAN-TASK` | That human task is not waiting for a decision now | Continue until it is active, and use its step ID as `name` |
-| `WV-DEBUG-STATE` | The simulated run already finished, or the session ended with a diagnostic | Start a new simulation |
+| `WV-DEBUG-STATE` | The simulated run already finished, the session ended with a diagnostic, or a cancel came while a transaction is in doubt | Start a new simulation, or resolve the incident first |
 | `WV-DEBUG-INCIDENT` | A `resolve` named no open incident of a transaction in doubt in that run or frame, a resolution its code doesn't take, or a record or output the session refused; or another run was in the middle of an event | Use `incident_key` from `transactions` and a resolution from the table in [Simulate transactions](#simulate-transactions), or `continue` first |
 | `WV-DEBUG-BREAKPOINT` | A breakpoint names a node that does not exist, or no iteration of it, or a path through a step that is not a call or a call whose workflow the session does not have | Use complete IDs from `weave workflow explain`, or instance keys with one position per enclosing loop, prefixed with the frame keys of the calls |
 | `WV-DEBUG-TIME` | `advance_time` was negative or not a whole number | Use whole seconds, zero or more |

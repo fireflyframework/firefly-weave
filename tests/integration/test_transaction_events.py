@@ -16,15 +16,39 @@
 
 """Transaction events on real PostgreSQL: one outbox event per terminal or in-doubt state, written with the change."""
 
+import json
+
 import pytest
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace import TracerProvider
+from stuck_transactions import (
+    CONFIRMS,
+    PAUSE,
+    active,
+    beside,
+    by_key,
+    confirm_stuck,
+    failed_beside,
+    reconcile,
+    resolve,
+    stuck,
+    two_stuck,
+)
 from transaction_platform import add, build, hold, submit, transaction, workflow
+
+from firefly_weave.access.audit import AuditContext
+from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.telemetry import TelemetryService, WeaveMetricsRecorder
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
 async def platform(worker_setup, services, access_db, monkeypatch):
-    return await build(worker_setup, services, access_db, monkeypatch)
+    platform = await build(worker_setup, services, access_db, monkeypatch)
+    yield platform
+    await platform.shows_every_incident()
 
 
 async def events(platform, run_id):
@@ -180,3 +204,183 @@ async def test_a_record_that_stays_in_doubt_at_a_later_revision_emits_no_second_
     )
     assert record["revision"] == latest_record["revision"] > doubted_record["revision"]
     assert [event["payload"]["type"] for event in await events(platform, run.id)] == ["transaction.in_doubt"]
+
+
+async def revision(platform, key: str, run) -> int:
+    [row] = await platform.query(
+        "SELECT revision FROM incidents WHERE run_id=:run AND incident_key=:key", run=run.id, key=key
+    )
+    return row["revision"]
+
+
+async def test_the_revision_of_an_open_incident_rises_with_its_transactions_record(platform, reconciler):
+    run, held = await two_stuck(platform, PAUSE)
+    opened = {key: row["revision"] for key, row in held.items()}
+    await resolve(platform, held[CONFIRMS[0]], "retry_safe")
+    # The step beside it is tried again: once for that decision, whatever it changed.
+    assert await revision(platform, CONFIRMS[1], run) == opened[CONFIRMS[1]] + 1
+    # An attempt that fails and is tried again is no change of what a person decides about.
+    await platform.fail(await platform.lease("hold#confirm"), "UNAVAILABLE")
+    assert await revision(platform, CONFIRMS[1], run) == opened[CONFIRMS[1]] + 1
+    await platform.scan()
+    await platform.execute(
+        "UPDATE task_intents SET next_attempt_at=NULL WHERE run_id=:run AND status='ready'", run=run.id
+    )
+    assert await revision(platform, CONFIRMS[1], run) == opened[CONFIRMS[1]] + 1
+    [shown] = (await by_key(platform, run.id)).values()
+    await platform.complete(await platform.lease("hold#confirm"))
+    assert await revision(platform, CONFIRMS[1], run) == opened[CONFIRMS[1]] + 2
+    # A dialog that was open meanwhile is refused, and it writes nothing.
+    state = await platform.state(run.id)
+    with pytest.raises(CatalogError) as refused:
+        await reconcile(platform, shown, reconciler)
+    assert (refused.value.status, refused.value.code) == (409, "WV-INCIDENT-REVISION")
+    assert await platform.state(run.id) == state
+    [now] = (await by_key(platform, run.id)).values()
+    record = {"as": "completed", "participants": [{"instance_key": "hold2", "outcome": "confirmed"}]}
+    await reconcile(platform, now, reconciler, {**record, "blockOutput": "moved"})
+
+
+async def test_the_revision_of_an_incident_rises_when_only_the_one_beside_it_closes(platform):
+    """A read beside the step that can't be undone is no step a record names: it changes nothing else of the doubt."""
+    run, read = await failed_beside(platform)
+    await stuck(platform, run.id, "hold#confirm")
+    before = await platform.record(run.id)
+    held = await by_key(platform, run.id)
+    await resolve(platform, held[read["incident_key"]], "retry_safe")
+    assert await revision(platform, "hold#confirm:1", run) == held["hold#confirm:1"]["revision"] + 1
+    after = await platform.record(run.id)
+    assert (after["state"], after["participants"]) == (before["state"], before["participants"])
+
+
+async def test_an_incident_that_opens_again_raises_the_one_beside_it_and_itself_once(platform):
+    run, held = await two_stuck(platform)
+    await resolve(platform, held[CONFIRMS[0]], "retry_safe")
+    before = {key: await revision(platform, key, run) for key in CONFIRMS}
+    await platform.execute(
+        "UPDATE task_intents SET payload=jsonb_set(payload,'{deadline}',"
+        "to_jsonb(cast((clock_timestamp()-interval '1 second') AS text))) "
+        "WHERE run_id=:run AND node_id='hold#confirm'",
+        run=run.id,
+    )
+    await platform.scan()
+    assert set(await by_key(platform, run.id)) == set(CONFIRMS)
+    assert {key: await revision(platform, key, run) for key in CONFIRMS} == {
+        key: value + 1 for key, value in before.items()
+    }
+
+
+async def test_a_transaction_beside_it_raises_no_revision(platform):
+    moves = transaction(hold(), add(), submit())
+    other = {**transaction(hold("hold3", holdSeconds=600), add("add3")), "id": "other"}
+    run = await platform.start(await platform.publish(workflow("move", [beside(moves, other)])))
+    await platform.complete(await platform.lease("hold3"))
+    await platform.lease("add3")
+    for key in ("hold", "add", "submit"):
+        await platform.complete(await platform.lease(key))
+    await platform.fail(await platform.lease("hold#confirm"), "REJECTED", outcome="failed")
+    await platform.scan()
+    before = await active(platform, run.id)
+    # The other transaction goes back on its own time, which nothing holds.
+    await platform.execute(
+        "WITH due AS (UPDATE run_deadlines SET deadline=clock_timestamp()-interval '1 second' "
+        "WHERE run_id=:run AND node_id='other#hold' RETURNING run_id,deadline) UPDATE runs SET state="
+        "jsonb_set(state,'{transactions,other,hold_by}',to_jsonb(due.deadline)) FROM due WHERE runs.id=due.run_id",
+        run=run.id,
+    )
+    await platform.scan()
+    assert (await platform.record(run.id, "other"))["state"] == "compensating"
+    assert await active(platform, run.id) == before
+
+
+async def test_raising_a_revision_changes_no_transition(platform):
+    from firefly_weave.compiler.api import import_artifact
+    from firefly_weave.contracts.operations import RecordedEvidence
+    from firefly_weave.operations.exports import transition_digest
+    from firefly_weave.runtime.kernel import transition
+    from firefly_weave.runtime.models import RunState, RuntimeEvent
+
+    run, held = await two_stuck(platform)
+    await resolve(platform, held[CONFIRMS[0]], "retry_safe")
+    await platform.complete(await platform.lease("hold#confirm"))
+    assert await revision(platform, CONFIRMS[1], run) > held[CONFIRMS[1]]["revision"]
+    [stored] = await platform.query("SELECT artifact,request FROM runs WHERE id=:run", run=run.id)
+    rows = await platform.query(
+        "SELECT r.id,r.sequence,r.type,r.data,r.created_at,e.evidence FROM run_events r JOIN run_event_evidence e "
+        "ON e.run_id=r.run_id AND e.sequence=r.sequence WHERE r.run_id=:run ORDER BY r.sequence",
+        run=run.id,
+    )
+    artifact = import_artifact(stored["artifact"])
+    state = RunState(input=stored["request"]["input"])
+    for row in rows:
+        event = RuntimeEvent(
+            id=row["id"], type=row["type"], timestamp=row["created_at"], sequence=row["sequence"], data=row["data"]
+        )
+        result = transition(state, event, artifact)
+        recorded = RecordedEvidence.model_validate_json(json.dumps(row["evidence"]))
+        assert transition_digest(result) == recorded.expected_transition_digest, row["type"]
+        state = result.state
+
+
+@pytest.mark.parametrize("decided", [0, 1])
+@pytest.mark.parametrize("kind", ["accept_reconciled_result", "terminate"])
+async def test_a_run_names_the_incident_a_person_resolved(platform, reconciler, kind, decided):
+    run, held = await two_stuck(platform)
+    incident = held[CONFIRMS[decided]]
+    if kind == "terminate":
+        await resolve(platform, incident, kind, actor=reconciler)
+    else:
+        await reconcile(platform, incident, reconciler)
+    assert (await platform.record(run.id))["incident_key"] == CONFIRMS[decided]
+    page = await platform.runtime.transactions(platform.actor, platform.scope, run.id, context=AuditContext())
+    [item] = page["items"]
+    assert item["incident_id"] == str(incident["id"])
+    assert (item["resolution"]["kind"], item["resolution"]["actor_id"]) == (kind, str(reconciler.id))
+
+
+def in_doubt_counted(reader: InMemoryMetricReader) -> int:
+    data = reader.get_metrics_data()
+    return sum(
+        point.value
+        for resource in (data.resource_metrics if data else [])
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+        if metric.name == "weave.transactions"
+        for point in metric.data.data_points
+        if point.attributes["error_code"] == "WV-TXN-CONFIRM-STUCK"
+    )
+
+
+async def test_the_next_incident_of_a_transaction_in_doubt_is_announced(platform, monkeypatch):
+    reader = InMemoryMetricReader()
+    meters = MeterProvider(metric_readers=[reader], shutdown_on_exit=False)
+    telemetry = TelemetryService(WeaveMetricsRecorder(meters), TracerProvider(shutdown_on_exit=False))
+    monkeypatch.setattr(platform.definitions.uow, "telemetry", telemetry)
+    run, held = await two_stuck(platform)
+    named = (await platform.record(run.id))["incident_key"]
+    [other] = set(CONFIRMS) - {named}
+    await resolve(platform, held[named], "retry_safe")
+    # A subscriber learns which incident holds the transaction now; it is one transaction in doubt all the same.
+    sent = [event["payload"]["payload"]["transaction"] for event in await events(platform, run.id)]
+    assert [(item["state"], item["incident_id"]) for item in sent] == [
+        ("in_doubt", str(held[named]["id"])),
+        ("in_doubt", str(held[other]["id"])),
+    ]
+    assert in_doubt_counted(reader) == 1
+    # The record changes again and still names the same incident: nothing more is sent.
+    await platform.complete(await platform.lease(named.removesuffix(":1")))
+    assert len(await events(platform, run.id)) == 2
+
+
+async def test_a_step_stuck_beside_the_decision_is_announced_with_its_incident(platform):
+    run, incident = await failed_beside(platform)
+    [event] = await events(platform, run.id)
+    facts = event["payload"]["payload"]["transaction"]
+    assert (facts["state"], facts["incident_id"]) == ("in_doubt", str(incident["id"]))
+    assert facts["cause"] == {"code": "WV-TXN-AFTER-PIVOT-STUCK", "step": "lookup", "origin_code": "REJECTED"}
+
+
+async def test_the_event_that_puts_a_transaction_in_doubt_raises_its_incident_once(platform):
+    # The failed attempt opened it, and the failure that is final changed what it says.
+    _, incident = await confirm_stuck(platform)
+    assert incident["revision"] == 2

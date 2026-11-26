@@ -37,7 +37,18 @@ from simulation_support import (  # noqa: E402
     strict_catalog,
     undo_input,
 )
-from transaction_support import INPUT, add, compiled, hold, notify, reverse_by_call, submit, transaction  # noqa: E402
+from transaction_support import (  # noqa: E402
+    INPUT,
+    add,
+    compiled,
+    hold,
+    lookup,
+    notify,
+    reverse_by_call,
+    submit,
+    submit_by_call,
+    transaction,
+)
 
 from firefly_weave.operations.debug.models import (  # noqa: E402
     CalledWorkflow,
@@ -51,13 +62,18 @@ UNAVAILABLE = ScriptedError(code="UNAVAILABLE")
 UNDO_STUCK = {"node:add": UNAVAILABLE, "node:add#undo": ScriptedError(code="UNAVAILABLE", attempts=10)}
 CONFIRM_STUCK = {"node:hold#confirm": ScriptedError(code="HOLD_EXPIRED", attempts=2)}
 PIVOT_UNKNOWN = {"node:submit": ScriptedError(code="TIMEOUT", outcome="unknown")}
+BOTH_STUCK = {**CONFIRM_STUCK, "node:hold2#confirm": ScriptedError(code="HOLD_EXPIRED", attempts=2)}
+CONFIRMS = ("hold#confirm:2", "hold2#confirm:2")
 MOCKS = {
     "node:hold": {"holdId": "h-1"},
     "node:add": {"id": "a-1"},
     "node:submit": {"orderId": "o-1"},
     "node:notify": {},
 }
-UNDONE = {"as": "compensated", "participants": [{"instance_key": "add", "outcome": "undone"}]}
+UNDONE = {
+    "as": "compensated",
+    "participants": [{"instance_key": key, "outcome": "undone"} for key in ("hold", "add")],
+}
 COMPLETED = {"as": "completed", "participants": [{"instance_key": "hold", "outcome": "confirmed"}]}
 REMOVED = "action:target-system.remove-quantity@1.0.0"
 WAIT = {"id": "pause", "kind": "wait", "durationSeconds": 60}
@@ -254,6 +270,13 @@ def test_a_resolution_its_code_doesnt_take_is_refused_whole():
     refused(simulator, "nothing:0", "terminate")
 
 
+def test_a_reconciliation_that_leaves_a_step_out_is_refused_in_a_session():
+    simulator = in_doubt(compiled([move()]), UNDO_STUCK)
+    for left_out in range(2):
+        short = [step for index, step in enumerate(UNDONE["participants"]) if index != left_out]
+        refused(simulator, "add#undo:10", "accept_reconciled_result", {**UNDONE, "participants": short})
+
+
 def frame_in_doubt():
     """A called workflow whose own undo can't finish, inside a transaction of its caller."""
     failing, failing_artifact = callee("reverse-always-fails", [STOP], input_schema=undo_input())
@@ -359,6 +382,19 @@ def test_cancelling_without_undoing_force_ends_the_transaction():
     view = simulator.continue_until_breakpoint()
     assert phases(view) == []
     assert (record(view)["status"], view.status) == ("force_ended", "cancelled")
+
+
+@pytest.mark.parametrize("skip_undo", [False, True])
+def test_cancelling_a_run_in_doubt_is_refused_until_a_person_decides_it(skip_undo):
+    simulator = in_doubt(compiled([move()]), UNDO_STUCK)
+    before = simulator.serialize()
+    with pytest.raises(DebugError) as raised:
+        simulator.cancel(skip_undo=skip_undo)
+    assert raised.value.code == "WV-DEBUG-STATE"
+    assert simulator.serialize() == before
+    simulator.resolve("add#undo:10", "retry_safe")
+    simulator.cancel(skip_undo=skip_undo)
+    assert simulator.continue_until_breakpoint().status == "cancelled"
 
 
 def test_cancelling_a_run_that_ended_is_refused():
@@ -503,3 +539,257 @@ def test_skip_undo_outside_a_cancel_is_refused():
     refused_command(
         simulator, DebugCommand(kind="resolve", incident_key="add#undo:10", resolution="terminate", skip_undo=True)
     )
+
+
+def two_stuck():
+    """Both reservations of the simulated transaction couldn't be confirmed."""
+    mocks = {"node:hold": {"holdId": "h-1"}, "node:hold2": {"holdId": "h-2"}, "node:submit": {"orderId": "o-1"}}
+    flow = compiled([transaction([hold(), hold("hold2"), submit()])])
+    simulator = in_doubt(flow, BOTH_STUCK, mocks=mocks)
+    assert set(simulator.inspect().variables["incidents"]) == set(CONFIRMS)
+    return simulator
+
+
+def both_confirmed():
+    steps = [{"instance_key": key, "outcome": "confirmed"} for key in ("hold", "hold2")]
+    return {"as": "completed", "participants": steps, "blockOutput": "moved"}
+
+
+@pytest.mark.parametrize("first", [0, 1])
+def test_two_stuck_confirms_are_retried_one_by_one(first):
+    simulator = two_stuck()
+    named, other = CONFIRMS[first], CONFIRMS[1 - first]
+    view = simulator.resolve(named, "retry_safe")
+    # The session names the incident that still holds the transaction, which is the next one to resolve.
+    [shown] = view.transactions
+    assert (shown.state, shown.incident_key) == ("in_doubt", other)
+    view = simulator.continue_until_breakpoint()
+    [retried] = [e for e in view.events if e.type == "task_completed" and "#confirm" in e.data["node_id"]]
+    assert (retried.data["node_id"], retried.data["generation"]) == (named.partition(":")[0], 3)
+    assert (view.status, set(view.variables["incidents"])) == ("suspended", {other})
+    simulator.resolve(other, "retry_safe")
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, record(view)["status"]) == ("succeeded", "completed")
+
+
+@pytest.mark.parametrize("decided", [0, 1])
+def test_one_record_closes_both_stuck_confirms(decided):
+    simulator = two_stuck()
+    simulator.resolve(CONFIRMS[decided], "accept_reconciled_result", both_confirmed())
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, view.variables["incidents"], record(view)["status"]) == ("succeeded", {}, "reconciled")
+
+
+@pytest.mark.parametrize("decided", [0, 1])
+def test_force_end_of_either_stuck_confirm_ends_the_run(decided):
+    simulator = two_stuck()
+    simulator.resolve(CONFIRMS[decided], "terminate")
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, record(view)["status"]) == ("cancelled", "force_ended")
+
+
+def saved_before(simulator):
+    """The same session as an earlier version saved it: its run says nothing of transaction rules."""
+    stored = json.loads(simulator.serialize())
+    del stored["state"]["transaction_rules"]
+    return json.dumps(stored, separators=(",", ":"))
+
+
+def saved_after(simulator, monkeypatch, key, kind, payload=None):
+    """The same, after a decision the earlier version took: its resolution moved no run to these rules."""
+    from firefly_weave.operations.debug import simulator as module
+
+    restored = Simulator.restore(saved_before(simulator))
+    with monkeypatch.context() as earlier:
+        earlier.setattr(module, "resolution_rules", lambda prepared, incident: {})
+        restored.resolve(key, kind, payload)
+        restored.continue_until_breakpoint()
+    assert "transaction_rules" not in json.loads(restored.serialize())["state"]
+    return restored
+
+
+def test_a_session_saved_before_this_release_keeps_its_bytes_until_it_is_resolved():
+    stored = saved_before(two_stuck())
+    restored = Simulator.restore(stored)
+    assert json.loads(restored.serialize()) == json.loads(stored)
+    restored.inspect()
+    assert json.loads(restored.serialize()) == json.loads(stored)
+    restored.resolve(CONFIRMS[1], "accept_reconciled_result", both_confirmed())
+    view = restored.continue_until_breakpoint()
+    assert json.loads(restored.serialize())["state"]["transaction_rules"] == 2
+    assert (record(view)["status"], view.variables["incidents"]) == ("reconciled", {})
+
+
+@pytest.mark.parametrize("kind", ["retry_safe", "accept_reconciled_result", "terminate"])
+def test_a_session_saved_after_a_retry_of_one_incident_takes_a_decision_on_the_other(monkeypatch, kind):
+    simulator = two_stuck()
+    named = record(simulator.inspect())["incident"]
+    [other] = set(CONFIRMS) - {named}
+    restored = saved_after(simulator, monkeypatch, named, "retry_safe")
+    view = restored.resolve(other, kind, both_confirmed() if kind == "accept_reconciled_result" else None)
+    view = restored.continue_until_breakpoint()
+    ended = {
+        "retry_safe": ("succeeded", "completed"),
+        "accept_reconciled_result": ("succeeded", "reconciled"),
+        "terminate": ("cancelled", "force_ended"),
+    }
+    assert (view.status, record(view)["status"]) == ended[kind]
+
+
+@pytest.mark.parametrize(("kind", "status"), [("retry_safe", "succeeded"), ("terminate", "cancelled")])
+def test_a_session_saved_after_a_record_for_one_incident_goes_on_from_the_other(monkeypatch, kind, status):
+    simulator = two_stuck()
+    named = record(simulator.inspect())["incident"]
+    [other] = set(CONFIRMS) - {named}
+    restored = saved_after(simulator, monkeypatch, named, "accept_reconciled_result", both_confirmed())
+    refused(restored, other, "accept_reconciled_result", both_confirmed())
+    restored.resolve(other, kind)
+    view = restored.continue_until_breakpoint()
+    # Nothing ran again for the step of a transaction a person ended.
+    assert (view.status, record(view)["status"]) == (status, "reconciled")
+    assert [key for key in results(view) if key == other.partition(":")[0]] == [other.partition(":")[0]]
+
+
+@pytest.mark.parametrize("skip_undo", [False, True])
+def test_an_incident_left_behind_a_record_doesnt_hold_back_a_cancel(monkeypatch, skip_undo):
+    simulator = two_stuck()
+    named = record(simulator.inspect())["incident"]
+    [other] = set(CONFIRMS) - {named}
+    restored = saved_after(simulator, monkeypatch, named, "accept_reconciled_result", both_confirmed())
+    view = restored.inspect()
+    # The earlier version ended the transaction and left the other stuck confirm open.
+    assert (view.status, record(view)["status"], list(view.variables["incidents"])) == (
+        "suspended",
+        "reconciled",
+        [other],
+    )
+    restored.cancel(skip_undo=skip_undo)
+    view = restored.continue_until_breakpoint()
+    assert (view.status, record(view)["status"]) == ("cancelled", "reconciled")
+
+
+READ_FAILED = {"node:lookup": ScriptedError(code="REJECTED")}
+READ_MOCK = {"action:reports.lookup@1.0.0": {"count": 1}}
+
+
+def read_beside_the_decision():
+    """A read beside the step that can't be undone, which still runs when the read fails for good."""
+    flow = compiled([transaction([hold(), parallel(a=[lookup()], b=[submit()])])])
+    mocks = {"node:hold": MOCKS["node:hold"], "node:submit": MOCKS["node:submit"], **READ_MOCK}
+    simulator = session(flow, READ_FAILED, mocks=mocks)
+    while "lookup" not in results(simulator.inspect()):
+        simulator.next()
+    return simulator
+
+
+def test_a_step_that_fails_beside_the_decision_opens_no_incident_before_it():
+    simulator = read_beside_the_decision()
+    view = simulator.inspect()
+    assert (view.variables.get("incidents", {}), record(view)["status"]) == ({}, "deciding")
+    assert [stuck["node_id"] for stuck in record(view)["failed_beside"]] == ["lookup"]
+    # A session saved now holds it, byte for byte, and goes on the same way.
+    restored = Simulator.restore(simulator.serialize())
+    assert restored.serialize() == simulator.serialize()
+    assert restored.continue_until_breakpoint() == simulator.continue_until_breakpoint()
+    [(key, opened)] = simulator.inspect().variables["incidents"].items()
+    assert (opened["code"], opened["origin_code"]) == ("WV-TXN-AFTER-PIVOT-STUCK", "REJECTED")
+    assert simulator.inspect().transactions[0].incident_key == key
+
+
+@pytest.mark.parametrize(
+    ("kind", "status", "ended"),
+    [
+        ("retry_safe", "succeeded", "completed"),
+        ("accept_reconciled_result", "succeeded", "reconciled"),
+        ("terminate", "cancelled", "force_ended"),
+    ],
+)
+def test_a_step_that_failed_beside_the_decision_takes_every_decision_of_a_stuck_step(kind, status, ended):
+    simulator = read_beside_the_decision()
+    view = simulator.continue_until_breakpoint()
+    [key] = view.variables["incidents"]
+    payload = {**COMPLETED, "blockOutput": "moved"} if kind == "accept_reconciled_result" else None
+    simulator.resolve(key, kind, payload)
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, record(view)["status"]) == (status, ended)
+
+
+def called_step_unknown(errors=None, *, delivered: bool):
+    """The time of the called step that can't be undone is up before its result reaches the run; ``delivered`` lets
+    that result arrive behind the doubt."""
+    undo, _ = callee("reverse-target-addition", [{"id": "only", "kind": "transform", "value": {"literal": 1}}])
+    flow = compiled([transaction([hold(), submit_by_call(), notify()])], snapshot=snapshot_with(undo))
+    mocks = {"node:hold": MOCKS["node:hold"], "node:notify": {}, **({} if errors else {"node:submit": {}})}
+    simulator = session(flow, errors, mocks=mocks)
+    while not any(event.data.get("node_id") == "submit" for event in simulator.data.pending):
+        simulator.next()
+    simulator.advance_time(331)
+    while "submit:0" not in simulator.inspect().variables["incidents"]:
+        simulator.next()
+    if delivered:
+        simulator.continue_until_breakpoint()
+        held = [event.data["node_id"] for event in simulator.data.state.deferred_results]
+        assert held == ["submit"]
+    return simulator
+
+
+@pytest.mark.parametrize("delivered", [True, False])
+@pytest.mark.parametrize("errors", [None, {"node:submit": ScriptedError(code="REFUSED")}])
+def test_it_happened_after_the_time_of_a_call_is_up_runs_the_next_step_once(errors, delivered):
+    simulator = called_step_unknown(errors, delivered=delivered)
+    simulator.resolve("submit:0", "accept_reconciled_result", {})
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, record(view)["status"], view.variables["incidents"]) == ("succeeded", "completed", {})
+    assert results(view).count("notify") == 1
+
+
+def test_it_happened_of_a_call_that_never_ends_goes_on():
+    undo, _ = callee("reverse-target-addition", [{"id": "only", "kind": "transform", "value": {"literal": 1}}])
+    flow = compiled([transaction([hold(), submit_by_call(), notify()])], snapshot=snapshot_with(undo))
+    mocks = {"node:hold": MOCKS["node:hold"], "node:notify": {}}
+    simulator = session(flow, mocks=mocks, pending=["node:submit"])
+    simulator.continue_until_breakpoint()
+    simulator.advance_time(331)
+    simulator.continue_until_breakpoint()
+    simulator.resolve("submit:0", "accept_reconciled_result", {})
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, record(view)["status"]) == ("succeeded", "completed")
+
+
+def waiting(simulator):
+    return [event.data.get("node_id") for event in simulator.data.pending]
+
+
+def late_call_beside_a_read():
+    """It happened, said a person: the time of the called step that can't be undone was up, and neither its result nor
+    that of a read in another branch had reached the run."""
+    only, artifact = callee("reverse-target-addition", [{"id": "only", "kind": "transform", "value": {"literal": 1}}])
+    block = transaction([hold(), submit_by_call(), notify()])
+    flow = compiled([parallel(a=[block], b=[lookup("first"), lookup("read")])], snapshot=snapshot_with(only))
+    read = {"count": 1}
+    mocks = {"node:hold": MOCKS["node:hold"], "node:notify": {}, "node:first": read, "node:read": read}
+    simulator = session(flow, mocks=mocks, workflows={"reverse-target-addition@1.0.0": called(artifact)})
+    while "submit" not in waiting(simulator):
+        simulator.next()
+    assert waiting(simulator) == ["read", "submit"]
+    simulator.advance_time(331)
+    while "submit:0" not in simulator.inspect().variables.get("incidents", {}):
+        simulator.next()
+    simulator.resolve("submit:0", "accept_reconciled_result", {})
+    simulator.next()
+    return simulator
+
+
+def test_a_late_calls_result_is_dropped_and_no_other():
+    simulator = late_call_beside_a_read()
+    assert waiting(simulator) == ["read", "hold#confirm"]
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, record(view)["status"]) == ("succeeded", "completed")
+    assert results(view).count("read") == results(view).count("notify") == 1
+
+
+def test_a_call_whose_late_result_was_dropped_has_returned():
+    simulator = late_call_beside_a_read()
+    before = simulator.inspect().boundaries
+    # Nothing of it is left to deliver, so there is nothing to run until it returns.
+    assert simulator.step_out("submit").boundaries == before

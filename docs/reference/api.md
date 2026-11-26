@@ -601,8 +601,24 @@ expires. The server checks, in this order, and refuses before writing anything:
 | 422 `WV-STEPTEST-INPUT` | The input breaks the action's input schema; `result.diagnostics` holds paths and codes, never values |
 | 422 `WV-STEPTEST-CONNECTION` | A chosen connection can't be used here; `result.slots` says which and why |
 | 422 `WV-STEPTEST-KIND` | The step can't run on its own as saved |
+| 422 `WV-ACTIVATION-AI-RESERVED` | The step would run a model task that only another kind of AI step runs, as for an activation |
+| 422 `WV-ACTIVATION-AI-PROVIDER`, 422 `WV-ACTIVATION-AI-MODEL`, 503 `WV-AI-POLICY` | An AI task's connection, or its model on that connection, doesn't pass the AI policy, as for an activation |
+| 422 `WV-STEPTEST-DRAFT` | What an AI task's prompt and context read in the saved draft doesn't pass a compile's checks, or can't be checked; `result.diagnostics` holds paths in the draft and codes |
 | 422 `WV-STEPTEST-RELEASE` | Several releases, or none, can run a dependency; `result.choices` lists them to send back in `releases` |
 | 429 `WV-STEPTEST-BUSY` | The person already runs 4 step tests here or started 30 in the last minute; `Retry-After` says when to try again |
+
+An AI task's step test checks the step's inputs like a compile. The part of the
+saved draft that is compiled is the step, the steps its prompt and context read,
+the blocks around them, every earlier step those read in turn, the workflow's
+input schema, and the profiles and connections those steps name. The test starts
+only when that compile reaches the step and leaves no error out, when every step
+the prompt and the context read (through transforms, loops and branches too)
+resolves, and when the compile finds no value marked `x-secret` or `writeOnly` in
+what an AI step reads. This covers every AI step in that part: an earlier one
+too, when the prompt or the context reads its output. A draft that isn't
+finished elsewhere still tests its step, but a repeated step ID, a step without
+a valid ID and an unfinished `fail` step have to be fixed first. The check covers
+what the draft's expressions read; the texts in `input` are sent as they are.
 
 Only the person who started a step test can read
 (`GET {environment}/step-tests/{id}`) or cancel it through these routes;
@@ -985,9 +1001,19 @@ incident for a direct link and sends its revision as the `ETag`, ready for
   fields; for a repeated step instance, its `node_id` is the full instance key.
   Read the incident again with `incidents.read` after resolving to show it as
   the lists do.
-- A page is limited to 8 MiB of retained incident data; a larger page answers
-  `429` with `WV-PAGE-LIMIT`. Unknown query parameters are rejected, and a
-  `limit` outside 1 to 100 answers `422` with `WV-VALIDATION`.
+- A page is limited to 8 MiB of retained incident data, the transactions its
+  incidents show included. It ends before the incident that would take it past
+  that, so it can hold fewer than `limit`; `next_cursor` continues after its
+  last one. Only an incident larger than 8 MiB on its own answers `429` with
+  `WV-PAGE-LIMIT`.
+- The earlier array of a run's incidents (the path without `/api/v1`) has the
+  same limit and no cursor. Past it, the array shows each transaction once: with
+  its first active incident, or its first one when none is active. Its other
+  incidents leave `transaction` out, and `incidents.read` shows it. An array
+  past the limit even so answers `429` with `WV-PAGE-LIMIT`; read the pages of
+  `incidents.run_list`.
+- Unknown query parameters are rejected, and a `limit` outside 1 to 100 answers
+  `422` with `WV-VALIDATION`.
 
 **Worker identity.** `workers.create` accepts an optional `identity` describing
 where the worker runs: `host`, `runtime` (`embedded`, `container`, or
@@ -1229,18 +1255,19 @@ refused (HTTP 409, `WV-TXN-IN-DOUBT`). Its run timeout, or a transaction's own
 deadline (such as a reservation about to expire), fires once and holds the run:
 the run is suspended behind the incident `WV-TXN-RUN-OVERSIZED` at key
 `@transactions:0`, with origin `WV-RUNTIME-CAPACITY`. Forward work waits behind
-it, later changes to the run keep it, and every cancel stays refused, one with
-`"skip_undo": true` included. The transaction stays as it is until a reconciler
-ends it with **Force end** (`terminate`) on that incident, which needs
-`transaction.reconcile` and ends every open transaction `force_ended`.
+it, later changes to the run keep it, and a plain cancel stays refused. The
+transaction stays as it is until a reconciler ends it with **Force end**
+(`terminate`) on that incident, or, when the run is over the fetch budget of
+retained runs and takes no decision, with a cancel with `"skip_undo": true`. Both
+need `transaction.reconcile` and end every open transaction `force_ended`.
 
 **Transactions.** `POST …/runs/{identifier}/cancel` takes an optional
 `"skip_undo": true` (needs `transaction.reconcile`): the run's open transactions
-end `force_ended` instead of being undone. While the run holds an active
-in-doubt incident, a cancel with `"skip_undo": true` is refused like any other
-(HTTP 409, `WV-TXN-IN-DOUBT`) and changes nothing, because the incident's
-**Force end** is the one way past a transaction in doubt. Without `skip_undo`, a run with an open
-transaction answers HTTP 202 with `pending_undo: true` and ends once its
+end `force_ended` instead of being undone. While the run has an open transaction
+and any incident in doubt is open, it answers HTTP 409 `WV-TXN-IN-DOUBT`, as a
+plain cancel does; see
+[what refuses a cancel](incident-operations.md#transactions-in-doubt). Without it,
+a run with an open transaction answers HTTP 202 with `pending_undo: true` and ends once its
 transactions settle; undoing them spends the run's control reserve, so it
 finishes at a full byte quota. Only settlement spends it: a confirm whose result
 also starts the steps after its block, say, waits for quota like any forward

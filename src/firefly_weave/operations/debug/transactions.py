@@ -27,6 +27,7 @@ from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, IRNode, Part
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
 from firefly_weave.contracts.run_views import RunTransactionCause, TransactionParticipantView
 from firefly_weave.contracts.transactions import (
+    IN_DOUBT_CODES,
     PHASE_SEGMENTS,
     Effect,
     UndoPhase,
@@ -37,9 +38,9 @@ from firefly_weave.contracts.transactions import (
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import ScriptedError, TransactionDebugView
 from firefly_weave.runtime.control import enclosing_loops
-from firefly_weave.runtime.kernel import PreparedWorkflow
-from firefly_weave.runtime.models import Deadline, RunState, TransactionCause, TransactionRecord
-from firefly_weave.runtime.transactions import split_deadline
+from firefly_weave.runtime.kernel import PreparedWorkflow, unsettled
+from firefly_weave.runtime.models import Deadline, IncidentState, RunState, TransactionCause, TransactionRecord
+from firefly_weave.runtime.transactions import TRANSACTION_RULES, incident_transaction, split_deadline
 
 # The simulated workflow's run: stable across sessions, restores, the library, the CLI and servers, so the operation
 # keys its confirms, cancels and undos read are too. A called workflow's run is ``frame_run_id`` of its call.
@@ -62,8 +63,19 @@ RESOLUTIONS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
 
 def started_data(prepared: PreparedWorkflow, run_id: UUID) -> JsonObject:
     """The data a simulated run starts with: its run ID when it has a transaction (the kernel needs it there for
-    operation keys), nothing otherwise, so sessions without transactions keep their bytes."""
-    return {"run_id": str(run_id)} if prepared.transactions is not None else {}
+    operation keys) and the rules its transactions follow, nothing otherwise, so sessions without transactions keep
+    their bytes."""
+    if prepared.transactions is None:
+        return {}
+    return {"run_id": str(run_id), "transaction_rules": TRANSACTION_RULES}
+
+
+def resolution_rules(prepared: PreparedWorkflow, incident: IncidentState) -> JsonObject:
+    """What a simulated resolution of a transaction in doubt says besides the decision, as the server does: the rules
+    the run's transactions follow from it, and the transaction the incident belongs to."""
+    assert prepared.transactions is not None
+    owner = incident_transaction(prepared.transactions, incident.node_id, incident.code)
+    return {"transaction_rules": TRANSACTION_RULES, **({"transaction": owner} if owner is not None else {})}
 
 
 def scripted_effect(action_spec: Mapping[str, Any] | None, failure: ScriptedError) -> Literal["none", "unknown"]:
@@ -86,6 +98,13 @@ def resolution_problem(state: RunState, incident_key: str, resolution: str) -> b
     if state.status != "suspended" or incident is None:
         return True
     return resolution not in RESOLUTIONS.get(incident.code, frozenset())
+
+
+def past_doubt(state: RunState) -> bool:
+    """Whether a cancel would pass a transaction in doubt, which a platform refuses: a person decides that one first.
+    What an earlier decision left holds no run whose transactions all ended."""
+    doubted = any(item.code in IN_DOUBT_CODES for item in state.incidents.values())
+    return unsettled(state) and (doubted or any(item.status == "in_doubt" for item in state.transactions.values()))
 
 
 def _cause(cause: TransactionCause | None) -> RunTransactionCause | None:

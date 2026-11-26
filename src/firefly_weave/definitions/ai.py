@@ -20,13 +20,20 @@ A pure check over the compiled graph and the connections an activation already r
 current authority: it reads no database, cache, gateway, network or secret.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from firefly_weave.ai_policy import AIPolicy
 from firefly_weave.compiler.ir import ActionNode, AgentNode, CallWorkflowNode, Node, WorkflowIR
 from firefly_weave.contracts.connectors import BoundConnection
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
+
+
+def uses_ai(nodes: Iterable[object]) -> bool:
+    """Whether a step runs an AI model with an AI profile, so the AI policy applies."""
+    return any(
+        isinstance(node, AgentNode) or (isinstance(node, ActionNode) and node.llm_profile is not None) for node in nodes
+    )
 
 
 def validate_ai_bindings(

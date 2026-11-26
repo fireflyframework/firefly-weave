@@ -22,11 +22,26 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from transaction_support import INPUT, RUN, START, add, compiled, hold, notify, submit, transaction
+from transaction_support import (
+    INPUT,
+    RUN,
+    START,
+    add,
+    compiled,
+    finished,
+    hold,
+    lookup,
+    notify,
+    parallel,
+    submit,
+    transaction,
+)
 
 from firefly_weave.compiler.ir import TransactionNode
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.operations import (
+    CallFact,
+    CallReceipt,
     DeadlineFact,
     RecordedEvidence,
     SourceReference,
@@ -39,7 +54,7 @@ from firefly_weave.operations.exports import lock_digest, safe_event, transition
 from firefly_weave.operations.redaction import SafeProjection
 from firefly_weave.operations.replay import replay
 from firefly_weave.runtime.kernel import transition, workflow
-from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.models import CallIntent, Deadline, RunState, RuntimeEvent, TaskIntent
 
 ACTOR = str(uuid4())
 
@@ -52,6 +67,7 @@ def record(flow, steps: list[tuple[str, dict[str, Any]]]) -> tuple[RuntimeEvent,
     undo_limit = next(n for n in ir.graph.nodes if isinstance(n, TransactionNode)).policy.undo_timeout_seconds
     state, now, events = RunState(input=dict(INPUT)), START, []
     tasks: dict[str, TaskFact] = {}
+    calls: dict[str, CallFact] = {}
     waits: dict[str, DeadlineFact] = {}
     for index, (kind, data) in enumerate(steps, 1):
         now += timedelta(seconds=1)
@@ -61,7 +77,7 @@ def record(flow, steps: list[tuple[str, dict[str, Any]]]) -> tuple[RuntimeEvent,
             data = {**data, "deadline": due.deadline.isoformat(), "wait_id": str(due.wait_id)}
         event = RuntimeEvent(id=uuid4(), type=kind, timestamp=now, sequence=index, data=data)
         change = transition(state, event, flow)
-        issued_tasks, issued_waits = [], []
+        issued_tasks, issued_waits, issued_calls = [], [], []
         for command in change.commands:
             if isinstance(command, TaskIntent):
                 tasks[command.node_id] = TaskFact(
@@ -72,6 +88,15 @@ def record(flow, steps: list[tuple[str, dict[str, Any]]]) -> tuple[RuntimeEvent,
                     deadline=command.deadline,
                 )
                 issued_tasks.append(tasks[command.node_id])
+            elif isinstance(command, CallIntent):
+                calls[command.node_id] = CallFact(
+                    call_id=uuid4(),
+                    node_id=command.node_id,
+                    generation=0,
+                    mode=command.mode,
+                    workflow_reference=command.workflow_reference,
+                )
+                issued_calls.append(calls[command.node_id])
             elif isinstance(command, Deadline):
                 prior = waits.get(command.node_id)
                 waits[command.node_id] = DeadlineFact(
@@ -94,9 +119,16 @@ def record(flow, steps: list[tuple[str, dict[str, Any]]]) -> tuple[RuntimeEvent,
                 timing=TaskTiming(kind="live_admission", checked_at=now, effective_deadline=task.deadline),
             )
         if kind == "incident_resolved" and data["kind"] == "retry_safe" and data["node_id"] in tasks:
-            # The service makes the stuck attempt ready again with a fresh time limit.
+            # The service makes the stuck attempt ready again with a fresh time limit: the transaction's for a confirm,
+            # cancel or undo, the action's own (30 s in the catalog) for a step after the point of no return.
+            limit = undo_limit if "#" in data["node_id"] else 30
             tasks[data["node_id"]] = tasks[data["node_id"]].model_copy(
-                update={"deadline": now + timedelta(seconds=undo_limit)}
+                update={"deadline": now + timedelta(seconds=limit)}
+            )
+        returned = None
+        if kind == "call_completed":
+            returned = CallReceipt(
+                call=calls[data["node_id"]], child_run_id=UUID(data["child_run_id"]), status=data["status"], code=None
             )
         wait = None
         if kind == "wait_elapsed":
@@ -112,7 +144,9 @@ def record(flow, steps: list[tuple[str, dict[str, Any]]]) -> tuple[RuntimeEvent,
             expected_transition_digest=transition_digest(change),
             issued_tasks=issued_tasks,
             issued_deadlines=issued_waits,
+            issued_calls=issued_calls,
             task_receipt=receipt,
+            call_receipt=returned,
             wait_receipt=wait,
         )
         events.append(event.model_copy(update={"evidence": evidence.model_dump(mode="json")}))
@@ -143,6 +177,8 @@ def failed(key: str, code: str = "UNAVAILABLE", effect: str = "unknown", generat
 
 
 def resolved(key: str, node: str, generation: int, kind: str, code: str, **extra: Any):
+    """A resolution as the server records it; with ``transaction``, one of this release, which says the rules too."""
+    rules = {"transaction_rules": 2, "transaction": extra.pop("transaction")} if "transaction" in extra else {}
     data = {
         "incident_key": key,
         "receipt_id": str(uuid4()),
@@ -152,6 +188,7 @@ def resolved(key: str, node: str, generation: int, kind: str, code: str, **extra
         "output": extra.pop("output", None),
         "actor_id": ACTOR,
         "code": code,
+        **rules,
     }
     return ("incident_resolved", data)
 
@@ -159,6 +196,178 @@ def resolved(key: str, node: str, generation: int, kind: str, code: str, **extra
 FLOW = [transaction([hold(), add(), submit()])]
 UNDO_STUCK = [STARTED, done("hold", {"holdId": "h-1"}), failed("add"), failed("add#undo", "REJECTED", "none", 3)]
 PIVOT = [STARTED, done("hold", {"holdId": "h-1"}), done("add", {"id": "a-1"}), failed("submit", "TIMEOUT")]
+STARTED_2 = (STARTED[0], {**STARTED[1], "transaction_rules": 2})
+TWO = [transaction([hold(), hold("hold2"), submit()])]
+# Both confirms of one transaction can't finish, in a run of this release and in one of an earlier one.
+TWO_STUCK = [
+    done("hold", {"holdId": "h-1"}),
+    done("hold2", {"holdId": "h-2"}),
+    done("submit", {"orderId": "o-1"}),
+    failed("hold#confirm", "HOLD_EXPIRED", "none", 2),
+    failed("hold2#confirm", "HOLD_EXPIRED", "none", 2),
+]
+
+
+def task_error(code: str) -> dict[str, Any]:
+    """A failed attempt as a worker reports it."""
+    return {"completion_id": str(uuid4()), "code": code}
+
+
+def confirm(step: str, kind: str, **extra: Any):
+    return resolved(f"{step}#confirm:2", f"{step}#confirm", 2, kind, "WV-TXN-CONFIRM-STUCK", **extra)
+
+
+BESIDE = [transaction([hold(), parallel(submit(), lookup())])]
+# A read failed beside the step that can't be undone: its attempt, then for good, while that one was in flight.
+READ_FAILED = [
+    done("hold", {"holdId": "h-1"}),
+    (
+        "task_failed",
+        {"node_id": "lookup", "generation": 1, "output": task_error("REJECTED"), "effect": "none"},
+    ),
+    failed("lookup", "REJECTED", "none"),
+    done("submit", {"orderId": "o-1"}),
+]
+ADOPTED = {
+    "two confirms reconciled at once": (
+        TWO,
+        [
+            STARTED_2,
+            *TWO_STUCK,
+            confirm("hold2", "accept_reconciled_result", transaction="move", output=finished("hold", "hold2")),
+        ],
+    ),
+    "two confirms retried one by one": (
+        TWO,
+        [
+            STARTED_2,
+            *TWO_STUCK,
+            confirm("hold", "retry_safe", transaction="move"),
+            done("hold#confirm", {}, 3),
+            confirm("hold2", "retry_safe", transaction="move"),
+            done("hold2#confirm", {}, 3),
+        ],
+    ),
+    "a step that failed beside the decision is retried": (
+        BESIDE,
+        [
+            STARTED_2,
+            *READ_FAILED,
+            resolved("lookup:1", "lookup", 1, "retry_safe", "WV-TXN-AFTER-PIVOT-STUCK", transaction="move"),
+            done("hold#confirm", {}),
+            done("lookup", {"count": 1}, 2),
+        ],
+    ),
+    "a step that failed beside the decision is left to a person's record": (
+        BESIDE,
+        [
+            STARTED_2,
+            *READ_FAILED,
+            done("hold#confirm", {}),
+            resolved(
+                "lookup:1",
+                "lookup",
+                1,
+                "accept_reconciled_result",
+                "WV-TXN-AFTER-PIVOT-STUCK",
+                transaction="move",
+                output=finished("hold"),
+            ),
+        ],
+    ),
+    "an incident that opened twice": (
+        TWO,
+        [
+            STARTED_2,
+            *TWO_STUCK,
+            confirm("hold", "retry_safe", transaction="move"),
+            # No worker claimed it before its time passed, so it fails with the attempt it had.
+            failed("hold#confirm", "WV-TASK-DEADLINE", "none", 2),
+            confirm("hold", "retry_safe", transaction="move"),
+            done("hold#confirm", {}, 3),
+            confirm("hold2", "retry_safe", transaction="move"),
+            done("hold2#confirm", {}, 3),
+        ],
+    ),
+    "a run of an earlier release moved on by its first decision": (
+        TWO,
+        [
+            STARTED,
+            *TWO_STUCK,
+            confirm("hold2", "accept_reconciled_result", transaction="move", output=finished("hold", "hold2")),
+        ],
+    ),
+    "a run an earlier release left after a retry": (
+        TWO,
+        [
+            STARTED,
+            *TWO_STUCK,
+            confirm("hold", "retry_safe"),
+            done("hold#confirm", {}, 3),
+            confirm("hold2", "retry_safe", transaction="move"),
+            done("hold2#confirm", {}, 3),
+        ],
+    ),
+    "a leftover an earlier release left behind a record": (
+        TWO,
+        [
+            STARTED,
+            *TWO_STUCK,
+            confirm("hold", "accept_reconciled_result", output=finished("hold", "hold2")),
+            confirm("hold2", "retry_safe", transaction="move"),
+        ],
+    ),
+    "a failure an earlier release left behind a record": (
+        TWO,
+        [
+            STARTED,
+            *TWO_STUCK[:-1],
+            (
+                "task_failed",
+                {"node_id": "hold2#confirm", "generation": 1, "output": task_error("UNAVAILABLE"), "effect": "unknown"},
+            ),
+            confirm("hold", "accept_reconciled_result", output=finished("hold", "hold2")),
+            (
+                "incident_resolved",
+                {
+                    "incident_key": "hold2#confirm:1",
+                    "receipt_id": str(uuid4()),
+                    "node_id": "hold2#confirm",
+                    "generation": 1,
+                    "kind": "retry_safe",
+                    "output": None,
+                    "actor_id": ACTOR,
+                    "transaction_rules": 2,
+                },
+            ),
+        ],
+    ),
+}
+CALLED = {
+    "kind": "callWorkflow",
+    "uses": "reverse-target-addition@1.0.0",
+    "with": {"object": {"reference": {"ref": "/input/moveId"}, "addOperation": {"ref": "/participant/operationKey"}}},
+}
+ADOPTED["a called confirm an earlier release left behind a record"] = (
+    [transaction([hold(), hold("hold2", confirm=CALLED), submit()])],
+    [
+        STARTED,
+        *TWO_STUCK[:-1],
+        (
+            "call_completed",
+            {
+                "node_id": "hold2#confirm",
+                "generation": 0,
+                "child_run_id": str(uuid4()),
+                "status": "failed",
+                "output": {"code": "REFUSED", "message": "The call failed."},
+                "effect": "none",
+            },
+        ),
+        confirm("hold", "accept_reconciled_result", output=finished("hold", "hold2")),
+        resolved("hold2#confirm:0", "hold2#confirm", 0, "retry_safe", "WV-TXN-CONFIRM-STUCK", transaction="move"),
+    ],
+)
 HISTORIES = {
     "completed": (
         FLOW,
@@ -248,12 +457,25 @@ HISTORIES = {
 }
 
 
-@pytest.mark.parametrize("name", list(HISTORIES))
+@pytest.mark.parametrize("name", [*HISTORIES, *ADOPTED])
 def test_a_transaction_history_exports_and_replays_consistently(name):
-    steps, events = HISTORIES[name]
+    steps, events = {**HISTORIES, **ADOPTED}[name]
     flow = compiled(steps)
     report = replay(flow, record(flow, events))
     assert report.status == "consistent", (name, report.diagnostics)
+
+
+@pytest.mark.parametrize("without", [0, -1])
+def test_a_history_whose_event_lost_its_transaction_rules_replays_inconsistently(without):
+    # Either event that moves a run to these rules: its start, or the decision an earlier run got.
+    name = "two confirms retried one by one" if without == 0 else "a leftover an earlier release left behind a record"
+    steps, accepted = ADOPTED[name]
+    flow = compiled(steps)
+    events = list(record(flow, accepted))
+    data = {key: value for key, value in events[without].data.items() if key != "transaction_rules"}
+    events[without] = events[without].model_copy(update={"data": data})
+    report = replay(flow, tuple(events))
+    assert (report.status, [d.code for d in report.diagnostics]) == ("inconsistent", ["WV-REPLAY-TRANSITION"])
 
 
 def test_a_tampered_effect_replays_inconsistently():

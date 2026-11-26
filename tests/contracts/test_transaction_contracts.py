@@ -39,6 +39,7 @@ from firefly_weave.contracts.transactions import (
     phase_key,
     split_phase,
 )
+from firefly_weave.operations.incident_codes import INCIDENT_CODES
 
 EVENT = {
     "version": "weave/platform-event-v1",
@@ -106,6 +107,13 @@ def test_runtime_codes_follow_the_diagnostic_pattern_and_carry_product_copy():
             assert word not in message, code
     assert set(TRANSACTION_MESSAGES) >= IN_DOUBT_CODES
     assert len(IN_DOUBT_CODES) == 7
+
+
+def test_the_message_of_a_held_run_names_the_one_decision_its_incident_takes():
+    held = TRANSACTION_MESSAGES["WV-TXN-RUN-OVERSIZED"]
+    assert INCIDENT_CODES["WV-TXN-RUN-OVERSIZED"].decisions == ("terminate",)
+    # A cancel without undoing is refused while the run is held.
+    assert "force ends the run" in held and "cancel" not in held
 
 
 def test_the_platform_event_payload_is_published_and_carries_no_business_values():

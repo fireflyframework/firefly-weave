@@ -211,6 +211,12 @@ def test_an_action_key_answers_an_undo_action():
     assert simulator.data.outputs["add#undo"] == {"removed": True}
 
 
+def test_a_simulated_transaction_follows_the_rules_of_this_release_from_its_start():
+    simulator, _ = run(compiled([transaction([hold(), submit()])]))
+    assert simulator.data.events[0].data["transaction_rules"] == 2
+    assert simulator.data.state.transaction_rules == 2
+
+
 def test_a_session_without_transactions_keeps_its_bytes():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from test_simulator import NOW as PLAIN_NOW
