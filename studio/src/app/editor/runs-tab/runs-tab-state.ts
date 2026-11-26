@@ -199,6 +199,8 @@ export class RunsTabState {
   private transactionsReading: RunTicket | null = null;
   /** The next read of them, for a run Studio doesn't follow, after a failed read. */
   private transactionsTimer: number | null = null;
+  /** The run's record as it was when they were last read, as JSON. */
+  private transactionsOf: string | null = null;
   /** The items picked on the chosen run's loops (loop step ID to index), and its last read. */
   private picked: Record<string, number> = {};
   private lastRead: RunRead | null = null;
@@ -314,6 +316,7 @@ export class RunsTabState {
     this.lastRead = null;
     this.transactionsWait = new TransactionReadBackoff();
     this.clearTransactionsRetry();
+    this.transactionsOf = null;
     const ticket = this.runTicket(id, ++this.runGeneration);
     const listed = this.items().find((item) => item.id === id);
     const summary = listed && !isUnavailableRun(listed) ? listed : null;
@@ -409,6 +412,7 @@ export class RunsTabState {
     if (!this.transactionsWait.ready(this.env.now())) return;
     this.clearTransactionsRetry();
     this.transactionsReading = ticket;
+    const record = JSON.stringify(this.chosen()?.record ?? null);
     let read: RunTransactionsRead;
     try {
       read = await readRunTransactions(this.host.api, ticket.id);
@@ -422,6 +426,7 @@ export class RunsTabState {
     }
     if (!this.runHolds(ticket)) return;
     this.transactionsWait.succeeded();
+    this.transactionsOf = record;
     const views = viewsOf(read);
     const caption = views ? inDoubtCaption(views) : null;
     const captions = new Map(this.captions());
@@ -793,7 +798,12 @@ export class RunsTabState {
       overlay: this.overlay(read, chosen.summary, definition),
       following: !done,
     });
-    if (this.wantsTransactions(chosen.summary, definition))
+    // A run on hold changes only when someone acts on it: its transactions
+    // are read again when its record changed.
+    const unchanged =
+      read.record.status === "suspended" &&
+      this.transactionsOf === JSON.stringify(read.record);
+    if (!unchanged && this.wantsTransactions(chosen.summary, definition))
       await this.readTransactions(ticket);
     return true;
   }

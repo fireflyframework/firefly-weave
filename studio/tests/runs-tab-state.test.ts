@@ -1295,6 +1295,27 @@ describe("a recorded run's transactions", () => {
     expect(state.chosen()?.overlay?.canvas.transactions).toBeDefined();
   });
 
+  it("reads a run on hold's transactions again only when the run changed", async () => {
+    const { state, platform, env } = await moved(fixtureIds.running, STUCK);
+    const running = summaryOf(platform.data, fixtureIds.running);
+    const stuck = { i1: { node_id: "add#undo", code: "WV-TXN-UNDO-STUCK" } };
+    platform.views.set(
+      running.id,
+      viewOf(running, { status: "suspended", incidents: stuck }),
+    );
+    await state.choose(running.id);
+    await settle();
+    expect(state.chosen()?.following).toBe(true);
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    // Followed every 2 s, the run stays as it was.
+    await env.advance(10_000);
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    // Someone resolved it in Operate: the run moves on.
+    platform.views.set(running.id, viewOf(running, { active: ["notify"] }));
+    await env.advance(2000);
+    expect(platform.count(TRANSACTIONS)).toBe(2);
+  });
+
   it("drops transactions that answer for another run, account or environment", async () => {
     const { state, platform, host } = await moved(fixtureIds.failed, STUCK);
     const retry = summaryOf(platform.data, fixtureIds.retry);
