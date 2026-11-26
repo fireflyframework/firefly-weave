@@ -98,7 +98,7 @@ def draft_refusal(draft: DraftStep, metadata: JsonObject, catalog: CatalogSnapsh
     whole = [error for error in errors if not any(_within(error.path, place) for place in ABOUT_STEPS)]
     # A compile counts an error before it leaves one out, so without any it left out only warnings and notes.
     unlisted = compiled.schema_truncated or (compiled.omitted_count and compiled.error_count)
-    if compiled.analysis is None or unlisted or whole:
+    if compiled.analysis is None or unlisted or whole or _reads_emptied(cast(JsonObject, part["spec"]), emptied):
         return _refusal(UNCHECKED, errors)
     problems = _Checked(compiled.analysis, errors, emptied).problems(cast(str, draft.step["id"]))
     return None if problems is None else _refusal(UNCHECKED, problems or errors)
@@ -214,18 +214,40 @@ def _expressions(step: JsonObject) -> Iterator[JsonValue]:
 
 def _names(steps: JsonValue, field: str) -> set[str]:
     """Every name the field holds anywhere in the steps: a step's, a tool's, or an undo's."""
-    found: set[str] = set()
-    pending = [steps]
+    return {name for node in _objects(steps) if isinstance(name := node.get(field), str)}
+
+
+def _reads_emptied(spec: JsonObject, emptied: Collection[str]) -> bool:
+    """Whether a step that stays reads one that was emptied: a check of ``_stays`` that knows no field names.
+
+    Every ``{"ref": pointer}`` in the steps counts, wherever it is. A pointer that reads every step reads the emptied
+    ones too; one that can't be decoded reads none, and the compile finds it. A step left in place of one reads nothing.
+    """
+    if not emptied:
+        return False
+    for node in _objects(spec["steps"]):
+        pointer = node.get("ref")
+        if not isinstance(pointer, str):
+            continue
+        try:
+            segments = pointer_segments(pointer)
+        except ExpressionFailure:
+            continue
+        if segments in ((), ("steps",)) or (segments[0] == "steps" and segments[1] in emptied):
+            return True
+    return False
+
+
+def _objects(tree: JsonValue) -> Iterator[JsonObject]:
+    """Every object anywhere in the tree."""
+    pending = [tree]
     while pending:
         node = pending.pop()
         if isinstance(node, list):
             pending.extend(node)
         elif isinstance(node, dict):
-            name = node.get(field)
-            if isinstance(name, str):
-                found.add(name)
+            yield node
             pending.extend(node.values())
-    return found
 
 
 class _Checked:

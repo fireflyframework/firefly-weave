@@ -844,14 +844,19 @@ def test_the_steps_the_texts_read_stay_and_the_others_are_emptied(read, compiled
     assert emptied(steps) == (set() if read in EVERYTHING else {"beside"} | UNREAD.get(read, set()))
 
 
-@pytest.mark.parametrize(
-    "read, missed", [(read, step) for read in READS for step in sorted(read_by(read)[1] - {FAILS})]
-)
-def test_a_step_that_was_emptied_and_is_read_after_all_is_refused(read, missed, monkeypatch):
+def first_walk_misses(monkeypatch, missed):
+    """Make the walk that picks the steps to keep miss every read of one step, so that step is emptied."""
     stays = inputs._stays
     monkeypatch.setattr(
         inputs, "_stays", lambda steps, step_id: {at for at in stays(steps, step_id) if steps[at].get("id") != missed}
     )
+
+
+@pytest.mark.parametrize(
+    "read, missed", [(read, step) for read in READS for step in sorted(read_by(read)[1] - {FAILS})]
+)
+def test_a_step_that_was_emptied_and_is_read_after_all_is_refused(read, missed, monkeypatch):
+    first_walk_misses(monkeypatch, missed)
     for mark in (None, MARKS[0]):
         document, _ = read_by(read)
         document["spec"]["inputSchema"] = workflow(mark=mark)["spec"]["inputSchema"]
@@ -975,6 +980,66 @@ def test_a_step_that_stays_keeps_every_step_it_reads(read):
     assert compile_source(document, format="object", catalog=catalog()).ok
     # Emptied, the step would leave more findings than a compile lists.
     assert refusal(document) is None
+
+
+def swapped(node, old, new):
+    """The node with every part equal to ``old`` replaced by ``new``."""
+    if node == old:
+        return copy.deepcopy(new)
+    if isinstance(node, dict):
+        return {key: swapped(value, old, new) for key, value in node.items()}
+    if isinstance(node, list):
+        return [swapped(value, old, new) for value in node]
+    return node
+
+
+UNFINISHED = {"id": "many", "kind": "action", **NEW["action"]}
+
+
+# Where only a block's output reads the step, the check of what the texts read finds it emptied already.
+@pytest.mark.parametrize("read", [read for read in ALSO_READ if read != "a decision's other path"])
+def test_a_step_emptied_though_a_step_that_stays_reads_it_is_refused(read, monkeypatch):
+    around, pointer = ALSO_READ[read]
+    document = swapped(workflow(UNFINISHED, *around(ask(context=ref(pointer)))), TEXTS, ref("/steps/many/output"))
+    assert found(refusal(document))
+    first_walk_misses(monkeypatch, "many")
+    assert refusal(document) is not None
+
+
+@pytest.mark.parametrize(
+    "earlier",
+    [
+        lambda value: ask(id="read", prompt=value),
+        lambda value: agent(id="read", tools=[{**agent()["tools"][0], "fixed": {"object": {"id": value}}}]),
+    ],
+    ids=["an earlier AI task's prompt", "an earlier agent's tool"],
+)
+def test_a_marked_value_an_earlier_ai_step_reads_is_refused_when_the_first_walk_misses_it(earlier, monkeypatch):
+    copied = transform("copy", ref("/input/customer/ssn"))
+    document = workflow(copied, earlier(ref("/steps/copy/output")), ask(context=ref("/steps/read/output/result")))
+    document["spec"]["inputSchema"] = workflow(mark=MARKS[0])["spec"]["inputSchema"]
+    assert codes(refusal(document, resources=catalog(MARKS[0]))) == {SECRET_INPUT}
+    first_walk_misses(monkeypatch, "copy")
+    assert refusal(document, resources=catalog(MARKS[0])) is not None
+
+
+@pytest.mark.parametrize(
+    "pointer",
+    ["/steps/first/output", "", "/steps"],
+    ids=["the step", "everything", "every step"],
+)
+def test_a_read_in_a_field_the_first_walk_doesnt_follow_still_counts(pointer, monkeypatch):
+    def reading(at):
+        return workflow(
+            transform("first"),
+            fetch(**{"with": {"object": {"id": ref(at)}}}),
+            ask(context=ref("/steps/fetch/output/name")),
+        )
+
+    monkeypatch.setattr(inputs, "EXPRESSIONS", tuple(name for name in inputs.EXPRESSIONS if name != "with"))
+    assert refusal(reading(pointer)) is not None
+    # What reads no step that was emptied is admitted as before.
+    assert refusal(reading("/input/customer/name")) is None
 
 
 def test_every_expression_of_a_step_is_followed():
