@@ -22,7 +22,12 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from firefly_weave.contracts.operations import IncidentTransaction, IncidentView, RecordedResolution
+from firefly_weave.contracts.operations import (
+    IncidentResolution,
+    IncidentTransaction,
+    IncidentView,
+    RecordedResolution,
+)
 
 STORED = {
     "id": str(uuid4()),
@@ -80,3 +85,21 @@ def test_resolution_kinds_include_it_didnt_happen():
     assert recorded.kind == "accept_reconciled_failure"
     with pytest.raises(ValidationError):
         RecordedResolution(receipt_id=uuid4(), kind="accept_reconciled_undo", reason="checked")
+
+
+RESOLUTION = {"receipt_id": str(uuid4()), "kind": "retry_safe", "reason": "Checked both systems."}
+
+
+def test_a_recorded_resolution_says_when_it_closed_a_leftover():
+    said = RecordedResolution.model_validate_json(json.dumps({**RESOLUTION, "leftover": True}))
+    assert said.model_dump(mode="json")["leftover"] is True
+    assert "leftover" not in RecordedResolution.model_validate_json(json.dumps(RESOLUTION)).model_dump(mode="json")
+
+
+def test_a_person_cannot_say_that_an_incident_was_a_leftover():
+    with pytest.raises(ValidationError) as refused:
+        IncidentResolution.model_validate_json(json.dumps({**RESOLUTION, "leftover": True}))
+    assert "Only the platform says that an incident was a leftover" in refused.value.errors()[0]["msg"]
+    assert "leftover" not in IncidentResolution.model_json_schema()["properties"]
+    request = IncidentResolution.model_validate_json(json.dumps(RESOLUTION))
+    assert "leftover" not in request.model_dump(mode="json") | request.recorded().model_dump(mode="json")

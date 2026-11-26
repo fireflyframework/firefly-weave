@@ -14,18 +14,39 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Settlement work is never blocked: pause and unrelated incidents hold back only new forward steps."""
+"""Settlement work is never blocked: pause and unrelated incidents hold back only new forward steps. What a barrier held
+back is applied when it lifts, or waits for the next one; work that stopped meanwhile leaves nothing behind."""
 
-from transaction_support import INPUT, Run, add, compiled, hold, submit, tasks, transaction
+import pytest
+from transaction_support import (
+    INPUT,
+    UNSET,
+    WRONG,
+    Run,
+    add,
+    attempt_failed,
+    compiled,
+    completed_once,
+    controls,
+    finish_phases,
+    hold,
+    join_behind_a_doubt,
+    lookup,
+    meet_behind_a_pause,
+    notify,
+    parallel,
+    record,
+    resolve,
+    submit,
+    tasks,
+    transaction,
+)
 
+from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
 
-def lookup(identifier: str = "lookup") -> dict:
-    return {
-        "id": identifier,
-        "kind": "action",
-        "uses": "reports.lookup@1.0.0",
-        "with": {"object": {"reference": {"ref": "/input/moveId"}}},
-    }
+ROLLED_BACK = {"code": "WV-TXN-ROLLED-BACK", "message": TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"]}
+# How a read's attempt ends with an incident: recovery has not decided it yet, or only a person can.
+INCIDENTS = ("WV-TASK-FAILED", "WV-SCHEMA-SECRET_VALUE")
 
 
 def beside(*steps) -> list:
@@ -145,3 +166,389 @@ def test_a_forward_result_held_behind_another_incident_is_applied_when_its_trans
     [release] = tasks(run.fire("move#hold"))
     assert release.node_id == "hold#cancel" and run.state.deferred_results == []
     assert run.state.status == "suspended" and run.txn().status == "compensating"
+
+
+def opens(run: Run, key: str, code: str) -> None:
+    """A step's attempt ends with an incident of its own."""
+    if code == "WV-TASK-FAILED":
+        attempt_failed(run, key)
+    else:
+        run.send("incident_opened", node_id=key, generation=1, code=code)
+    assert run.state.incidents[f"{key}:1"].code == code and run.state.status == "suspended"
+
+
+@pytest.mark.parametrize("code", INCIDENTS)
+def test_a_rollback_closes_the_incident_of_a_step_it_stops(code):
+    run = Run(compiled([transaction([hold(), lookup(), submit()])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    opens(run, "lookup", code)
+    expired = run.fire("move#hold")
+    assert [task.node_id for task in tasks(expired)] == ["hold#cancel"] and "lookup" in controls(expired, "settle")
+    # Nothing is left to decide, so nothing holds the run back.
+    assert (run.state.status, run.state.incidents, run.state.incident) == ("waiting", {}, None)
+    run.done("hold#cancel", {})
+    assert (run.txn().status, run.state.status, run.state.output) == ("cancelled", "failed", ROLLED_BACK)
+
+
+def test_a_rollback_leaves_the_incident_of_a_step_it_still_waits_for():
+    run = Run(compiled([transaction([hold(), parallel(add(), lookup()), submit()])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    opens(run, "add", "WV-TASK-FAILED")
+    opens(run, "lookup", "WV-TASK-FAILED")
+    run.fire("move#hold")
+    assert (list(run.state.incidents), run.state.status, run.state.active) == (["add:1"], "suspended", ["add"])
+    run.failed("add", "REFUSED", effect="none")
+    assert (run.state.incidents, run.state.status) == ({}, "waiting")
+    for key in ("add#undo", "hold#cancel"):
+        run.done(key, {})
+    assert (run.txn().status, run.state.status) == ("compensated", "failed")
+
+
+def test_a_rollback_leaves_the_incident_of_an_event_the_kernel_refused():
+    run = Run(compiled([transaction([hold(), lookup(), submit()])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    opens(run, "lookup", "WV-RUNTIME-EVENT")
+    run.fire("move#hold")
+    assert (list(run.state.incidents), run.state.status) == (["lookup:1"], "suspended")
+
+
+@pytest.mark.parametrize("code", INCIDENTS)
+@pytest.mark.parametrize("ending", ["cancelled", "timed_out"])
+def test_an_ending_run_closes_the_incidents_of_the_steps_it_stops(ending, code):
+    run = Run(compiled([parallel(transaction([hold(), lookup()]), lookup("outside"))], timeout=3600))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    opens(run, "lookup", code)
+    opens(run, "outside", code)
+    if ending == "cancelled":
+        run.send("cancelled", reason="stop")
+    else:
+        run.later(3600)
+        run.send("timed_out", node_id="@run", deadline=run.now.isoformat(), wait_id="w")
+    assert (run.state.status, run.state.incidents, run.state.incident) == ("waiting", {}, None)
+    assert run.state.active == ["hold#cancel"]
+    run.done("hold#cancel", {})
+    assert (run.txn().status, run.state.status) == ("cancelled", ending)
+
+
+def test_an_ending_run_still_waits_for_a_transaction_in_doubt():
+    other = transaction([hold("hold2"), lookup()], identifier="other")
+    run = Run(compiled([parallel(transaction([hold(), submit()]), other)]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.failed("hold#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    run.send("cancelled", reason="stop")
+    assert (run.state.status, list(run.state.incidents)) == ("suspended", ["hold#confirm:2"])
+    run.failed("hold2", "REFUSED", effect="none")
+    assert (run.txn("other").status, run.state.status) == ("cancelled", "suspended")
+    resolve(run, "hold#confirm:2", "terminate")
+    assert (run.txn().status, run.state.status) == ("force_ended", "cancelled")
+
+
+def test_when_the_step_didnt_happen_the_read_beside_it_leaves_nothing_open():
+    for held in ("an interim failure", "a deferred result"):
+        run = Run(compiled([transaction([hold(), parallel(submit(), lookup())])]))
+        run.start(2)
+        run.done("hold", {"holdId": "h-1"})
+        run.failed("submit", "TIMEOUT", effect="unknown", generation=3)
+        if held == "an interim failure":
+            attempt_failed(run, "lookup")
+        else:
+            run.done("lookup", {"count": 1})
+            assert [event.data["node_id"] for event in run.state.deferred_results] == ["lookup"]
+        [release] = tasks(resolve(run, "submit:3", "accept_reconciled_failure"))
+        assert release.node_id == "hold#cancel"
+        assert (run.state.status, run.state.incidents, run.state.deferred_results) == ("waiting", {}, [])
+        run.done("hold#cancel", {})
+        assert (run.txn().status, run.state.status) == ("cancelled", "failed")
+
+
+def after_the_pivot(*steps) -> Run:
+    """The steps run side by side after the point of no return, and nothing else is left to settle."""
+    run = Run(compiled([transaction([hold(), submit(), parallel(*steps)])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    return run
+
+
+@pytest.mark.parametrize("third", ["fails", "succeeds"])
+@pytest.mark.parametrize("second", ["notify2", "notify3"])
+def test_a_result_deferred_behind_a_second_doubt_waits_for_it(second, third):
+    run = after_the_pivot(notify(), notify("notify2"), notify("notify3"))
+    last = {"notify2": "notify3", "notify3": "notify2"}[second]
+    run.failed("notify", "UNAVAILABLE", effect="unknown", generation=4)
+    run.failed(second, "UNAVAILABLE", effect="unknown", generation=4)
+    if third == "fails":
+        run.failed(last, "UNAVAILABLE", effect="unknown", generation=4)
+    else:
+        run.done(last, {})
+    resolve(run, "notify:4", "retry_safe")
+    # The second failure put the transaction in doubt again; what came after it still waits.
+    assert (run.txn().status, run.txn().incident) == ("in_doubt", f"{second}:4")
+    assert [event.data["node_id"] for event in run.state.deferred_results] == [last]
+    assert run.statuses()[last] == "dispatched"
+    run.done("notify", {}, generation=5)
+    assert [event.data["node_id"] for event in run.state.deferred_results] == [last, "notify"]
+    resolve(run, f"{second}:4", "retry_safe")
+    if third == "fails":
+        assert list(run.state.incidents) == [f"{last}:4"]
+        resolve(run, f"{last}:4", "retry_safe")
+        run.done(last, {}, generation=5)
+    run.done(second, {}, generation=5)
+    assert (run.txn().status, run.state.status, run.state.deferred_results) == ("completed", "succeeded", [])
+    assert all(completed_once(run, key) for key in ("notify", "notify2", "notify3", "@join:both"))
+
+
+def test_results_deferred_again_keep_their_order():
+    run = after_the_pivot(*(notify(key) for key in ("notify", "notify2", "notify3", "notify4")))
+    for key in ("notify", "notify3", "notify4", "notify2"):
+        run.failed(key, "UNAVAILABLE", effect="unknown", generation=4)
+    resolve(run, "notify:4", "retry_safe")
+    assert list(run.state.incidents) == ["notify3:4"]
+    assert [event.data["node_id"] for event in run.state.deferred_results] == ["notify4", "notify2"]
+
+
+def test_a_deferred_result_of_a_stopped_step_is_dropped():
+    run = Run(compiled([transaction([hold(), add(), parallel(add("add2"), lookup()), submit()])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    attempt_failed(run, "lookup")
+    attempt_failed(run, "add2")
+    run.failed("lookup", "UNAVAILABLE", effect="unknown")
+    assert [event.data["node_id"] for event in run.state.deferred_results] == ["lookup"]
+    [undo] = tasks(run.failed("add2", "REFUSED", effect="none"))
+    assert undo.node_id == "add2#undo" and run.state.deferred_results == []
+    assert (run.txn().status, run.state.status, run.state.incidents) == ("compensating", "waiting", {})
+    for key in ("add2#undo", "add#undo", "hold#cancel"):
+        run.done(key, {})
+    assert (run.txn().status, run.state.status) == ("compensated", "failed")
+
+
+def test_settlement_work_passes_a_barrier_that_returns():
+    forward = transaction([hold(), submit(), parallel(notify(), notify("notify2"))])
+    other = transaction([parallel(add("x"), add("y"), identifier="pair")], identifier="other")
+    run = Run(compiled([parallel(forward, other, identifier="fork")]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    run.failed("notify", "UNAVAILABLE", effect="unknown", generation=4)
+    # Behind the barrier: the other transaction goes back, this one is in doubt again, and then a result settles.
+    run.failed("y", "REFUSED", effect="none")
+    run.failed("notify2", "UNAVAILABLE", effect="unknown", generation=4)
+    run.done("x", {"id": "a-1"})
+    assert [event.data["node_id"] for event in run.state.deferred_results] == ["y", "notify2", "x"]
+    lifted = resolve(run, "notify:4", "retry_safe")
+    assert list(run.state.incidents) == ["notify2:4"] and run.state.deferred_results == []
+    assert [task.node_id for task in tasks(lifted)] == ["x#undo"] and run.txn("other").status == "compensating"
+
+
+def test_a_paused_run_whose_incidents_closed_waits_for_resume():
+    run = Run(compiled([transaction([hold(), lookup(), submit()])]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    opens(run, "lookup", "WV-TASK-FAILED")
+    run.send("paused", reason="look", control_revision=1)
+    [release] = tasks(run.fire("move#hold"))
+    assert (run.state.status, run.state.incidents, run.state.manual_paused) == ("waiting", {}, True)
+    run.done(release.node_id, {})
+    assert run.txn().status == "cancelled" and run.state.parked == ["@join:move"]
+    run.send("resumed", reason="go", control_revision=2)
+    assert (run.state.status, run.state.output) == ("failed", ROLLED_BACK)
+
+
+def two_moves(*beside, paused: bool = True) -> Run:
+    """Two transactions side by side: ``move`` with the steps ``beside``, and one whose only change is ``a9``."""
+    other = transaction([add("a9")], identifier="other")
+    run = Run(compiled([parallel(transaction(list(beside)), other, identifier="fork")]))
+    run.start(2)
+    return run
+
+
+def fails_in_a_resume(run: Run, finishes: str, output) -> None:
+    """The last step of one transaction finishes and the only change of the other applies nothing, in one event."""
+    run.send("paused", reason="p", control_revision=1)
+    run.done(finishes, output)
+    run.failed("a9", "REFUSED", effect="none")
+    run.send("resumed", reason="p", control_revision=2)
+
+
+def test_a_run_failure_keeps_the_join_of_a_transaction_that_finished():
+    run = two_moves(hold(), submit(), notify())
+    run.done("hold", {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    fails_in_a_resume(run, "notify", {})
+    assert (run.state.status, run.txn().status) == ("failed", "completed")
+
+
+def test_a_run_failure_keeps_the_join_of_a_transaction_that_finished_behind_a_failed_release():
+    other = transaction([hold("h9"), add("a9")], identifier="other")
+    run = Run(compiled([parallel(transaction([hold(), submit(), notify()]), other, identifier="fork")]))
+    run.start(2)
+    run.done("hold", {"holdId": "h-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    run.done("h9", {"holdId": "h-9"})
+    run.failed("a9", "REFUSED", effect="none")
+    attempt_failed(run, "h9#cancel")
+    run.done("notify", {})
+    assert [event.data["node_id"] for event in run.state.deferred_results] == ["notify"]
+    resolve(run, "h9#cancel:1", "accept_reconciled_result", {})
+    assert (run.state.status, run.txn().status, run.txn("other").status) == ("failed", "completed", "cancelled")
+
+
+@pytest.mark.parametrize(
+    ("step", "output", "undoes", "ended"),
+    [
+        (add, {"id": "a-1"}, "add#undo", "compensated"),
+        (hold, {"holdId": "h-1"}, "hold#cancel", "cancelled"),
+    ],
+)
+def test_a_run_failure_drops_the_join_of_a_transaction_it_undoes(step, output, undoes, ended):
+    run = two_moves(step())
+    fails_in_a_resume(run, undoes.partition("#")[0], output)
+    assert (run.state.status, run.state.active, run.state.incidents) == ("waiting", [undoes], {})
+    run.done(undoes, {})
+    assert (run.state.status, run.txn().status, run.state.incidents) == ("failed", ended, {})
+
+
+def test_a_run_failure_keeps_the_join_of_a_loop_iteration_that_finished():
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"literal": [1, 2]},
+        "maxItems": 2,
+        "concurrency": 2,
+        "body": {"steps": [transaction([hold(), submit(), notify()])], "output": {"literal": None}},
+    }
+    other = transaction([add("a9")], identifier="other")
+    run = Run(compiled([parallel(each, other, identifier="fork")]))
+    run.start(2)
+    for index in (0, 1):
+        run.done(f"hold[{index}]", {"holdId": "h-1"})
+        run.done(f"submit[{index}]", {"orderId": "o-1"})
+        run.done(f"hold[{index}]#confirm", {})
+    run.send("paused", reason="p", control_revision=1)
+    run.done("notify[1]", {})
+    run.failed("a9", "REFUSED", effect="none")
+    run.send("resumed", reason="p", control_revision=2)
+    # The other iteration still runs its last step, and the run ends once it has.
+    assert (run.state.status, run.state.active) == ("waiting", ["notify[0]"])
+    assert run.txn("move[1]").status == "completed"
+    run.done("notify[0]", {})
+    assert run.state.status == "failed"
+
+
+# What a person decides about the transaction in doubt, and how the run then ends.
+DECISIONS = {
+    "Force end": ("terminate", UNSET, "cancelled"),
+    "completed": ("accept_reconciled_result", record("completed", {}), "succeeded"),
+    "compensated": (
+        "accept_reconciled_result",
+        record("compensated", {"submit": "undone", "notify": "undone"}),
+        "failed",
+    ),
+}
+# The step whose transaction only has to end, its output, the block's settings, and how it ends once it goes back.
+HELD = (hold(holdSeconds=600), {"holdId": "h-1"})
+BLOCKS = {
+    "hold": (*HELD, {}, "cancelled"),
+    "hold, on error": (*HELD, {"onError": "continue"}, "cancelled"),
+    "add": (add(), {"id": "a-1"}, {}, "compensated"),
+}
+
+
+@pytest.mark.parametrize("block", BLOCKS)
+@pytest.mark.parametrize("decision", DECISIONS)
+def test_a_decision_is_taken_while_the_end_of_another_transaction_waits(decision, block):
+    step, output, settings, gone_back = BLOCKS[block]
+    kind, said, ends = DECISIONS[decision]
+    run = join_behind_a_doubt(step, output, **settings)
+    resolve(run, "wrong:0", kind, said)
+    finish_phases(run)
+    assert (run.state.status, run.state.incidents) == (ends, {})
+    assert run.txn().status == ("completed" if decision == "completed" else gone_back)
+
+
+@pytest.mark.parametrize("block", BLOCKS)
+@pytest.mark.parametrize("undone", ["before", "after"])
+def test_force_end_is_taken_after_a_stop_undid_the_transaction_whose_end_waited(undone, block):
+    step, output, settings, gone_back = BLOCKS[block]
+    run = join_behind_a_doubt(step, output, **settings)
+    run.send("cancelled", reason="c")
+    if undone == "before":
+        finish_phases(run)
+    resolve(run, "wrong:0", "terminate")
+    finish_phases(run)
+    assert (run.state.status, run.state.incidents, run.txn().status) == ("cancelled", {}, gone_back)
+
+
+@pytest.mark.parametrize("settings", [{}, {"onError": "continue"}], ids=["no setting", "on error"])
+@pytest.mark.parametrize("undone", ["before", "after"])
+@pytest.mark.parametrize("decision", DECISIONS)
+def test_a_decision_is_taken_after_the_hold_of_the_transaction_whose_end_waited_expired(decision, undone, settings):
+    kind, said, ends = DECISIONS[decision]
+    run = join_behind_a_doubt(*HELD, **settings)
+    run.fire("move#hold")
+    assert run.state.active == ["hold#cancel"] and run.state.parked == []
+    if undone == "before":
+        finish_phases(run)
+        # It waits for the barrier once, however often it was due.
+        assert run.state.parked == ["@join:move"]
+    resolve(run, "wrong:0", kind, said)
+    finish_phases(run)
+    if decision == "completed" and not settings:
+        # The block that went back fails the run, as it does when nothing held it.
+        ends = "failed"
+    assert (run.state.status, run.state.incidents, run.txn().status) == (ends, {}, "cancelled")
+
+
+def test_force_end_is_taken_while_the_ends_of_loop_iterations_wait():
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"literal": [1, 2]},
+        "maxItems": 2,
+        "concurrency": 2,
+        "body": {"steps": [transaction([hold()])], "output": {"literal": None}},
+    }
+    other = transaction([submit(), notify(), WRONG], identifier="other")
+    run = Run(compiled([parallel(each, other, identifier="fork")]), {**INPUT, "items": [1]})
+    run.start(2)
+    run.done("submit", {"orderId": "o-1"})
+    meet_behind_a_pause(run, {"hold[0]": {"holdId": "h-1"}, "hold[1]": {"holdId": "h-2"}, "notify": {}})
+    assert run.state.parked == ["@join:move[0]", "@join:move[1]"]
+    resolve(run, "wrong:0", "terminate")
+    assert sorted(run.state.active) == ["hold[0]#cancel", "hold[1]#cancel"]
+    finish_phases(run)
+    assert run.state.status == "cancelled"
+    assert {run.txn(f"move[{index}]").status for index in (0, 1)} == {"cancelled"}
+
+
+def test_the_end_of_one_loop_iteration_still_waits_when_another_goes_back():
+    each = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"literal": [60, 600]},
+        "maxItems": 2,
+        "concurrency": 2,
+        "body": {"steps": [transaction([hold(holdSeconds=600)], onError="continue")], "output": {"literal": None}},
+    }
+    other = transaction([submit(), notify(), WRONG], identifier="other")
+    run = Run(compiled([parallel(each, other, identifier="fork")]), {**INPUT, "items": [1]})
+    run.start(2)
+    run.done("submit", {"orderId": "o-1"})
+    meet_behind_a_pause(run, {"hold[0]": {"holdId": "h-1"}, "hold[1]": {"holdId": "h-2"}, "notify": {}})
+    run.fire("move[0]#hold")
+    assert (run.state.active, run.state.parked) == (["hold[0]#cancel"], ["@join:move[1]"])
+    resolve(run, "wrong:0", *DECISIONS["completed"][:2])
+    finish_phases(run)
+    assert run.state.status == "succeeded"

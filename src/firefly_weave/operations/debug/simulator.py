@@ -84,9 +84,11 @@ from firefly_weave.operations.debug.transactions import (
     decided_started,
     due_deadline,
     frame_effect,
+    past_doubt,
     phase_target,
     phase_targets,
     resolution_problem,
+    resolution_rules,
     scripted_effect,
     started_data,
     step_instance,
@@ -961,7 +963,7 @@ class Simulator:
                 if not self._ask(key, run, called, command):
                     return False
             elif isinstance(command, ControlCommand) and command.kind == "settle":
-                self._settle(key, command.node_id)
+                self._settle(key, run, command.node_id, awaited=command.node_id in result.state.active)
             elif isinstance(command, TaskIntent):
                 d.inputs[_path(key, command.node_id)] = command.input
                 if not self._task(key, run, called, command.node_id, command.action_reference):
@@ -1299,10 +1301,18 @@ class Simulator:
         frame.result = event.id
         caller.pending.append(event)
 
-    def _settle(self, key: str, node_id: str) -> None:
-        """A transaction going back stops a called step still in flight: its frame is cancelled, as the platform
-        cancels the child run."""
+    def _settle(self, key: str, run: Run, node_id: str, *, awaited: bool) -> None:
+        """A transaction going back, or one a person decided, stops a called step still in flight: its frame is
+        cancelled, as the platform cancels the child run. A result that had not reached a run that no longer waits for
+        the step (``awaited``) never does: the platform keeps it with the call, or refuses it."""
         child = _path(key, node_id)
+        if not awaited:
+            results = {"call_completed", "step_failed", "task_completed"}
+            late = [e.id for e in run.pending if e.type in results and e.data.get("node_id") == node_id]
+            run.pending = [event for event in run.pending if event.id not in late]
+            for called in self.data.frames:
+                if called.result in late:
+                    called.result = None
         frame = next((f for f in self.data.frames if f.key == child), None)
         if frame is not None and frame.state is not None and frame.state.status not in TERMINAL:
             self._cancel(frame, "Transaction undone")
@@ -1466,6 +1476,7 @@ class Simulator:
                 "generation": prior.generation,
                 "kind": resolution,
                 "code": prior.code,
+                **resolution_rules(self._workflow(key).prepared, prior),
             }
             if resolution == "accept_reconciled_result":
                 data["output"] = payload
@@ -1482,11 +1493,13 @@ class Simulator:
 
     def cancel(self, skip_undo: bool = False) -> DebugView:
         """Cancel the simulated run, as a person's cancel does: its open transactions are undone first, or force
-        ended with ``skip_undo``. The cancel is queued first; ``next`` or ``continue`` applies it."""
+        ended with ``skip_undo``; refused while one is in doubt. The cancel is queued first; ``next`` or ``continue``
+        applies it."""
 
         def queue() -> None:
             d = self.data
-            if d.diagnostics or (d.cursor.result.state if d.cursor else d.state).status in TERMINAL:
+            state = d.cursor.result.state if d.cursor else d.state
+            if d.diagnostics or state.status in TERMINAL or past_doubt(state):
                 raise DebugError("WV-DEBUG-STATE")
             data: JsonObject = {"reason": "Cancelled in the simulation"}
             if skip_undo:

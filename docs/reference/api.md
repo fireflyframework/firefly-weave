@@ -984,9 +984,19 @@ incident for a direct link and sends its revision as the `ETag`, ready for
   fields; for a repeated step instance, its `node_id` is the full instance key.
   Read the incident again with `incidents.read` after resolving to show it as
   the lists do.
-- A page is limited to 8 MiB of retained incident data; a larger page answers
-  `429` with `WV-PAGE-LIMIT`. Unknown query parameters are rejected, and a
-  `limit` outside 1 to 100 answers `422` with `WV-VALIDATION`.
+- A page is limited to 8 MiB of retained incident data, the transactions its
+  incidents show included. It ends before the incident that would take it past
+  that, so it can hold fewer than `limit`; `next_cursor` continues after its
+  last one. Only an incident larger than 8 MiB on its own answers `429` with
+  `WV-PAGE-LIMIT`.
+- The earlier array of a run's incidents (the path without `/api/v1`) has the
+  same limit and no cursor. Past it, the array shows each transaction once: with
+  its first active incident, or its first one when none is active. Its other
+  incidents leave `transaction` out, and `incidents.read` shows it. An array
+  past the limit even so answers `429` with `WV-PAGE-LIMIT`; read the pages of
+  `incidents.run_list`.
+- Unknown query parameters are rejected, and a `limit` outside 1 to 100 answers
+  `422` with `WV-VALIDATION`.
 
 **Worker identity.** `workers.create` accepts an optional `identity` describing
 where the worker runs: `host`, `runtime` (`embedded`, `container`, or
@@ -1219,14 +1229,18 @@ deadline (such as a reservation about to expire), fires once and holds the run:
 the run is suspended behind the incident `WV-TXN-RUN-OVERSIZED` at key
 `@transactions:0`, with origin `WV-RUNTIME-CAPACITY`. Forward work waits behind
 it, later changes to the run keep it, and a plain cancel stays refused. The
-transaction stays as it is until a reconciler ends it: a cancel with
-`"skip_undo": true`, or **Force end** (`terminate`) on that incident. Both need
-`transaction.reconcile` and end every open transaction `force_ended`.
+transaction stays as it is until a reconciler ends it with **Force end**
+(`terminate`) on that incident, or, when the run is over the fetch budget of
+retained runs and takes no decision, with a cancel with `"skip_undo": true`. Both
+need `transaction.reconcile` and end every open transaction `force_ended`.
 
 **Transactions.** `POST …/runs/{identifier}/cancel` takes an optional
 `"skip_undo": true` (needs `transaction.reconcile`): the run's open transactions
-end `force_ended` instead of being undone. Without it, a run with an open
-transaction answers HTTP 202 with `pending_undo: true` and ends once its
+end `force_ended` instead of being undone. While the run has an open transaction
+and any incident in doubt is open, it answers HTTP 409 `WV-TXN-IN-DOUBT`, as a
+plain cancel does; see
+[what refuses a cancel](incident-operations.md#transactions-in-doubt). Without it,
+a run with an open transaction answers HTTP 202 with `pending_undo: true` and ends once its
 transactions settle; undoing them spends the run's control reserve, so it
 finishes at a full byte quota. Only settlement spends it: a confirm whose result
 also starts the steps after its block, say, waits for quota like any forward

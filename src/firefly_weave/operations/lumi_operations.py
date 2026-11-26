@@ -210,6 +210,9 @@ INCIDENT_STATUSES: Final = values_of(IncidentView, "status")
 RUN_STATUSES: Final = values_of(IncidentView, "run_status")
 RESOLUTIONS: Final = values_of(RecordedResolution, "kind")
 UNKNOWN_CODE_NOTE: Final = "No description for this code."
+LEFTOVER_NOTE: Final = (
+    "A person already ended this transaction. Retrying runs nothing again: it closes this incident and the run goes on."
+)
 INCIDENT_FIELDS: Final = frozenset(
     {
         "/status",
@@ -242,9 +245,15 @@ def _glossary(view: IncidentView, code: str | None) -> JsonObject | None:
     entry = INCIDENT_CODES.get(code) if code is not None else None
     if entry is None:
         return None
-    # A held incident refuses every resolution but terminate, whatever its code allows elsewhere.
-    decisions: list[JsonValue] = ["terminate"] if view.incident_key == HELD_INCIDENT else list(entry.decisions)
-    return {"meaning": entry.meaning, "decisions": decisions, "note": entry.note}
+    # A held incident refuses every resolution but terminate, whatever its code allows elsewhere; one whose transaction
+    # a person already ended takes only what closes it.
+    left = view.transaction is not None and view.transaction.state in {"reconciled", "force_ended"}
+    decisions: list[JsonValue] = list(entry.decisions)
+    if view.incident_key == HELD_INCIDENT:
+        decisions = ["terminate"]
+    elif left:
+        decisions = ["retry_safe", "terminate"]
+    return {"meaning": entry.meaning, "decisions": decisions, "note": LEFTOVER_NOTE if left else entry.note}
 
 
 def incident_context(facts: IncidentFacts | UnavailableResource) -> Explained:

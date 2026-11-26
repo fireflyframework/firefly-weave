@@ -366,6 +366,20 @@ def test_a_held_incident_offers_only_terminate():
     assert incident_context(incident_facts(view)).data["glossary"]["decisions"] == ["terminate"]
 
 
+@pytest.mark.parametrize("ended", ["reconciled", "force_ended"])
+def test_an_incident_of_a_transaction_a_person_ended_offers_only_what_closes_it(ended):
+    record = {"instance_key": "charge", "state": ended, "participants": [], "pending": []}
+    view = incident_view(code="WV-TXN-CONFIRM-STUCK", status="active", resolution=None, transaction=record)
+    glossary = incident_context(incident_facts(view)).data["glossary"]
+    assert glossary["decisions"] == ["retry_safe", "terminate"]
+    assert "already ended" in glossary["note"]
+    # A transaction still in doubt takes every decision of its incident's code.
+    view = incident_view(code="WV-TXN-CONFIRM-STUCK", status="active", resolution=None)
+    entry = INCIDENT_CODES["WV-TXN-CONFIRM-STUCK"]
+    glossary = incident_context(incident_facts(view)).data["glossary"]
+    assert (glossary["decisions"], glossary["note"]) == (list(entry.decisions), entry.note)
+
+
 def test_twenty_one_events_send_twenty_and_say_there_are_more():
     events = tuple(["started"] + ["task_failed"] * 19)
     data = incident_context(incident_facts(events=events, more_events=True)).data

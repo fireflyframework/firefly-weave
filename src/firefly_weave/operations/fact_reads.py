@@ -43,6 +43,7 @@ from firefly_weave.contracts.run_views import (
     StepFactWithOutput,
     StepKind,
 )
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES
 from firefly_weave.definitions.models import CatalogError, ir_unsupported
 from firefly_weave.operations.fact_positions import RunPosition, StepPosition
 from firefly_weave.operations.facts import FactRepository, author_instance
@@ -83,18 +84,67 @@ _INCIDENT_FACTS = (
 )
 # Ordering keys only: filters and sorting never read the incident's resolution or its run.
 _INCIDENT_KEYS = "SELECT i.id,f.opened_at FROM incidents i" + _INCIDENT_FACTS + " WHERE " + _INCIDENT_SCOPE
-# One statement for the selected incidents: their columns, measured together against the page budget before the
-# resolutions are returned, their facts and their run's classification metadata.
+# The steps an in-doubt incident is at: its own, without the phase it is at.
+_INCIDENT_STEP = "regexp_replace(i.node_id,'#(confirm|cancel|undo)$','')"
+# The loop indexes of that step (``[2][0]``), and how many there are.
+_INCIDENT_LOOPS = r"coalesce(substring(i.node_id from '^[^\[#~@]+((?:\[[0-9]+\])+)'),'')"
+_INCIDENT_DEPTH = f"char_length({_INCIDENT_LOOPS})-char_length(replace({_INCIDENT_LOOPS},'[',''))"
+_SAME_RUN = (
+    "{0}.tenant_id=i.tenant_id AND {0}.project_id=i.project_id AND {0}.environment_id=i.environment_id "
+    "AND {0}.run_id=i.run_id"
+)
+# The transaction an in-doubt incident belongs to. Its key is the key of a transaction step of the run with the first
+# loop indexes of the incident's own step, so each candidate is one lookup by key however many transactions the run
+# has. It is the one that timed out or whose steps hold the incident's step; or the only one the incident can be of,
+# when its step is no step of a transaction (a read in its body). Never a guess: two candidates give none.
+_INCIDENT_TRANSACTION = (
+    " LEFT JOIN LATERAL (SELECT c.* FROM (SELECT o.instance_key,o.state,o.business_key,o.participants,"
+    f"o.instance_key=i.node_id OR o.participants @> jsonb_build_array(jsonb_build_object('instance_key',"
+    f"{_INCIDENT_STEP})) AS own,o.incident_key=i.incident_key AS named,"
+    # One with work left, or that a person ended, may have an open incident in doubt; any may have had one.
+    "i.status<>'active' OR o.state IN ('committing','compensating','in_doubt','reconciled','force_ended') AS possible,"
+    "count(*) FILTER (WHERE i.status<>'active' OR o.state IN "
+    "('committing','compensating','in_doubt','reconciled','force_ended')) OVER () AS candidates "
+    "FROM run_transactions o WHERE i.code=ANY(cast(:in_doubt AS text[])) AND left(i.node_id,1)<>'@' AND "
+    + _SAME_RUN.format("o")
+    + " AND o.instance_key=ANY(ARRAY(SELECT k.node||substring("
+    + _INCIDENT_LOOPS
+    + r" from '^(?:\[[0-9]+\])'||'{'||loops.depth||'}') FROM run_facts n "
+    "CROSS JOIN LATERAL jsonb_each_text(CASE WHEN jsonb_typeof(n.node_kinds)='object' "
+    "THEN n.node_kinds ELSE '{}'::jsonb END) AS k(node,kind) CROSS JOIN LATERAL generate_series(0,"
+    + _INCIDENT_DEPTH
+    + ") AS loops(depth) WHERE k.kind='transaction' AND "
+    + _SAME_RUN.format("n")
+    + "))"
+    + ") c WHERE c.own OR c.named OR (c.possible AND c.candidates=1) "
+    "ORDER BY c.own DESC,c.named DESC LIMIT 1) t ON true"
+)
+# What an incident's transaction adds to it: the steps, whose keys are also among the pending and the stuck ones.
+TRANSACTION_BYTES = (
+    "octet_length({0}.participants::text)"
+    "+2*octet_length(jsonb_path_query_array({0}.participants,'$[*].instance_key')::text)"
+)
+# One statement for the selected incidents: their columns, measured in page order against the page budget before the
+# resolutions are returned, their facts and their run's classification metadata. The page ends before the incident that
+# would take it past the budget; its first one is returned whatever its size.
 _INCIDENT_DETAILS = (
-    # An in-doubt incident brings the transaction it holds, measured with it.
-    "WITH page AS (SELECT i.*,t.instance_key AS txn_key,t.state AS txn_state,t.business_key AS txn_business_key,"
-    "t.participants AS txn_participants,sum(octet_length(to_jsonb(i)::text)"
-    "+coalesce(octet_length(t.participants::text),0)) OVER () AS page_bytes FROM incidents i "
-    "LEFT JOIN run_transactions t ON t.tenant_id=i.tenant_id AND t.project_id=i.project_id "
-    "AND t.environment_id=i.environment_id AND t.run_id=i.run_id AND t.incident_key=i.incident_key "
-    "WHERE " + _INCIDENT_SCOPE + " AND i.id=ANY(:ids)) "
+    # An in-doubt incident brings the transaction it belongs to, measured with it.
+    "WITH measured AS (SELECT i.*,t.instance_key AS txn_key,t.state AS txn_state,t.business_key AS txn_business_key,"
+    "t.participants AS txn_participants,array_position(cast(:ids AS uuid[]),i.id) AS page_position,"
+    "sum(octet_length(to_jsonb(i)::text)+coalesce("
+    + TRANSACTION_BYTES.format("t")
+    + ",0)) OVER (ORDER BY array_position(cast(:ids AS uuid[]),i.id)) AS page_bytes FROM incidents i"
+    + _INCIDENT_TRANSACTION
+    + " WHERE "
+    + _INCIDENT_SCOPE
+    + " AND i.id=ANY(:ids)),page AS (SELECT * FROM measured WHERE page_bytes<=:budget OR page_position=1) "
     "SELECT i.id,i.run_id,i.incident_key,i.node_id,i.generation,i.origin_code,i.code,i.status,i.revision,"
     "i.txn_key,i.txn_state,i.txn_business_key,i.txn_participants,"
+    # Its steps with an open incident after the point of no return: a person must say what became of each.
+    "CASE WHEN i.txn_key IS NOT NULL THEN ARRAY(SELECT s.node_id FROM incidents s WHERE "
+    + _SAME_RUN.format("s")
+    + " AND s.status='active' AND s.code='WV-TXN-AFTER-PIVOT-STUCK' AND i.txn_participants @> "
+    "jsonb_build_array(jsonb_build_object('instance_key',s.node_id))) END AS txn_stuck,"
     "i.actor_id,i.resolved_at,CASE WHEN i.page_bytes<=:budget THEN i.resolution END AS resolution,"
     "i.page_bytes>:budget AS oversized,f.incident_id IS NOT NULL AS projected,f.node_id AS static_node_id,"
     "f.instance_key,f.opened_at,f.updated_at,f.opened_at_estimated,f.workflow_name,f.workflow_version,f.test,"
@@ -273,8 +323,7 @@ def _step_identity(source: str | None, static: str | None, instance: str | None)
 
 
 def transaction_facts(row: Mapping[str, Any]) -> dict[str, Any]:
-    """``priority`` and ``transaction`` of an in-doubt incident, from the transaction record it names; nothing else."""
-    from firefly_weave.contracts.transactions import IN_DOUBT_CODES
+    """``priority`` and ``transaction`` of an in-doubt incident, from the record of the transaction it belongs to."""
     from firefly_weave.runtime.settlement import pending
 
     if row["code"] not in IN_DOUBT_CODES:
@@ -282,12 +331,15 @@ def transaction_facts(row: Mapping[str, Any]) -> dict[str, Any]:
     facts: dict[str, Any] = {"priority": "high"}
     if row.get("txn_key") is not None:
         participants = row["txn_participants"] or []
+        open_at = set(row.get("txn_stuck") or ())
+        stuck = [item["instance_key"] for item in participants if item["instance_key"] in open_at]
         facts["transaction"] = {
             "instance_key": row["txn_key"],
             "state": row["txn_state"],
             "participants": participants,
             "pending": pending(row["txn_state"], participants),
             **({"business_key": row["txn_business_key"]} if row.get("txn_business_key") is not None else {}),
+            **({"stuck_steps": stuck} if stuck else {}),
         }
     return facts
 
@@ -528,10 +580,11 @@ class FactReadRepository(FactRepository):
         )
 
     async def incident_details(self, ids: list[UUID]) -> list[dict[str, Any]]:
-        """The selected incidents with their facts; a page above the logical byte limit is refused unread."""
+        """The selected incidents with their facts, in order, as many as fit the logical byte limit; a first one above
+        it is refused unread."""
         if not ids:
             return []
-        rows = await self.rows(_INCIDENT_DETAILS, ids=ids, budget=PAGE_BYTES)
+        rows = await self.rows(_INCIDENT_DETAILS, ids=ids, budget=PAGE_BYTES, in_doubt=sorted(IN_DOUBT_CODES))
         if any(row["oversized"] for row in rows):
             raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
         return rows

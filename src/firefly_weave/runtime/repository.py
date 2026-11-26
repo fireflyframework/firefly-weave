@@ -18,6 +18,7 @@
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -26,7 +27,7 @@ from sqlalchemy import text
 
 from firefly_weave.contracts.catalog import Activation
 from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
-from firefly_weave.contracts.operations import TaskTiming
+from firefly_weave.contracts.operations import RecordedResolution, TaskTiming
 from firefly_weave.contracts.runtime import RunView, StartRunRequest, UnavailableRunAcknowledgment
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.facts import FactRepository, RunStartFacts, author_instance, task_fact_update
@@ -109,6 +110,15 @@ def candidates_query() -> str:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class IncidentChanges:
+    """The incident rows an event opened (a new one, one that opens again, or one that says something else now), by
+    their key, and the steps or phases and codes of those it closed."""
+
+    opened: frozenset[str] = frozenset()
+    closed: tuple[tuple[str | None, str], ...] = ()
+
+
 class RuntimeRepository:
     def __init__(self, tx: Transaction, outbox: OutboxService | None = None) -> None:
         self.tx = tx
@@ -178,12 +188,16 @@ class RuntimeRepository:
         self.tx.session.info["weave_runtime_candidate"] = identifier
         return dict(row)
 
-    async def require_work(self, identifier: UUID, state: dict[str, Any]) -> None:
+    async def capacity_blocked(self, identifier: UUID) -> bool:
+        """Whether a run was refused for its size: recovery then applies nothing but what ends it."""
         blocked = await self.tx.session.scalar(
             text(f"SELECT active FROM runtime_capacity_blocks WHERE {SCOPE} AND run_id=:id"),
             {**self.params, "id": identifier},
         )
-        if blocked:
+        return bool(blocked)
+
+    async def require_work(self, identifier: UUID, state: dict[str, Any]) -> None:
+        if await self.capacity_blocked(identifier):
             raise CatalogError(429, "WV-RUNTIME-LIMIT", "Run requires terminal control after a capacity rejection")
         from functools import partial
 
@@ -241,6 +255,7 @@ class RuntimeRepository:
         *,
         safe_response: UnavailableRunAcknowledgment | None = None,
         task_timing: TaskTiming | None = None,
+        leftover: bool = False,
     ) -> None:
         if self.outbox is None:
             raise RuntimeError("Native outbox append port is required for authoritative persistence")
@@ -283,7 +298,7 @@ class RuntimeRepository:
             state=result.state.model_dump_json(),
             run=view.id,
         )
-        await self.project_incidents(view, at=event.timestamp)
+        incidents = await self.project_incidents(view, at=event.timestamp)
         for change in result.steps:
             await self.execute(
                 "INSERT INTO step_instances "
@@ -376,7 +391,7 @@ class RuntimeRepository:
                         await expire_task(self, view.id, command.node_id)
                     awaited = command.node_id in result.state.active
                     await settle_work(self, view.id, command.node_id, event.timestamp, awaited=awaited)
-            await project_transactions(self, view, result, event)
+            await project_transactions(self, view, result, event, incidents)
             await self.record_evidence(view, event, result, task_timing)
         if event.type == "task_completed":
             await self.execute(
@@ -457,7 +472,7 @@ class RuntimeRepository:
                 self, view.id, result.state.status, result.state.output, result.state.incident, event.timestamp
             )
 
-        await FactRepository(self.tx).project_run(view, event, result)
+        await FactRepository(self.tx).project_run(view, event, result, leftover=leftover)
         await self.outbox.append(
             self.tx,
             IntegrationEvent(
@@ -673,29 +688,42 @@ class RuntimeRepository:
         )
         return [row["id"] for row in rows]
 
-    async def project_incidents(self, view: RunView | TerminalControl, *, at: datetime | None = None) -> None:
-        """Projection only: never changes or repairs authoritative accepted state."""
+    async def project_incidents(
+        self, view: RunView | TerminalControl, *, at: datetime | None = None
+    ) -> IncidentChanges:
+        """Projection only: never changes or repairs authoritative accepted state. The row of an incident the state
+        holds is active: one may open again under the key of an incident that ended, and then its row does too."""
         at = at if at is not None else await self.now()
         active = {key: value.model_dump() for key, value in view.state.incidents.items()}
         if view.state.status == "suspended" and not active and view.state.incident:
             active["@legacy"] = {"node_id": None, "generation": None, "code": view.state.incident}
+        opened: set[str] = set()
         for key, value in active.items():
             identity = author_instance(value["node_id"]) if value["node_id"] is not None else None
-            await self.execute(
-                "WITH changed AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,"
+            changed = await self.rows(
+                f"WITH ended AS (SELECT id FROM incidents WHERE {SCOPE} AND run_id=:run AND incident_key=:key "
+                "AND status<>'active'), "
+                "changed AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,"
                 "node_id,generation,origin_code,code,status,revision) VALUES("
                 "md5(cast(cast(:run AS uuid) AS text) || ':' || :key)::uuid,:tenant,:project,:environment,:run,:key,"
                 ":node,:generation,coalesce(:origin,:code),:code,'active',1) "
                 "ON CONFLICT(run_id,incident_key) DO UPDATE "
+                # A row that opens again forgets how it ended: the decision stays in its receipt, event and audit row.
+                "SET status='active',actor_id=NULL,resolved_at=NULL,resolution=NULL,code=excluded.code,"
                 # A transaction in doubt keeps the failure that put it there.
-                "SET code=excluded.code,origin_code=CASE WHEN :origin IS NULL THEN incidents.origin_code "
+                "origin_code=CASE WHEN :origin IS NULL AND incidents.status='active' THEN incidents.origin_code "
                 "ELSE excluded.origin_code END,revision=incidents.revision+1 "
-                "WHERE incidents.status='active' AND incidents.code<>excluded.code RETURNING id) "
-                "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,"
-                "opened_at,updated_at,workflow_name,workflow_version,test) SELECT :tenant,:project,:environment,"
-                "c.id,:fact_node,:instance,:at,:at,f.workflow_name,f.workflow_version,f.test FROM changed c "
+                "WHERE incidents.status<>'active' OR incidents.code<>excluded.code RETURNING id), "
+                "facts AS (INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,"
+                "instance_key,opened_at,updated_at,workflow_name,workflow_version,test) "
+                "SELECT :tenant,:project,:environment,c.id,:fact_node,:instance,:at,:at,"
+                "f.workflow_name,f.workflow_version,f.test FROM changed c "
                 f"JOIN run_facts f ON f.run_id=:run AND f.{SCOPE.replace(' AND ', ' AND f.')} "
-                "ON CONFLICT(incident_id) DO UPDATE SET updated_at=excluded.updated_at",
+                "ON CONFLICT(incident_id) DO UPDATE SET updated_at=excluded.updated_at,"
+                # Nothing was open in between, so the age of a row that opens again starts again.
+                "opened_at=CASE WHEN EXISTS(SELECT 1 FROM ended) THEN excluded.opened_at "
+                "ELSE incident_facts.opened_at END,opened_at_estimated=incident_facts.opened_at_estimated "
+                "AND NOT EXISTS(SELECT 1 FROM ended)) SELECT id FROM changed",
                 fact_node=identity.node_id if identity else None,
                 instance=identity.instance_key if identity else "",
                 at=at,
@@ -706,14 +734,49 @@ class RuntimeRepository:
                 code=value["code"],
                 origin=value.get("origin_code"),
             )
-        await self.execute(
+            if changed:
+                opened.add(key)
+        closed = await self.rows(
             f"WITH closed AS (UPDATE incidents SET status='closed',revision=revision+1 WHERE {SCOPE} AND run_id=:run "
-            "AND status='active' AND NOT (incident_key=ANY(cast(:keys AS text[]))) RETURNING id) "
-            f"UPDATE incident_facts SET updated_at=:at WHERE {SCOPE} AND incident_id IN (SELECT id FROM closed)",
+            "AND status='active' AND NOT (incident_key=ANY(cast(:keys AS text[]))) RETURNING id,node_id,code), "
+            f"facts AS (UPDATE incident_facts SET updated_at=:at WHERE {SCOPE} "
+            "AND incident_id IN (SELECT id FROM closed)) SELECT node_id,code FROM closed",
             at=at,
             run=view.id,
             keys=list(active),
         )
+        return IncidentChanges(frozenset(opened), tuple((row["node_id"], row["code"]) for row in closed))
+
+    async def resolve_incidents(
+        self, run_id: UUID, keys: Sequence[str], actor_id: UUID, at: datetime, resolution: RecordedResolution
+    ) -> list[str]:
+        """Record a person's decision on these incidents of the run, once ``persist`` closed them; returns their IDs,
+        in order."""
+        if not keys:
+            return []
+        rows = await self.rows(
+            "WITH changed AS (UPDATE incidents SET status='resolved',actor_id=:actor,resolved_at=:at,"
+            f"resolution=cast(:resolution AS jsonb) WHERE {SCOPE} AND run_id=:run "
+            "AND incident_key=ANY(cast(:keys AS text[])) RETURNING id), facts AS (UPDATE incident_facts "
+            f"SET updated_at=:at WHERE {SCOPE} AND incident_id IN (SELECT id FROM changed)) SELECT id FROM changed",
+            run=run_id,
+            keys=list(keys),
+            actor=actor_id,
+            at=at,
+            resolution=resolution.model_dump_json(),
+        )
+        return sorted(str(row["id"]) for row in rows)
+
+    async def receipt_used(self, run_id: UUID, receipt: UUID) -> bool:
+        """Whether a decision or an event of the run has this identity: its history names each of them by one."""
+        rows = await self.rows(
+            "SELECT 1 FROM incidents i JOIN incident_resolution_receipts r ON r.incident_id=i.id "
+            f"WHERE i.{SCOPE.replace(' AND ', ' AND i.')} AND i.run_id=:run AND r.receipt_id=:receipt "
+            f"UNION ALL SELECT 1 FROM run_events WHERE {SCOPE} AND run_id=:run AND id=:receipt LIMIT 1",
+            run=run_id,
+            receipt=receipt,
+        )
+        return bool(rows)
 
     async def observe_policy_block(self, row: dict[str, Any]) -> None:
         """Trusted scanner/claim observation; caller holds this scoped run lock."""

@@ -25,10 +25,12 @@ from sqlalchemy import event, text
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
+from firefly_weave.api.transport import decode_cursor, decode_cursor_v2
 from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.operations import IncidentResolution, IncidentView
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.fact_positions import run_position
 from firefly_weave.operations.incidents import IncidentService
 from firefly_weave.runtime.repository import RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
@@ -714,22 +716,33 @@ async def test_incident_pages_keep_the_logical_byte_ceiling(operations_case, ord
         )
         return sum(row["bytes"] for row in measured)
 
-    async def listed(limit):
+    async def listed(limit, cursor=None):
         query = IncidentQuery(order=order, limit=limit)
+        collection = query.cursor_collection()
+        if cursor is not None and order == "id":
+            position = decode_cursor(cursor, case.scope, collection)
+        else:
+            position = run_position(decode_cursor_v2(cursor, case.scope, collection))
         return await incidents(case).list_all(
-            case.actor, case.scope, query=query, position=None, context=AuditContext()
+            case.actor, case.scope, query=query, position=position, context=AuditContext()
         )
 
     baseline = await pad(0)
     assert await pad(PAGE_BYTES - baseline) == PAGE_BYTES
     full = await listed(2)
-    assert [item["id"] for item in full["items"]] == page
+    assert [item["id"] for item in full["items"]] == page and full["next_cursor"] is None
     assert len(full["items"][-1]["resolution"]["output"]) == PAGE_BYTES - baseline
+    # One byte more, and the page ends before it; the next page has it.
     assert await pad(PAGE_BYTES - baseline + 1) == PAGE_BYTES + 1
+    first = await listed(2)
+    assert [item["id"] for item in first["items"]] == page[:1]
+    rest = await listed(2, first["next_cursor"])
+    assert [item["id"] for item in rest["items"]] == page[1:] and rest["next_cursor"] is None
+    # An incident that fills more than a page of its own is refused.
+    assert await pad(PAGE_BYTES) > PAGE_BYTES
     with pytest.raises(CatalogError) as rejected:
-        await listed(2)
+        await listed(2, first["next_cursor"])
     assert (rejected.value.status, rejected.value.code) == (429, "WV-PAGE-LIMIT")
-    assert [item["id"] for item in (await listed(1))["items"]] == page[:1]
 
 
 async def test_keyword_arguments_keep_id_order_and_raw_cursors(operations_case):

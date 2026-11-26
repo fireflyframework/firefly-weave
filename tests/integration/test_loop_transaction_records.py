@@ -128,7 +128,10 @@ async def test_a_transaction_in_doubt_in_a_loop_records_how_a_person_said_it_end
     assert await events(platform, run.id) == [("move[0]", "transaction.in_doubt")]
     record = {
         "as": "completed",
-        "participants": [{"instance_key": "add[0]", "outcome": "done"}],
+        "participants": [
+            {"instance_key": "hold[0]", "outcome": "confirmed"},
+            {"instance_key": "add[0]", "outcome": "done"},
+        ],
         "blockOutput": "moved",
     }
     await resolve(platform, incident, "accept_reconciled_result", reconciler, output=record, evidence_reference="T-1")
