@@ -186,6 +186,9 @@ const SAFE_UNDO: ReadonlySet<string> = new Set([
 ]);
 const NOT_SAFE =
   "Weave retries undo steps until they succeed, so this action must be safe to retry.";
+/** Reading is safe to retry, but undoes nothing: the platform refuses it too. */
+const READS_ONLY =
+  "This action only reads data, so it can't confirm, release or reverse anything.";
 /** The platform's finding on a called workflow without a time limit (TXN_CALL_TIMEOUT). */
 const NO_LIMIT = "Called workflows inside a transaction need a time limit.";
 
@@ -202,6 +205,7 @@ export interface UndoCandidate {
 export function undoPickerReason(row: UndoCandidate): string | null {
   if (row.kind === "callWorkflow")
     return row.timeoutSeconds === undefined ? NO_LIMIT : null;
+  if (row.sideEffect === "read_only") return READS_ONLY;
   return row.sideEffect && !SAFE_UNDO.has(row.sideEffect) ? NOT_SAFE : null;
 }
 

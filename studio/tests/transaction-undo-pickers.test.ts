@@ -102,6 +102,8 @@ const CATALOG = {
 };
 const RETRY =
   "Weave retries undo steps until they succeed, so this action must be safe to retry.";
+const READS =
+  "This action only reads data, so it can't confirm, release or reverse anything.";
 const LIMIT = "Called workflows inside a transaction need a time limit.";
 const MANIFEST = {
   features: ["flow.transaction", "flow.onError", "flow.callWorkflow"],
@@ -251,7 +253,8 @@ describe("what may undo a step", () => {
     expect(action("idempotent")).toBeNull();
     expect(action("idempotency_key")).toBeNull();
     expect(action("non_idempotent")).toBe(RETRY);
-    expect(action("read_only")).toBe(RETRY);
+    // Reading is safe to retry, but it undoes nothing.
+    expect(action("read_only")).toBe(READS);
     // What Studio can't read, the platform decides.
     expect(action(undefined)).toBeNull();
   });
@@ -335,7 +338,7 @@ describe("what may undo a step", () => {
       "target-system.remove-quantity 1.0.0",
     );
     const lookup = rows.find(({ uses }) => uses.startsWith("reports.lookup"));
-    expect([lookup?.aside, lookup?.disabled]).toEqual(["Reads data", RETRY]);
+    expect([lookup?.aside, lookup?.disabled]).toEqual(["Reads data", READS]);
   });
 
   it("reads the project's catalog once, for every picker", async () => {
