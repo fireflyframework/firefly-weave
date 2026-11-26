@@ -385,6 +385,11 @@ SPDX-License-Identifier: Apache-2.0
   model now keeps that connection as the slot's binding on this computer. A
   local connection runs at once; any other asks first and names the cost
   ("This calls qwen3:4b on OpenAI (openai-prod) and may incur cost.").
+- A step test of an AI task checks the step's inputs like a compile: it starts
+  only when what its prompt and context read in the saved draft was checked
+  (`WV-STEPTEST-DRAFT` otherwise), and when its model and connection pass the
+  AI policy, as for an activation. Steps the prompt and context don't read
+  needn't be finished.
 - Studio's data scope lists the platform event's fields under `/input`, the
   local host serves the event's schema at `GET /studio/contracts/platform-event`,
   and Execute and saved test data accept a sample platform event as input. A
