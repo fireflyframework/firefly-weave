@@ -650,6 +650,24 @@ def test_a_session_saved_after_a_record_for_one_incident_goes_on_from_the_other(
     assert [key for key in results(view) if key == other.partition(":")[0]] == [other.partition(":")[0]]
 
 
+@pytest.mark.parametrize("skip_undo", [False, True])
+def test_an_incident_left_behind_a_record_doesnt_hold_back_a_cancel(monkeypatch, skip_undo):
+    simulator = two_stuck()
+    named = record(simulator.inspect())["incident"]
+    [other] = set(CONFIRMS) - {named}
+    restored = saved_after(simulator, monkeypatch, named, "accept_reconciled_result", both_confirmed())
+    view = restored.inspect()
+    # The earlier version ended the transaction and left the other stuck confirm open.
+    assert (view.status, record(view)["status"], list(view.variables["incidents"])) == (
+        "suspended",
+        "reconciled",
+        [other],
+    )
+    restored.cancel(skip_undo=skip_undo)
+    view = restored.continue_until_breakpoint()
+    assert (view.status, record(view)["status"]) == ("cancelled", "reconciled")
+
+
 READ_FAILED = {"node:lookup": ScriptedError(code="REJECTED")}
 READ_MOCK = {"action:reports.lookup@1.0.0": {"count": 1}}
 
