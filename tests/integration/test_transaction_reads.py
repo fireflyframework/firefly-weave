@@ -351,12 +351,13 @@ async def test_a_transaction_with_nothing_left_to_do_is_no_candidate(platform):
     moves = transaction(hold(), beside(submit(), LOOKUP))
     other = {**transaction(hold("hold3"), {**submit(), "id": "submit3"}), "id": "aa"}
     run = await platform.start(await platform.publish(workflow("move", [beside(moves, other, identifier="fork")])))
-    for key in ("hold", "hold3"):
+    # The other transaction finishes before the first one's steps are claimed: a lease the test holds across the
+    # other's work and a recovery scan can expire on a loaded machine.
+    for key in ("hold3", "submit3", "hold3#confirm"):
         await platform.complete(await platform.lease(key))
-    deciding, deciding3 = await platform.lease("submit"), platform.leased.pop("submit3")
-    await platform.complete(deciding3)
-    await platform.complete(await platform.lease("hold3#confirm"))
     assert (await platform.record(run.id, "aa"))["state"] == "completed"
+    await platform.complete(platform.leased.pop("hold"))
+    deciding = await platform.lease("submit")
     await platform.fail(platform.leased.pop("lookup"), "REJECTED", outcome="failed")
     await platform.scan()
     await platform.complete(deciding)
