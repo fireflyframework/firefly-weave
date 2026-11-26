@@ -18,10 +18,12 @@ SPDX-License-Identifier: Apache-2.0
 // The run log's rows for transactions: one per transaction, after the step it
 // followed, with its undo steps under it in the order they ran. In a loop, one
 // per item that undid anything. Pure.
+import { failureCodeText } from "../canvas/tile-facts";
 import { stateIcon } from "../canvas/transaction-frame";
 import type { ExecuteResponse, TraceEntry } from "../state/execution";
 import { splitPhase, type Phase } from "../transactions/phase-keys";
 import {
+  containedFailures,
   itemOf,
   type OneTransaction,
   type PhaseRow,
@@ -199,4 +201,26 @@ function entryBefore(
     top.filter((entry) => steps.has(keyOf(entry))).at(-1) ??
     top.at(-1)
   );
+}
+
+/**
+ * The steps a transaction that went on was undone for, each with the code it
+ * failed with, for their rows: the run went past them, so no row says where
+ * it stopped.
+ */
+export function undoneFor(
+  response: Pick<ExecuteResponse, "trace" | "transactions">,
+): ReadonlyMap<string, string> {
+  const contained = containedFailures(response);
+  const codes = new Map<string, string>();
+  for (const entry of response.trace)
+    if (
+      !entry.frame &&
+      entry.status === "failed" &&
+      !entry.handled &&
+      entry.error &&
+      contained.has(entry.instanceKey || entry.nodeId)
+    )
+      codes.set(entry.nodeId, failureCodeText(entry.error.code));
+  return codes;
 }

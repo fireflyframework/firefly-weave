@@ -414,7 +414,8 @@ test.describe("a simulated run's undo steps at 1440x900", () => {
       "The simulated run succeeded with 1 handled error.",
     );
     expect((await logged(page)).slice(2)).toEqual([
-      "submit",
+      // The code it failed with, as where a run stops at it.
+      "submit REQUEST_REFUSED",
       "Transaction move Undone",
       "Undo of add Undone",
       "Release of hold Released",

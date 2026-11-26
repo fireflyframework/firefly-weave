@@ -92,7 +92,11 @@ import type {
 } from "../state/test-data";
 import { withCalleeMock, withScript } from "../state/test-data-ops";
 import { transactionSummary } from "../state/run-summary";
-import { withTransactions, type TransactionLog } from "./run-log-transactions";
+import {
+  undoneFor,
+  withTransactions,
+  type TransactionLog,
+} from "./run-log-transactions";
 
 /** What the run log needs from the editor (the shell has every member). */
 export interface RunLogHost {
@@ -1383,6 +1387,8 @@ export class RunLogPanel {
     const paths = errorPathsAround(host.model.definition.spec.steps ?? []);
     const loops = loopLog(last, around, host.model.definition);
     const stopped = stoppedRow(last, host.model.definition);
+    // Steps a transaction that went on was undone for: their codes.
+    const undone = undoneFor(last);
     const seen = new Map<string, RunLogEntry>();
     for (const entry of last.trace) {
       if (entry.frame || around(entry.nodeId).length) continue;
@@ -1413,6 +1419,9 @@ export class RunLogPanel {
         breakpoint: marks.has(entry.nodeId),
         ...(handled && entry.error
           ? { code: failureCodeText(entry.error.code) }
+          : {}),
+        ...(!own && undone.has(entry.nodeId)
+          ? { code: undone.get(entry.nodeId)! }
           : {}),
         // Where the run stopped: its code, and why its On error didn't go on.
         ...(!own && stopped?.step === entry.nodeId && entry.status === "failed"

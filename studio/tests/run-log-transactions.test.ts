@@ -29,7 +29,10 @@ import {
   stoppedRow,
   type RunLogEntry,
 } from "../src/app/editor/debugger/run-log-panel";
-import { withTransactions } from "../src/app/editor/debugger/run-log-transactions";
+import {
+  undoneFor,
+  withTransactions,
+} from "../src/app/editor/debugger/run-log-transactions";
 import type { ExecuteResponse } from "../src/app/editor/state/execution";
 import {
   simulatedRollback,
@@ -211,6 +214,14 @@ describe.skipIf(!hasPython)("the rows of a transaction", () => {
       "move handled",
       "summarize completed",
     ]);
+  });
+
+  it("gives the step a continuing transaction was undone for the code it failed with", () => {
+    expect(undoneFor(answers.continued)).toEqual(
+      new Map([["submit", "REFUSED"]]),
+    );
+    // A run that stopped there says its code as the step it stopped at.
+    expect(undoneFor(answers.undone)).toEqual(new Map());
   });
 
   it("follows the last step when the transaction itself failed", () => {
