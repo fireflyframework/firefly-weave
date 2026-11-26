@@ -171,6 +171,12 @@ const problem = (error: unknown) =>
       }
     : { status: 0, code: "", message: describeError(error).message };
 const ended = (status: RunStatus) => terminalRunStatuses.includes(status);
+/** Two reads for the same run, as it was chosen. */
+const sameRun = (a: RunTicket, b: RunTicket) =>
+  a.generation === b.generation &&
+  a.id === b.id &&
+  a.scope === b.scope &&
+  a.workflow === b.workflow;
 
 export class RunsTabState {
   readonly items = signal<readonly RunSummaryItem[]>([]);
@@ -189,6 +195,8 @@ export class RunsTabState {
   readonly captions = signal<ReadonlyMap<string, string>>(new Map());
   /** When the chosen run's transactions may be read again after a failed read. */
   private transactionsWait = new TransactionReadBackoff();
+  /** The read of the chosen run's transactions on its way: one at a time. */
+  private transactionsReading: RunTicket | null = null;
   /** The next read of them, for a run Studio doesn't follow, after a failed read. */
   private transactionsTimer: number | null = null;
   /** The items picked on the chosen run's loops (loop step ID to index), and its last read. */
@@ -395,8 +403,12 @@ export class RunsTabState {
    * follows it, else a timer does. A refusal shows no transaction words.
    */
   private async readTransactions(ticket: RunTicket): Promise<void> {
+    // One read at a time: an older answer could land after a newer one.
+    const reading = this.transactionsReading;
+    if (reading && sameRun(reading, ticket)) return;
     if (!this.transactionsWait.ready(this.env.now())) return;
     this.clearTransactionsRetry();
+    this.transactionsReading = ticket;
     let read: RunTransactionsRead;
     try {
       read = await readRunTransactions(this.host.api, ticket.id);
@@ -405,6 +417,8 @@ export class RunsTabState {
       this.transactionsWait.failed(this.env.now());
       if (!this.chosen()?.following) this.retryTransactions(ticket);
       return;
+    } finally {
+      if (this.transactionsReading === ticket) this.transactionsReading = null;
     }
     if (!this.runHolds(ticket)) return;
     this.transactionsWait.succeeded();

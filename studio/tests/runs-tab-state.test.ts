@@ -1277,6 +1277,24 @@ describe("a recorded run's transactions", () => {
     expect(platform.count(ofFailed)).toBe(4);
   });
 
+  it("starts no second read of them while one is on its way", async () => {
+    const { state, platform, env } = await moved(fixtureIds.running);
+    const running = summaryOf(platform.data, fixtureIds.running);
+    platform.views.set(running.id, viewOf(running, { active: ["hold"] }));
+    platform.hold = (path) => TRANSACTIONS.test(path);
+    const chosen = state.choose(running.id);
+    await settle();
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    // The run is read again every 2 s; its transactions aren't.
+    await env.advance(6000);
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    platform.hold = null;
+    platform.release();
+    await chosen;
+    await settle();
+    expect(state.chosen()?.overlay?.canvas.transactions).toBeDefined();
+  });
+
   it("drops transactions that answer for another run, account or environment", async () => {
     const { state, platform, host } = await moved(fixtureIds.failed, STUCK);
     const retry = summaryOf(platform.data, fixtureIds.retry);
