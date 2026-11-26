@@ -191,7 +191,7 @@ SPDX-License-Identifier: Apache-2.0
               </div>
             </div>
           }
-          @if (view.zoom >= 0.55) {
+          @if (pointLabels()) {
             @for (point of dividers(); track point.stepId) {
               <span
                 class="point-label"

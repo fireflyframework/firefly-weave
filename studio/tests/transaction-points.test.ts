@@ -19,8 +19,10 @@ SPDX-License-Identifier: Apache-2.0
 // canvas draws, what each step shows of how it is undone, and where a moved
 // step may not go. The platform's compiler decides; these mirror its rule.
 import { describe, expect, it } from "vitest";
+import { zoomPercent } from "../src/app/designer/viewport";
 import {
   pointOfNoReturnText,
+  showsPointLabel,
   stepsInTransactions,
   undoBadge,
   undoText,
@@ -280,6 +282,17 @@ describe("points of no return", () => {
       description:
         "Once submit succeeds, the transaction finishes. Steps after this line retry until they succeed and are never undone.",
     });
+  });
+
+  it("labels the line from 55% up, as the zoom control reads the zoom", () => {
+    // 0.546 reads "55%" on the zoom control: the label shows.
+    expect(zoomPercent(0.546)).toBe(55);
+    expect(showsPointLabel(0.546)).toBe(true);
+    expect(showsPointLabel(0.545)).toBe(true);
+    // 0.544 reads "54%": the line shows alone.
+    expect(zoomPercent(0.544)).toBe(54);
+    expect(showsPointLabel(0.544)).toBe(false);
+    expect(showsPointLabel(1)).toBe(true);
   });
 });
 

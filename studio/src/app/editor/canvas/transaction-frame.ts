@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // A transaction on the canvas is a frame around its own steps. This module
 // holds what the frame says; the layout places it as it places a loop's
 // frame. Pure, and only loaded with the editor's canvas.
+import { zoomPercent } from "../../designer/viewport";
 import type { Step } from "../../model";
 import { undoChoiceOf } from "../transactions/points";
 import type { FrameState } from "../transactions/rollback";
@@ -133,3 +134,5 @@ export function pointOfNoReturnText(stepId: string): {
     description: `Once ${stepId} succeeds, the transaction finishes. Steps after this line retry until they succeed and are never undone.`,
   };
 }
+/** A point of no return is labeled from 55% up, as the zoom control reads the zoom; below, its line shows alone. */
+export const showsPointLabel = (zoom: number) => zoomPercent(zoom) >= 55;

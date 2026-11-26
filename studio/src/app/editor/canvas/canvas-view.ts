@@ -149,6 +149,7 @@ import { toolbarSpot } from "./toolbar-spot";
 import {
   TRANSACTION_PROMISE,
   pointOfNoReturnText,
+  showsPointLabel,
   stateIcon,
   stateText,
   stepsInTransactions,
@@ -1378,6 +1379,10 @@ export class CanvasView implements OnInit, DoCheck {
   /** The points of no return, drawn in runs too. */
   dividers() {
     return this.dividersMemo(this.layout());
+  }
+  /** The points of no return are labeled from 55% up, as the zoom control reads the zoom. */
+  pointLabels() {
+    return showsPointLabel(this.view.zoom);
   }
   /** Draws the line's label at 11 px or more on screen. */
   pointScale() {
