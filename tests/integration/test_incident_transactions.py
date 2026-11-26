@@ -412,8 +412,15 @@ async def call_child(platform, scope, caller, step, child, *, generation=0):
 
 async def seed_case(platform, scope, parent, children, *, opened=OPENED):
     """The rows the kernel writes for a parent's settle timeout: its transaction with one called step per child run,
-    the step's call, and an in-doubt incident in each child, opened a second apart in the given order."""
+    the step's call, and an in-doubt incident in each child, opened a second apart in the given order. The parent's
+    facts name ``move`` a transaction step, as its workflow would: an incident read finds the transaction by it."""
     keys = {"tenant": scope.tenant_id, "project": scope.project_id, "environment": scope.environment_id}
+    await platform.execute(
+        "UPDATE run_facts SET node_kinds=coalesce(node_kinds,'{}'::jsonb)||jsonb_build_object('move','transaction') "
+        "WHERE tenant_id=:tenant AND project_id=:project AND environment_id=:environment AND run_id=:run",
+        run=parent,
+        **keys,
+    )
     steps = [f"call{index}" for index in range(len(children))]
     participants = [
         {"node_id": step, "instance_key": step, "mode": "compensate", "status": "dispatched", "effect": "none"}
