@@ -742,7 +742,7 @@ can't be undone (also after a decision moved the run to this version's rules),
 and a run that failed in the moment another of its transactions finished.
 
 On an earlier version, if every decision on such an incident answers HTTP 409
-`WV-RUNTIME-RESOLUTION`, pause the run and then use Force end.
+`WV-RUNTIME-RESOLUTION`, pause the run, use Force end, and resume it.
 
 **Before a rollback**, finish or cancel the runs that use transactions: an
 earlier server refuses the state of a run that follows this version's rules.
