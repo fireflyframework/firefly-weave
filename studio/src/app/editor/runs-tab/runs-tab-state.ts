@@ -189,6 +189,8 @@ export class RunsTabState {
   readonly captions = signal<ReadonlyMap<string, string>>(new Map());
   /** When the chosen run's transactions may be read again after a failed read. */
   private transactionsWait = new TransactionReadBackoff();
+  /** The next read of them, for a run Studio doesn't follow, after a failed read. */
+  private transactionsTimer: number | null = null;
   /** The items picked on the chosen run's loops (loop step ID to index), and its last read. */
   private picked: Record<string, number> = {};
   private lastRead: RunRead | null = null;
@@ -241,6 +243,7 @@ export class RunsTabState {
     this.lister.stop();
     this.follower?.stop();
     this.clearRetry();
+    this.clearTransactionsRetry();
   }
   /** Refresh and Try again: the list now, and a run that stopped being followed. */
   async refresh(): Promise<void> {
@@ -302,6 +305,7 @@ export class RunsTabState {
     this.picked = {};
     this.lastRead = null;
     this.transactionsWait = new TransactionReadBackoff();
+    this.clearTransactionsRetry();
     const ticket = this.runTicket(id, ++this.runGeneration);
     const listed = this.items().find((item) => item.id === id);
     const summary = listed && !isUnavailableRun(listed) ? listed : null;
@@ -387,15 +391,19 @@ export class RunsTabState {
   /**
    * The chosen run's transactions, the first page: drawn with the run, and
    * kept for its row's caption. A failed read waits before the next one
-   * (5 s, doubling to a minute); a refusal shows no transaction words.
+   * (5 s, doubling to a minute): the run's next read asks again when Studio
+   * follows it, else a timer does. A refusal shows no transaction words.
    */
   private async readTransactions(ticket: RunTicket): Promise<void> {
     if (!this.transactionsWait.ready(this.env.now())) return;
+    this.clearTransactionsRetry();
     let read: RunTransactionsRead;
     try {
       read = await readRunTransactions(this.host.api, ticket.id);
     } catch {
-      if (this.runHolds(ticket)) this.transactionsWait.failed(this.env.now());
+      if (!this.runHolds(ticket)) return;
+      this.transactionsWait.failed(this.env.now());
+      if (!this.chosen()?.following) this.retryTransactions(ticket);
       return;
     }
     if (!this.runHolds(ticket)) return;
@@ -418,11 +426,25 @@ export class RunsTabState {
           : chosen.overlay,
     });
   }
+  /** Reads a run's transactions again once the wait after a failed read is over. */
+  private retryTransactions(ticket: RunTicket) {
+    this.clearTransactionsRetry();
+    this.transactionsTimer = this.env.setTimeout(() => {
+      this.transactionsTimer = null;
+      if (this.runHolds(ticket)) void this.readTransactions(ticket);
+    }, this.transactionsWait.left(this.env.now()));
+  }
+  private clearTransactionsRetry() {
+    if (this.transactionsTimer !== null)
+      this.env.clearTimeout(this.transactionsTimer);
+    this.transactionsTimer = null;
+  }
   /** Back to the list: forgets the run, its data and a Debug request for it. */
   leave(): void {
     dropDebug();
     this.runGeneration++;
     this.stopFollowing();
+    this.clearTransactionsRetry();
     this.chosen.set(null);
   }
   /** One step's recorded outputs, read when step details shows it. */

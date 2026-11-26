@@ -191,6 +191,12 @@ export class TransactionReadBackoff {
   ready(now: number): boolean {
     return this.failedAt === null || now - this.failedAt >= this.wait;
   }
+  /** How long until the next read may start: 0 when it may now. */
+  left(now: number): number {
+    return this.failedAt === null
+      ? 0
+      : Math.max(0, this.failedAt + this.wait - now);
+  }
   failed(now: number): void {
     this.wait = this.wait
       ? Math.min(this.wait * 2, LONGEST_WAIT_MS)

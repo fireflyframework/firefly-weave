@@ -1226,6 +1226,57 @@ describe("a recorded run's transactions", () => {
     expect(platform.count(TRANSACTIONS)).toBe(4);
   });
 
+  it("reads a finished run's transactions again after a failed read: 5 s, then 10 s", async () => {
+    const { state, platform, env } = await moved(fixtureIds.failed);
+    platform.fail = (path) =>
+      TRANSACTIONS.test(path)
+        ? { status: 503, body: { code: "WV-UNAVAILABLE", message: "Busy." } }
+        : null;
+    await state.choose(fixtureIds.failed);
+    await settle();
+    expect(state.chosen()?.following).toBe(false);
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    await env.advance(4999);
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    await env.advance(1);
+    expect(platform.count(TRANSACTIONS)).toBe(2);
+    await env.advance(9999);
+    expect(platform.count(TRANSACTIONS)).toBe(2);
+    platform.fail = null;
+    await env.advance(1);
+    expect(platform.count(TRANSACTIONS)).toBe(3);
+    expect(state.chosen()?.overlay?.canvas.transactions).toBeDefined();
+    // Read, they aren't asked for again.
+    await env.advance(120_000);
+    expect(platform.count(TRANSACTIONS)).toBe(3);
+  });
+
+  it("asks no more for them once the run is left or another is chosen", async () => {
+    const { state, platform, env } = await moved(fixtureIds.failed);
+    const ofFailed = new RegExp(`/runs/${fixtureIds.failed}/transactions`);
+    platform.fail = (path) =>
+      ofFailed.test(path)
+        ? { status: 503, body: { code: "WV-UNAVAILABLE", message: "Busy." } }
+        : null;
+    await state.choose(fixtureIds.failed);
+    await settle();
+    await env.advance(5000);
+    expect(platform.count(ofFailed)).toBe(2);
+    state.leave();
+    await env.advance(120_000);
+    expect(platform.count(ofFailed)).toBe(2);
+    // Chosen again, it starts over at 5 s.
+    await state.choose(fixtureIds.failed);
+    await settle();
+    expect(platform.count(ofFailed)).toBe(3);
+    await env.advance(5000);
+    expect(platform.count(ofFailed)).toBe(4);
+    await state.choose(fixtureIds.succeeded);
+    await settle();
+    await env.advance(120_000);
+    expect(platform.count(ofFailed)).toBe(4);
+  });
+
   it("drops transactions that answer for another run, account or environment", async () => {
     const { state, platform, host } = await moved(fixtureIds.failed, STUCK);
     const retry = summaryOf(platform.data, fixtureIds.retry);
