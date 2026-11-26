@@ -197,7 +197,9 @@ export class RunsTabState {
   private transactionsWait = new TransactionReadBackoff();
   /** The read of the chosen run's transactions on its way: one at a time. */
   private transactionsReading: RunTicket | null = null;
-  /** The next read of them, for a run Studio doesn't follow, after a failed read. */
+  /** They were asked for while that read was on its way: read once more when it lands. */
+  private transactionsAgain = false;
+  /** The next read of them, when the wait after a failed read is over. */
   private transactionsTimer: number | null = null;
   /** The run's record as it was when they were last read, as JSON. */
   private transactionsOf: string | null = null;
@@ -401,17 +403,25 @@ export class RunsTabState {
   }
   /**
    * The chosen run's transactions, the first page: drawn with the run, and
-   * kept for its row's caption. A failed read waits before the next one
-   * (5 s, doubling to a minute): the run's next read asks again when Studio
-   * follows it, else a timer does. A refusal shows no transaction words.
+   * kept for its row's caption. A refusal shows no transaction words. Every
+   * ask reads them now or leaves one read to come, so a run that ends
+   * meanwhile still shows how its transactions ended:
+   * - asked while a read of them is on its way, they are read once more when
+   *   it lands (one at a time: an older answer could land after a newer one);
+   * - when a read fails, or they are asked for during the wait after one
+   *   (5 s, doubling to a minute), a timer reads them when the wait is over.
    */
   private async readTransactions(ticket: RunTicket): Promise<void> {
-    // One read at a time: an older answer could land after a newer one.
     const reading = this.transactionsReading;
-    if (reading && sameRun(reading, ticket)) return;
-    if (!this.transactionsWait.ready(this.env.now())) return;
+    if (reading && sameRun(reading, ticket)) {
+      this.transactionsAgain = true;
+      return;
+    }
+    if (!this.transactionsWait.ready(this.env.now()))
+      return this.retryTransactions(ticket);
     this.clearTransactionsRetry();
     this.transactionsReading = ticket;
+    this.transactionsAgain = false;
     const record = JSON.stringify(this.chosen()?.record ?? null);
     let read: RunTransactionsRead;
     try {
@@ -419,8 +429,7 @@ export class RunsTabState {
     } catch {
       if (!this.runHolds(ticket)) return;
       this.transactionsWait.failed(this.env.now());
-      if (!this.chosen()?.following) this.retryTransactions(ticket);
-      return;
+      return this.retryTransactions(ticket);
     } finally {
       if (this.transactionsReading === ticket) this.transactionsReading = null;
     }
@@ -444,6 +453,7 @@ export class RunsTabState {
           ? this.overlay(this.lastRead, chosen.summary, chosen.definition, read)
           : chosen.overlay,
     });
+    if (this.transactionsAgain) await this.readTransactions(ticket);
   }
   /** Reads a run's transactions again once the wait after a failed read is over. */
   private retryTransactions(ticket: RunTicket) {

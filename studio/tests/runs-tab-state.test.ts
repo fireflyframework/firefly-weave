@@ -1211,18 +1211,18 @@ describe("a recorded run's transactions", () => {
     await settle();
     expect(platform.count(TRANSACTIONS)).toBe(1);
     // Followed every 2 s; the transactions wait 5 s after the failure.
-    await env.advance(4000);
+    await env.advance(4999);
     expect(platform.count(TRANSACTIONS)).toBe(1);
-    await env.advance(2000);
+    await env.advance(1);
     expect(platform.count(TRANSACTIONS)).toBe(2);
-    await env.advance(8000);
+    await env.advance(9999);
     expect(platform.count(TRANSACTIONS)).toBe(2);
     platform.fail = null;
-    await env.advance(2000);
+    await env.advance(1);
     expect(platform.count(TRANSACTIONS)).toBe(3);
     expect(state.chosen()?.overlay?.canvas.transactions).toBeDefined();
     // Read again with the run while it is followed.
-    await env.advance(2000);
+    await env.advance(1000);
     expect(platform.count(TRANSACTIONS)).toBe(4);
   });
 
@@ -1371,5 +1371,59 @@ describe("a recorded run's transactions", () => {
     await state.choose(fixtureIds.succeeded);
     await settle();
     expect(caption()).toBe("Failed at submit · move in doubt");
+  });
+
+  it("reads them once the wait is over when a followed run ends inside it", async () => {
+    const { state, platform, env } = await moved(fixtureIds.running);
+    const running = summaryOf(platform.data, fixtureIds.running);
+    platform.views.set(running.id, viewOf(running, { active: ["hold"] }));
+    platform.fail = (path) =>
+      TRANSACTIONS.test(path)
+        ? { status: 503, body: { code: "WV-UNAVAILABLE", message: "Busy." } }
+        : null;
+    await state.choose(running.id);
+    await settle();
+    expect(state.chosen()?.following).toBe(true);
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    platform.fail = null;
+    // The run ends at the next follow read, 2 s later: inside the 5 s wait.
+    platform.views.set(running.id, viewOf(running, { status: "failed" }));
+    await env.advance(2000);
+    expect(state.chosen()?.following).toBe(false);
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    await env.advance(3000);
+    expect(platform.count(TRANSACTIONS)).toBe(2);
+    expect(state.chosen()?.overlay?.canvas.transactions).toBeDefined();
+    // Read, they aren't asked for again.
+    await env.advance(120_000);
+    expect(platform.count(TRANSACTIONS)).toBe(2);
+  });
+
+  it("reads them again when the run ends while a read of them is on its way", async () => {
+    const OPEN = page("compensating", ["done", "undoing", "failed"]);
+    const { state, platform, env } = await moved(fixtureIds.running, OPEN);
+    const running = summaryOf(platform.data, fixtureIds.running);
+    platform.views.set(running.id, viewOf(running, { active: ["hold"] }));
+    platform.hold = (path) => TRANSACTIONS.test(path);
+    const chosen = state.choose(running.id);
+    await settle();
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    // The run ends while that read is on its way.
+    platform.views.set(running.id, viewOf(running, { status: "failed" }));
+    await env.advance(2000);
+    expect(state.chosen()?.following).toBe(false);
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    // The platform has the transaction's end by the time it answers.
+    platform.hold = null;
+    platform.release();
+    platform.transactions.set(running.id, UNDONE);
+    await chosen;
+    await settle();
+    expect(platform.count(TRANSACTIONS)).toBe(2);
+    expect(
+      state.chosen()?.overlay?.canvas.transactions?.byFrame.get("move")?.state,
+    ).toBe("compensated");
+    await env.advance(120_000);
+    expect(platform.count(TRANSACTIONS)).toBe(2);
   });
 });
