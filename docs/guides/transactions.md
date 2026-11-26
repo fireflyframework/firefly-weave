@@ -391,7 +391,7 @@ Open an incident to read its record and choose among the decisions that fit it:
 | **Wait again** | Steps were still running when the time to undo ran out | A reason |
 | **Mark as reconciled** | Any of those | How it ended, the steps you checked, the transaction's result when it finished, a reason, and an evidence reference |
 | **It happened** or **It didn't happen** | Nobody knows whether the step that can't be undone went through | The step's result (only when it happened), a reason, and an evidence reference |
-| **Close incident** | A person already decided the transaction, so the incident has nothing left to decide; it replaces the others but Force end, and runs nothing again | A reason |
+| **Continue the run** | A person already ended the transaction, so the incident has nothing left to decide; it replaces the others but Force end, and runs nothing again | A reason |
 | **Force end** | Always; it is the only one for a run too large to undo | A reason, and the run's short ID typed |
 
 **Mark as reconciled** lists every step whose end Weave doesn't know for the

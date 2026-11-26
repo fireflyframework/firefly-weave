@@ -230,7 +230,7 @@ describe("a recorded decision", () => {
         decisionText(
           resolved(incident, { kind: "retry_safe", leftover: true }),
         ),
-      ).toBe("Close incident");
+      ).toBe("Continue the run");
     // A stop or Force end that closed one still ended the run.
     expect(
       decisionText(resolved(called, { kind: "terminate", leftover: true })),

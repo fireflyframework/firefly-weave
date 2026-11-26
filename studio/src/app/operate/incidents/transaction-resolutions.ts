@@ -114,8 +114,8 @@ const ENDED_BY_A_PERSON = new Set(["reconciled", "force_ended"]);
  */
 const CLOSE_LEFTOVER = {
   kind: "retry_safe",
-  label: "Close incident",
-  help: "A person already decided this transaction, so this incident has nothing left to decide. Closes it and lets the run go on; nothing runs again.",
+  label: "Continue the run",
+  help: "A person already ended this transaction. Closes this incident and lets the run go on.",
 } as const;
 /** Whether an incident in doubt was left behind by a decision on its transaction. */
 const leftOver = (incident: Pick<IncidentView, "transaction">) =>

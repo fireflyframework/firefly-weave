@@ -111,13 +111,13 @@ describe("the decisions an incident in doubt offers", () => {
           offers.map(({ action, kind, label }) => [action, kind, label]),
           `${incident.code} ${state}`,
         ).toEqual([
-          ["retry", "retry_safe", "Close incident"],
+          ["retry", "retry_safe", "Continue the run"],
           ["force_end", "terminate", "Force end"],
         ]);
         // Closing it runs nothing again, so it needs no reconciler.
         expect(offers[0].needs).toEqual(["incident.resolve"]);
         expect(offers[0].help).toBe(
-          "A person already decided this transaction, so this incident has nothing left to decide. Closes it and lets the run go on; nothing runs again.",
+          "A person already ended this transaction. Closes this incident and lets the run go on.",
         );
       }
   });
