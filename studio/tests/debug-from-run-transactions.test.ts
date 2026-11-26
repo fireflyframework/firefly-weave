@@ -320,6 +320,20 @@ describe("Debug in editor on a run whose transaction was undone", () => {
     );
   });
 
+  it("says the run didn't record an undone or released step's undo when no fact holds it", () => {
+    const { leftOut } = built(source("failed", [UNDONE]));
+    const missing = "the platform didn't record it";
+    expect(leftOut).toEqual([
+      { key: "hold#cancel", reason: "not-recorded", detail: missing },
+      { key: "add#undo", reason: "not-recorded", detail: missing },
+    ]);
+    expect(leftOutText(leftOut, [])).toBe(
+      "Left out 2 values: hold#cancel (the platform didn't record it), add#undo (the platform didn't record it).",
+    );
+    // A step that failed has no undo to record.
+    expect(leftOut.map(({ key }) => key)).not.toContain("submit#undo");
+  });
+
   it("leaves out an undo step's result the platform withholds, and pins one it recorded", () => {
     const withheld = fact("add#undo", "succeeded", {
       omissions: [{ path: "/output", reason: "classification_unavailable" }],
@@ -330,6 +344,7 @@ describe("Debug in editor on a run whose transaction was undone", () => {
     expect(data.pins?.["add#undo"]).toBeUndefined();
     expect(leftOut.map(({ key, reason }) => [key, reason])).toEqual([
       ["add#undo", "omitted"],
+      ["hold#cancel", "not-recorded"],
     ]);
     const recorded = fact("hold#cancel", "succeeded", {
       output: { released: true },

@@ -123,6 +123,12 @@ const STUCK_PHASES: Readonly<Partial<Record<string, Phase>>> = {
 };
 export const ATTEMPTS_LEFT_OUT =
   "Studio can't simulate a failure after more than 1,000 attempts.";
+const NOT_RECORDED = "the platform didn't record it";
+/** The undo step a step's finished status ran: undone, or released. */
+const RAN_PHASES: Readonly<Partial<Record<string, Phase>>> = {
+  undone: "undo",
+  cancelled: "cancel",
+};
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const TOO_LARGE_FOR_TEST_DATA =
   "This run's data is larger than test data holds (1 MB, 1,000 entries a section), so Studio kept nothing.";
@@ -196,7 +202,7 @@ export function testDataFromRun(
       leftOut.push({
         key,
         reason: "not-recorded",
-        detail: "the platform didn't record it",
+        detail: NOT_RECORDED,
       });
       continue;
     }
@@ -207,7 +213,7 @@ export function testDataFromRun(
         leftOut.push({
           key,
           reason: "not-recorded",
-          detail: "the platform didn't record it",
+          detail: NOT_RECORDED,
         });
         continue;
       }
@@ -335,6 +341,20 @@ export function testDataFromRun(
           key: phaseKey(one.instance_key, phase),
           reason: "undo",
           detail: UNDO_LEFT_OUT,
+        });
+      // An undo step that ran without a fact of its own: Execute asks for
+      // its test output, and the list says why it wasn't copied.
+      const ran = RAN_PHASES[one.status];
+      const ranKey = ran ? phaseKey(one.instance_key, ran) : null;
+      if (
+        ranKey &&
+        !facts.has(ranKey) &&
+        inDraft.has(instanceStep(one.instance_key))
+      )
+        leftOut.push({
+          key: ranKey,
+          reason: "not-recorded",
+          detail: NOT_RECORDED,
         });
     }
     for (const [key, { effect, unknown }] of failed) {
