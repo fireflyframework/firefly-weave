@@ -561,6 +561,16 @@ const NEVER_COMPLETES = /can never complete/;
 /** Studio's words for it: what to choose instead. */
 const NEVER_FINISHES =
   "Finished doesn't fit: every way through this transaction reaches a Fail step, so the run can't go on after it. Choose Undone if everything was undone, or use Force end.";
+/** The platform's code for a record that leaves out a step whose end it doesn't know. */
+export const INCOMPLETE = "WV-TXN-RECONCILE-INCOMPLETE";
+/**
+ * Whether the platform refused what a record or a result says, rather than
+ * the decision: it doesn't fit the transaction or its schema, or it leaves out
+ * a step whose end the platform doesn't know.
+ */
+export function refusesRecord(refused: Pick<PlainError, "code">): boolean {
+  return refused.code === "WV-RUNTIME-OUTPUT" || refused.code === INCOMPLETE;
+}
 /** What the platform says of a record it has nothing more to say of. */
 const DOESNT_FIT = "The reconciliation record doesn't fit the transaction";
 /** How a refused record or result reads where it was typed. */

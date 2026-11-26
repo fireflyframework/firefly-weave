@@ -58,16 +58,16 @@ import {
   checklistRows,
   confirmReason,
   endingHelp,
+  INCOMPLETE,
   outputRefusalAt,
   refusedRecordText,
+  refusesRecord,
   transactionActions,
   type Checked,
   type ReconcileDraft,
   type TransactionAction,
 } from "./transaction-resolutions";
 
-/** The platform refuses the result, or the record of how the transaction ended. */
-const OUTPUT = "WV-RUNTIME-OUTPUT";
 /** A field a person types in, as a checkbox or a radio isn't. */
 const TEXT_FIELD =
   'textarea, input:not([type="checkbox"], [type="radio"])' as const;
@@ -490,18 +490,22 @@ export class TransactionResolveDialog {
   /** The last refusal, until what the platform refused is changed. */
   private readonly refused = computed(() => {
     const failure = this.failure();
-    return failure?.code === OUTPUT && failure === this.corrected()
+    return failure && refusesRecord(failure) && failure === this.corrected()
       ? null
       : failure;
   });
   /** Where a refused output shows; null when the refusal isn't about one. */
   readonly outputRefused = computed(() => {
     const failure = this.refused();
-    if (failure?.code !== OUTPUT) return null;
+    if (!failure || !refusesRecord(failure)) return null;
     if (this.action() === "it_happened") return "blockOutput";
     if (this.action() !== "mark_reconciled") return null;
     const { as } = this.draft();
-    const at = outputRefusalAt(failure.message, as, this.rows());
+    // A step left out is a line of the checklist, whatever the result says.
+    const at =
+      failure.code === INCOMPLETE
+        ? "checklist"
+        : outputRefusalAt(failure.message, as, this.rows());
     return at === "checklist" && !this.rows().length ? null : at;
   });
   readonly refusal = computed(() => {

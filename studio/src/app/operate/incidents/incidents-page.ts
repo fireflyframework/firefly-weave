@@ -104,6 +104,7 @@ import { TransactionResolveDialog } from "./transaction-resolve-dialog";
 import {
   checklistChanged,
   explainDecision,
+  refusesRecord,
   transactionActions,
   type TransactionAction,
 } from "./transaction-resolutions";
@@ -1725,7 +1726,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       // read: it is read again before anything typed is blamed.
       if (
         offer?.action === "mark_reconciled" &&
-        plain.code === "WV-RUNTIME-OUTPUT" &&
+        refusesRecord(plain) &&
         stillAsked()
       ) {
         this.refusedRecord = explained;

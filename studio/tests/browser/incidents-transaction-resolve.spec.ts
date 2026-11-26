@@ -1165,6 +1165,37 @@ for (const [why, as, message, words] of [
     await expect(asked).not.toContainText("WV-RUNTIME-OUTPUT");
   });
 
+test("a record refused for a step it leaves out is read again, and shows under the checklist", async ({
+  page,
+}) => {
+  const platform = await opened(page, called);
+  await decisions(page, platform, (route) =>
+    refuse(
+      route,
+      422,
+      "WV-TXN-RECONCILE-INCOMPLETE",
+      "Say what happened to: add.",
+    ),
+  );
+  await undone(page);
+  const name = "Mark as reconciled";
+  const asked = dialog(page, name);
+  // Opening the dialog read the incident; only what the refusal reads counts.
+  platform.reads.length = 0;
+  await confirm(page, name).click();
+  const list = asked.getByRole("group", {
+    name: "Check each step in its system",
+  });
+  await expect(list).toContainText(
+    "Say what happened to: add. (WV-TXN-RECONCILE-INCOMPLETE)",
+  );
+  await expect(list).toHaveAttribute("aria-invalid", "true");
+  // The record may have left out a step that changed since it was read.
+  expect(platform.reads).toEqual([ids.called]);
+  for (const line of await asked.getByRole("checkbox").all())
+    await expect(line).toBeChecked();
+});
+
 test("Finished refused for a block that can never complete says what to choose instead", async ({
   page,
 }) => {
