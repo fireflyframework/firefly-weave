@@ -463,7 +463,8 @@ const noEvents: RecentEvents = {
             </button>
           } @else if (nextCursor) {
             <p class="list-limit" role="status">
-              Showing the first 500 incidents. Narrow the filters to see others.
+              Showing the first {{ incidents.length }} incidents. Narrow the
+              filters to see others.
             </p>
           }
         </div>

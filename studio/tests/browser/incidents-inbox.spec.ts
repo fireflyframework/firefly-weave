@@ -315,8 +315,9 @@ test("incidents stop at the page limit and explain remaining records", async ({
   await expect(
     page.getByRole("button", { name: "Load more incidents" }),
   ).toHaveCount(0);
+  // Pages can end early, so the note counts the incidents shown, not the pages read.
   await expect(
-    page.getByText("Showing the first 500 incidents.", { exact: false }),
+    page.getByText("Showing the first 10 incidents.", { exact: false }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect.poll(() => reads).toBe(20);
