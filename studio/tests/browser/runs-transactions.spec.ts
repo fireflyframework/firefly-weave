@@ -228,6 +228,25 @@ test.describe("a recorded run in doubt on a phone", () => {
     contextOptions: { reducedMotion: "reduce" },
   });
 
+  for (const width of [360, 390])
+    test(`opens at ${width} px with how the transaction stands in view`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      const { runs, errors } = await openTab(page);
+      const canvas = await choose(page, runs, IDS.doubt);
+      const state = frameState(canvas);
+      await expect(state).toHaveText("In doubt · action needed");
+      const area = (await canvas.root.boundingBox())!;
+      const shown = (await state.boundingBox())!;
+      // The frame's right end sits 16 px inside the canvas: its state whole.
+      expect(shown.x).toBeGreaterThanOrEqual(area.x);
+      expect(shown.x + shown.width).toBeLessThanOrEqual(
+        area.x + area.width - 16,
+      );
+      expect(errors).toEqual([]);
+    });
+
   test("its captions wrap whole, never cut", async ({ page }) => {
     const { runs, errors } = await openTab(page);
     await runs.row(IDS.doubt).click();

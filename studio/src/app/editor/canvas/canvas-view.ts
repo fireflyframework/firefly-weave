@@ -2594,6 +2594,19 @@ export class CanvasView implements OnInit, DoCheck {
     if (key === this.framed) return;
     this.framed = key;
     const tile = layout.tiles.find((item) => item.id === focus);
+    // The transaction the step sits in, the innermost: its header says how it stands.
+    const frame = tile
+      ? (layout.frames
+          .filter(
+            (one) =>
+              one.transaction &&
+              one.x <= tile.x &&
+              tile.x + tile.width <= one.x + one.width &&
+              one.y <= tile.y &&
+              tile.y + tile.height <= one.y + one.height,
+          )
+          .sort((a, b) => b.depth - a.depth)[0] ?? null)
+      : null;
     const halves = this.labelTextHalves(layout);
     const outlineAt = (zoom: number) => {
       const bounds = runOutline(layout, zoom, (id) => halves.get(id));
@@ -2625,6 +2638,7 @@ export class CanvasView implements OnInit, DoCheck {
           // The band at the bottom that holds the canvas tools.
           height: Math.max(1, root.clientHeight - (16 + tools + 8)),
         },
+        frame,
       ),
     );
   }

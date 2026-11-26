@@ -410,11 +410,17 @@ const WIDE_FRAME_ZOOMS = [0.59, 0.58, 0.57, 0.56, 0.55];
  * centered; in a direction where it is larger, `step` is centered and the
  * pan then stops before either edge of the outline comes inside the area,
  * so no room is left empty while the workflow goes on beyond the other edge.
+ * Below 768 px, a step inside a transaction (`frame`) shows the transaction's
+ * header across instead: the frame centered when it fits the width, else its
+ * right end, where the header says how the transaction stands, 16 px inside
+ * the area, even when that leaves the step off screen (the run's header names
+ * it, and how the transaction stands is what a phone shows first).
  */
 export function frameRun(
   workflow: FrameBox | ((zoom: number) => FrameBox),
   step: FrameBox | null,
   area: { width: number; height: number },
+  frame: FrameBox | null = null,
 ): { zoom: number; pan: { x: number; y: number } } {
   const outlineAt = typeof workflow === "function" ? workflow : () => workflow;
   const zooms =
@@ -455,10 +461,28 @@ export function frameRun(
   return {
     zoom,
     pan: {
-      x: axis(outline.x, outline.width, focus.x, focus.width, area.width),
+      x:
+        frame && area.width < 768
+          ? acrossFrame(outline, frame, area.width, zoom)
+          : axis(outline.x, outline.width, focus.x, focus.width, area.width),
       y: axis(outline.y, outline.height, focus.y, focus.height, area.height),
     },
   };
+}
+/** The pan across that shows a transaction's header on a phone (see frameRun). */
+function acrossFrame(
+  outline: FrameBox,
+  frame: FrameBox,
+  room: number,
+  zoom: number,
+): number {
+  const width = frame.width * zoom;
+  const placed =
+    width <= room
+      ? (room - width) / 2 - frame.x * zoom
+      : room - 16 - (frame.x + frame.width) * zoom;
+  // No room left empty before the workflow's first step.
+  return Math.min(-outline.x * zoom, placed);
 }
 
 /** The zooms Execute workflow frames at: 100% down to 55%, in 2% steps, then 55%. */
