@@ -239,7 +239,7 @@ to use them. What the row shows depends on the step:
 | Wait for signal | The three choices | "Applies when no signal arrives within Wait at most." |
 | Human task | The three choices | "Applies when the task expires (Expires after)." |
 | Decision, Parallel, Loop over items | **Stop the run**, read-only | "The run fails with this step's error. You can retry it from Operate." |
-| Transaction | The three choices, each about the transaction being undone: "If the transaction is undone, the run fails. Nothing stays applied." | "A transaction in doubt always waits for a person; On error never handles it." |
+| Transaction | The three choices, each saying what happens when the transaction is undone, such as **Stop the run**: "If the transaction is undone, the run fails. Nothing stays applied." | "A transaction in doubt always waits for a person; On error never handles it." |
 | Wait for time, Fail, a Call a workflow that doesn't wait | No row | — |
 
 On a platform that can't handle step errors (its language manifest doesn't list
@@ -578,11 +578,11 @@ whole path.
 A **Transaction** runs its steps so that either all of them go through or what
 they did is undone. Add steps to its frame like a loop's, or select steps next
 to each other and choose **Group in a transaction**. **Result** is what later
-steps read as its output; they can't read the steps inside it. **Business key**
-is shown in Operations and in platform events, never in Studio, so map a
-reference, never personal data. **Hold reservations for** (15 minutes), **Undo
-retries** (10 tries, 2 s to 5 min apart) and **Give up undoing after** (1 day)
-write `policy` only once one of them differs from its default. See
+steps read as its output; they can't read the steps inside it. Map **Business
+key** to a reference, never personal data: its value shows in Operations and
+in platform events, never in Studio. **Hold reservations for** (15 minutes),
+**Undo retries** (10 tries, 2 s to 5 min apart), and **Give up undoing after**
+(1 day) write `policy` only once one of them differs from its default. See
 [Run steps as a transaction](studio.md#run-steps-as-a-transaction) for the
 whole path.
 

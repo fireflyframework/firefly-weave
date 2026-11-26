@@ -265,7 +265,7 @@ TypeScript types in `studio/src/app/editor/state/test-data.ts`.
   `firefly_weave.contracts.instance_keys` defines it, and `$defs.key` in the
   JSON Schema repeats it.
 - **Undo steps.** A key of `pins` or `errors` may end with `#confirm`,
-  `#cancel` or `#undo` for a step's confirm, release or undo inside a
+  `#cancel`, or `#undo` for a step's confirm, release, or undo inside a
   transaction (`hold#confirm`, `add[2]#undo`). Such a pin is checked against
   that undo step's own output schema (the action's `outputSchema`, or the
   called workflow's), never its step's, and a secret-marked value in it is
@@ -308,10 +308,10 @@ from, and counts as run data like a pin from a run. Studio copies a step's
 failures with the step only when their `source` is `manual` or absent. A
 document without `errors` keeps its bytes, and `schemaVersion` stays 1.
 
-Inside a transaction, Simulate a failure always writes `effect` for a step's
-own failure, from the platform's rule unless the builder picked one: `none` for
-`not_started`, or for `failed` with a code the action lists in
-`definiteFailures`; `unknown` otherwise. A failure of an undo step
+Inside a transaction, Simulate a failure writes `effect` for the failure of a
+step that says how it is undone, from the platform's rule unless the builder
+picked one: `none` for `not_started`, or for `failed` with a code the action
+lists in `definiteFailures`; `unknown` otherwise. A failure of an undo step
 (`add#undo`) holds only its `code`; Execute sends it with `attempts` set to the
 transaction's **Max tries**, at most 1,000. A document without `effect` or
 phase keys keeps its bytes.
@@ -435,10 +435,11 @@ bodies are camelCase. The Python models are in
   reconciledAs?, participants}`, where `cause` is `{code?, instanceKey,
   effect}` and each participant is `{nodeId, instanceKey, mode, status,
   effect, attempts?}`. They carry keys, states, codes and counts only, never a
-  value or a business key. `phases` lists each confirm, release and undo in the
+  value or a business key. `phases` lists each confirm, release, and undo in the
   order they ended: `{afterIndex, nodeId, instanceKey, phase, status, input?,
-  output?}`, where `afterIndex` is the last `trace` entry before it (-1 before
-  any) and `status` is `completed`, `failed` or `waiting`; their `input` and
+  output?}`, where `phase` is `confirm`, `cancel`, or `undo`, `afterIndex` is the
+  last `trace` entry before it (-1 before any), and `status` is `completed`,
+  `failed`, or `waiting`; their `input` and
   `output` pass the same secret check as pins. Both lists are left out when
   empty. Over 1,000 entries in either, or over 1 MiB of JSON in the two
   together, answers `status: "limit"`. A run whose transaction ends in doubt
@@ -559,12 +560,12 @@ in `firefly_weave.contracts.step_tests` and the TypeScript types in
 
 ## What an undo step reads
 
-Inside the input (`with`) of a step's `confirm`, `cancel` or `compensate`, the
+Inside the input (`with`) of a step's `confirm`, `cancel`, or `compensate`, the
 data picker and the formula check list what the compiler's `scope_at` lists,
 after the workflow input and any loop's item: the step's **Operation key**
 (`/participant/operationKey`) and outcome (`/participant/outcome`, `done` or
 `unknown`), then its transaction's ID (`/transaction/id`) and business key
-(`/transaction/businessKey`, text or empty). Then come the outputs of the steps
+(`/transaction/businessKey`, text or null). Then come the outputs of the steps
 it can read. The step's own output is always there in a `confirm`, may be
 empty in a `compensate`, since the step may not have gone through, and is never
 read in a `cancel` (`TXN_CANCEL_OUTPUT`). Steps
