@@ -195,6 +195,25 @@ for (const size of [
       await expect(entry).toContainText(
         "Needs a platform with transactions (flow.transaction)",
       );
+      // Its title and icon are dimmed, unlike the rows that can be added; its reason stays readable.
+      const ink = (part: string) =>
+        entry
+          .locator(part)
+          .evaluate((element) => getComputedStyle(element).color);
+      const token = (name: string) =>
+        page.evaluate((property) => {
+          const probe = document.createElement("span");
+          probe.style.color = `var(${property})`;
+          document.body.append(probe);
+          const color = getComputedStyle(probe).color;
+          probe.remove();
+          return color;
+        }, name);
+      const dimmed = await token("--disabled-ink");
+      expect(dimmed).not.toBe(await token("--text"));
+      expect(await ink(".entry-label")).toBe(dimmed);
+      expect(await ink(".entry-tile")).toBe(dimmed);
+      expect(await ink(".entry-description")).toBe(await token("--muted"));
     });
   });
 
