@@ -302,6 +302,8 @@ ended is applied before the revision is checked, so a decision on a view that
 doesn't have it yet is refused as well. The refusal applies nothing. The next
 recovery scan does, and the incident then shows it. Force end waits for none of
 it: only what ends the run, such as its own time limit, is applied around it.
+A called run that already ended keeps its outcome on its own run; the
+transaction's record shows the step as it was when you decided.
 
 A decision that ends a transaction, or stops steps of it, closes their open
 incidents too, a failure that recovery still handles included. Each one ends
