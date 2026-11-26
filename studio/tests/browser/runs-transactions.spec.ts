@@ -169,6 +169,14 @@ test.describe("a recorded run's transactions at 1440x900", () => {
         "input:not([disabled]):not([readonly]), select:not([disabled]), textarea:not([disabled]):not([readonly])",
       ),
     ).toHaveCount(0);
+    // A duration's unit reads as text there, as On error does: no arrow.
+    const units = await settings
+      .locator("select.param-unit")
+      .evaluateAll((all) =>
+        all.map((unit) => getComputedStyle(unit).appearance),
+      );
+    expect(units.length).toBeGreaterThan(0);
+    expect(units.every((appearance) => appearance === "none")).toBe(true);
     // The business key's mapping, never the value it read in this run.
     const key = settings.locator(".param", { hasText: "Business key" }).first();
     await expect(key).toContainText("moveId");
