@@ -616,9 +616,9 @@ the prompt and the context read (through transforms, loops and branches too)
 resolves, and when the compile finds no value marked `x-secret` or `writeOnly` in
 what an AI step reads. This covers every AI step in that part: an earlier one
 too, when the prompt or the context reads its output. A draft that isn't
-finished elsewhere still tests its step; only a repeated step ID, a step without
-an ID and an unfinished `fail` step have to be fixed first. The check covers what
-the draft's expressions read; the texts in `input` are sent as they are.
+finished elsewhere still tests its step, but a repeated step ID, a step without
+a valid ID and an unfinished `fail` step have to be fixed first. The check covers
+what the draft's expressions read; the texts in `input` are sent as they are.
 
 Only the person who started a step test can read
 (`GET {environment}/step-tests/{id}`) or cancel it through these routes;
