@@ -67,11 +67,17 @@ export function itemLabel(index: number, loop: RecordedLoop): string {
 
 /** The item button's name: "Item 4 of 20, Failed. Choose an item". */
 export function chipName(index: number, loop: RecordedLoop): string {
-  const status = loop.items[index]?.status ?? "not-run";
-  const word = status === "handled" ? HANDLED : WORDS[status];
+  const item = loop.items[index];
+  const word =
+    item?.transaction ??
+    (item?.status === "handled" ? HANDLED : WORDS[item?.status ?? "not-run"]);
   return `${itemLabel(index, loop)}, ${word}. Choose an item`;
 }
 const HANDLED = "Failed, continued";
+/** What an item did, in the list: its transaction's end when it left its path ("Undone"), else its own. */
+export function itemWord(item: RecordedItem): string {
+  return item.transaction ?? WORDS[item.status];
+}
 
 /**
  * The item list's groups: the failed items, then the items that failed and
@@ -219,7 +225,7 @@ export function typedItem(text: string, count: number): number | null {
                   @if (item.code) {
                     <code class="item-code">{{ item.code }}</code>
                   }
-                  <span class="item-word">{{ word(item.status) }}</span>
+                  <span class="item-word">{{ word(item) }}</span>
                 </button>
               }
             </div>
@@ -438,8 +444,8 @@ export class ItemChip {
   icon(status: RecordedItem["status"]): string {
     return ICONS[status];
   }
-  word(status: RecordedItem["status"]): string {
-    return WORDS[status];
+  word(item: RecordedItem): string {
+    return itemWord(item);
   }
 
   step(delta: -1 | 1): void {

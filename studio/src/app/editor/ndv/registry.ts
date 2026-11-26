@@ -212,6 +212,11 @@ export interface ParamSpec {
   };
   /** Text fields that become templates with text.concat. */
   templateCapable?: boolean;
+  /**
+   * Never shows what a mapping resolves to, in a run or with test data: no
+   * "= value" line and no Result panel value. A transaction's business key.
+   */
+  withholdsValue?: boolean;
   choices?: Choice[] | ((ctx: NdvContext) => Promise<Choice[]>);
   /** resource only: what an empty list says instead of "Nothing to choose from yet". */
   emptyChoices?(ctx: NdvContext): string | null;

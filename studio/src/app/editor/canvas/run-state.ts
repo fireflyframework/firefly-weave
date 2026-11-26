@@ -228,6 +228,8 @@ export interface RecordedItem {
     | "timed-out";
   /** A failed or handled item's error code. */
   code: string | null;
+  /** The item's transaction left its path: "Undone", "In doubt"; absent otherwise. */
+  transaction?: string;
 }
 /** One run of a loop in a recorded run: once, or once per item of the loops around it. */
 export interface RecordedLoop {

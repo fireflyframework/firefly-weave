@@ -113,6 +113,8 @@ class FakePlatform {
   readonly log: string[] = [];
   readonly views = new Map<string, unknown>();
   readonly documents = new Map<string, Workflow>();
+  /** A run's transactions page (runs.transactions), by run ID. */
+  readonly transactions = new Map<string, unknown>();
   /** Requests matching this wait until released. */
   hold: ((path: string) => boolean) | null = null;
   /** An error answer for a request, or null to answer normally. */
@@ -159,6 +161,11 @@ class FakePlatform {
     const run = /\/runs\/([^/?]+)$/.exec(path);
     if (run && this.views.has(run[1]))
       return structuredClone(this.views.get(run[1]));
+    const transactions = /\/runs\/([^/?]+)\/transactions\?limit=100$/.exec(
+      path,
+    );
+    if (transactions && this.transactions.has(transactions[1]))
+      return structuredClone(this.transactions.get(transactions[1]));
     const exported = /\/workflows\/([^/]+)\/export$/.exec(path);
     if (exported && this.documents.has(exported[1]))
       return { document: structuredClone(this.documents.get(exported[1])) };
@@ -1079,5 +1086,200 @@ describe("a recorded loop's items", () => {
     // Choosing the run again opens it on its first failed item again.
     await state.choose(fixtureIds.failed);
     expect(state.chosen()!.overlay!.canvas.picks).toEqual({ orders: 1 });
+  });
+});
+
+describe("a recorded run's transactions", () => {
+  const action = (id: string, extra: object = {}) =>
+    ({ id, kind: "action", uses: `${id}.run@1.0.0`, ...extra }) as Step;
+  const undo = { kind: "action", uses: "undo.run@1.0.0", with: {} };
+  /** invoice-approval with its steps in a transaction. */
+  const moving: Workflow = {
+    apiVersion: "weave/v1alpha1",
+    kind: "Workflow",
+    metadata: { name: "invoice-approval", version: "1.3.0" },
+    spec: {
+      steps: [
+        step("fetch"),
+        {
+          id: "move",
+          kind: "transaction",
+          steps: [
+            action("hold", { confirm: undo, cancel: undo }),
+            action("add", { compensate: undo }),
+            action("submit", { irreversible: true }),
+          ],
+          output: { literal: null },
+        } as unknown as Step,
+      ],
+    },
+  };
+  const participant = (node: string, mode: string, status: string) => ({
+    node_id: node,
+    instance_key: node,
+    mode,
+    status,
+    effect: "unknown",
+  });
+  const page = (state: string, statuses: [string, string, string]) => ({
+    items: [
+      {
+        instance_key: "move",
+        node_id: "move",
+        iteration: [],
+        state,
+        business_key: "bk-never-kept",
+        cause: {
+          code: "REQUEST_REFUSED",
+          instance_key: "submit",
+          effect: "none",
+        },
+        opened_at: "2026-10-07T11:00:00Z",
+        participants: [
+          participant("hold", "reserve", statuses[0]),
+          participant("add", "compensate", statuses[1]),
+          participant("submit", "irreversible", statuses[2]),
+        ],
+      },
+    ],
+    next_cursor: null,
+  });
+  const UNDONE = page("compensated", ["cancelled", "undone", "failed"]);
+  const STUCK = page("in_doubt", ["done", "undo_stuck", "failed"]);
+  const TRANSACTIONS = /\/transactions\?limit=100$/;
+  async function moved(id: string, transactions: unknown = UNDONE) {
+    const ready = await started();
+    const { platform, host } = ready;
+    Object.assign(host, { draft: () => moving });
+    const summary = summaryOf(platform.data, id);
+    platform.documents.set(summary.workflow.definition_version_id, moving);
+    platform.transactions.set(id, transactions);
+    return ready;
+  }
+
+  it("reads one page of them for a run of a workflow with a transaction, and draws them", async () => {
+    const { state, platform } = await moved(fixtureIds.failed);
+    await state.choose(fixtureIds.failed);
+    await settle();
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    const chosen = state.chosen()!;
+    expect(chosen.transactions).toMatchObject({ more: false });
+    const run = chosen.overlay!.canvas.transactions!;
+    expect(run.byFrame.get("move")?.state).toBe("compensated");
+    expect(run.byStep.get("hold")).toBe("cancelled");
+    expect(JSON.stringify(chosen)).not.toContain("bk-never-kept");
+    // Step details read them from the run's data.
+    expect(chosen.data?.transaction("add", "add")).toEqual({
+      kind: "undone",
+      line: "This step was undone after the transaction failed.",
+    });
+  });
+
+  it("asks nothing for a run of a workflow without one", async () => {
+    const { state, platform } = await started();
+    await state.choose(fixtureIds.failed);
+    await settle();
+    expect(platform.count("/transactions")).toBe(0);
+    expect(state.chosen()?.transactions).toBeNull();
+  });
+
+  it("keeps the run drawn when its transactions are refused, without their words", async () => {
+    const { state, platform } = await moved(fixtureIds.failed);
+    platform.fail = (path) =>
+      TRANSACTIONS.test(path)
+        ? { status: 403, body: { code: "WV-FORBIDDEN", message: "No." } }
+        : null;
+    await state.choose(fixtureIds.failed);
+    await settle();
+    const chosen = state.chosen()!;
+    expect(chosen.transactions).toEqual({ refused: "forbidden" });
+    expect(chosen.record?.id).toBe(fixtureIds.failed);
+    expect(chosen.overlay?.canvas.transactions).toBeUndefined();
+    // The list and the run stay: only the transactions are refused.
+    expect(state.state()).toBe("ready");
+  });
+
+  it("waits 5 s after a failed read while it follows the run, then 10 s", async () => {
+    const { state, platform, env } = await moved(fixtureIds.running);
+    const running = summaryOf(platform.data, fixtureIds.running);
+    platform.views.set(running.id, viewOf(running, { active: ["hold"] }));
+    platform.fail = (path) =>
+      TRANSACTIONS.test(path)
+        ? { status: 503, body: { code: "WV-UNAVAILABLE", message: "Busy." } }
+        : null;
+    await state.choose(running.id);
+    await settle();
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    // Followed every 2 s; the transactions wait 5 s after the failure.
+    await env.advance(4000);
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    await env.advance(2000);
+    expect(platform.count(TRANSACTIONS)).toBe(2);
+    await env.advance(8000);
+    expect(platform.count(TRANSACTIONS)).toBe(2);
+    platform.fail = null;
+    await env.advance(2000);
+    expect(platform.count(TRANSACTIONS)).toBe(3);
+    expect(state.chosen()?.overlay?.canvas.transactions).toBeDefined();
+    // Read again with the run while it is followed.
+    await env.advance(2000);
+    expect(platform.count(TRANSACTIONS)).toBe(4);
+  });
+
+  it("drops transactions that answer for another run, account or environment", async () => {
+    const { state, platform, host } = await moved(fixtureIds.failed, STUCK);
+    const retry = summaryOf(platform.data, fixtureIds.retry);
+    platform.documents.set(retry.workflow.definition_version_id, moving);
+    platform.hold = (path) => TRANSACTIONS.test(path);
+    const first = state.choose(fixtureIds.failed);
+    await settle();
+    expect(platform.count(TRANSACTIONS)).toBe(1);
+    // Another run is chosen before the answer lands.
+    platform.hold = null;
+    const second = state.choose(fixtureIds.retry);
+    platform.release();
+    await Promise.all([first, second]);
+    await settle();
+    expect(state.chosen()?.id).toBe(fixtureIds.retry);
+    expect(state.chosen()?.overlay?.canvas.transactions).toBeUndefined();
+    expect(state.captions().has(fixtureIds.failed)).toBe(false);
+
+    // The environment changes while the answer is on its way.
+    platform.transactions.set(fixtureIds.failed, STUCK);
+    platform.hold = (path) => TRANSACTIONS.test(path);
+    const third = state.choose(fixtureIds.failed);
+    await settle();
+    host.setScope("account-a|env-2");
+    platform.hold = null;
+    platform.release();
+    await third;
+    await settle();
+    expect(state.chosen()).toBeNull();
+    expect(state.captions().size).toBe(0);
+  });
+
+  it("names the transaction in doubt on the row of a run it read", async () => {
+    const data = structuredClone(runViewsFixture);
+    for (const run of data.runs)
+      if (run.summary.id === fixtureIds.failed)
+        run.summary.transaction_state = "in_doubt";
+    const ready = setup(data);
+    ready.state.start();
+    await ready.env.advance(0);
+    const { state, platform, host } = ready;
+    Object.assign(host, { draft: () => moving });
+    const summary = summaryOf(platform.data, fixtureIds.failed);
+    platform.documents.set(summary.workflow.definition_version_id, moving);
+    platform.transactions.set(fixtureIds.failed, STUCK);
+    const caption = () =>
+      state.rows().find((row) => row.id === fixtureIds.failed)?.transaction;
+    expect(caption()).toBe("Transaction in doubt");
+    await state.choose(fixtureIds.failed);
+    await settle();
+    expect(caption()).toBe("Failed at submit · move in doubt");
+    // Read once, it keeps its caption while another run is shown.
+    await state.choose(fixtureIds.succeeded);
+    await settle();
+    expect(caption()).toBe("Failed at submit · move in doubt");
   });
 });

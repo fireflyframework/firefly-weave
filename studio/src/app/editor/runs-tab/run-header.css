@@ -161,6 +161,33 @@ button.icon-button.run-copy {
 .run-failed-at {
   color: var(--danger-ink);
 }
+/* A transaction in doubt: the caption wraps, but only between its parts, so
+   the step, the transaction and the code each stay whole. */
+.run-caption:has(.run-in-doubt) {
+  white-space: normal;
+  line-height: 18px;
+}
+.run-in-doubt {
+  color: var(--warning-ink);
+  font-weight: 600;
+}
+.run-in-doubt-part {
+  white-space: nowrap;
+}
+.run-transactions-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.run-transactions-note weave-icon {
+  flex: none;
+}
 /* Failures the run's steps handled: a warning, never the failure's danger. */
 .run-handled {
   color: var(--warning-ink);

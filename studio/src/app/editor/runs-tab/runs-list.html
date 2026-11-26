@@ -317,6 +317,7 @@ SPDX-License-Identifier: Apache-2.0
             @for (row of rows(); track row.id) {
               <div
                 class="run-row"
+                [class.has-caption]="!!row.transaction"
                 role="option"
                 [attr.data-run]="row.id"
                 [attr.aria-selected]="row.id === tab().selected()"
@@ -345,6 +346,10 @@ SPDX-License-Identifier: Apache-2.0
                     row.started
                   }}</span>
                 </span>
+                @if (row.transaction) {
+                  <!-- A run in doubt: its caption on a line of its own, whole. -->
+                  <span class="run-caption-line">{{ row.transaction }}</span>
+                }
                 <span class="run-line run-facts">
                   @if (!row.unavailable) {
                     <span class="run-duration">{{ row.duration }}</span>

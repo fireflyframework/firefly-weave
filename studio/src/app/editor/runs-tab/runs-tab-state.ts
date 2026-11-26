@@ -52,6 +52,14 @@ import {
 import { dropDebug } from "./run-links";
 import { readRunRecord, type RunRecord } from "./run-record";
 import {
+  inDoubtCaption,
+  readRunTransactions,
+  TransactionReadBackoff,
+  type RunTransactionsRead,
+  type RunTransactionView,
+} from "./run-transactions";
+import { allSteps } from "../ndv/step-walk";
+import {
   defaultRunsTabFilters,
   MAX_LISTED_RUNS,
   refreshed,
@@ -95,7 +103,22 @@ export interface ChosenRun {
   /** It has more step instances than the overlay reads. */
   limited: boolean;
   error: { code: string; message: string } | null;
+  /**
+   * Its transactions' first page, or why they can't be read; null while
+   * not read, and for a run of a workflow without a transaction.
+   */
+  transactions: RunTransactionsRead | null;
 }
+
+/** Whether a workflow holds a transaction: only then are a run's transactions read. */
+const holdsTransaction = (workflow: Workflow): boolean =>
+  allSteps(workflow.spec.steps ?? []).some(
+    (step) => (step.kind as string) === "transaction",
+  );
+const viewsOf = (
+  read: RunTransactionsRead | null | undefined,
+): readonly RunTransactionView[] | undefined =>
+  read && "views" in read ? read.views : undefined;
 export type RunsTabStatus =
   | "idle"
   | "loading"
@@ -158,6 +181,14 @@ export class RunsTabState {
   readonly updatedAt = signal<number | null>(null);
   readonly filters = signal<RunsTabFilters>(defaultRunsTabFilters());
   readonly chosen = signal<ChosenRun | null>(null);
+  /**
+   * The caption of each run whose transaction in doubt Studio read
+   * ("Failed at submit · move in doubt"), by run ID, for its row. Forgotten
+   * with the list.
+   */
+  readonly captions = signal<ReadonlyMap<string, string>>(new Map());
+  /** When the chosen run's transactions may be read again after a failed read. */
+  private transactionsWait = new TransactionReadBackoff();
   /** The items picked on the chosen run's loops (loop step ID to index), and its last read. */
   private picked: Record<string, number> = {};
   private lastRead: RunRead | null = null;
@@ -270,6 +301,7 @@ export class RunsTabState {
     // Each run opens its loops on their first failed items.
     this.picked = {};
     this.lastRead = null;
+    this.transactionsWait = new TransactionReadBackoff();
     const ticket = this.runTicket(id, ++this.runGeneration);
     const listed = this.items().find((item) => item.id === id);
     const summary = listed && !isUnavailableRun(listed) ? listed : null;
@@ -284,6 +316,7 @@ export class RunsTabState {
       stopped: false,
       limited: false,
       error: null,
+      transactions: null,
     });
     if (!this.host.canRead()) return this.refuse();
     let read: RunRead | null;
@@ -337,6 +370,53 @@ export class RunsTabState {
       overlay: this.overlay(read, summary, definition),
     });
     if (!ended(read.record.status)) void this.follow(id, false);
+    // The run draws first; its transactions follow when its workflow has one.
+    if (this.wantsTransactions(summary, definition))
+      await this.readTransactions(ticket);
+  }
+  /** A run's transactions are read when its version (else the draft) holds a transaction, or its summary names one. */
+  private wantsTransactions(
+    summary: RunSummary | null,
+    definition: Workflow | null,
+  ): boolean {
+    return (
+      summary?.transaction_state !== undefined ||
+      holdsTransaction(definition ?? this.host.draft())
+    );
+  }
+  /**
+   * The chosen run's transactions, the first page: drawn with the run, and
+   * kept for its row's caption. A failed read waits before the next one
+   * (5 s, doubling to a minute); a refusal shows no transaction words.
+   */
+  private async readTransactions(ticket: RunTicket): Promise<void> {
+    if (!this.transactionsWait.ready(this.env.now())) return;
+    let read: RunTransactionsRead;
+    try {
+      read = await readRunTransactions(this.host.api, ticket.id);
+    } catch {
+      if (this.runHolds(ticket)) this.transactionsWait.failed(this.env.now());
+      return;
+    }
+    if (!this.runHolds(ticket)) return;
+    this.transactionsWait.succeeded();
+    const views = viewsOf(read);
+    const caption = views ? inDoubtCaption(views) : null;
+    const captions = new Map(this.captions());
+    if (caption) captions.set(ticket.id, caption);
+    else if (views) captions.delete(ticket.id);
+    this.captions.set(captions);
+    this.rows.set(this.rowsOf(this.items()));
+    const chosen = this.chosen()!;
+    // Step details read them too: a transaction in doubt, a step undone.
+    chosen.data?.setTransactions(views ?? []);
+    this.updateChosen(ticket, {
+      transactions: read,
+      overlay:
+        this.lastRead && chosen.record === this.lastRead.record
+          ? this.overlay(this.lastRead, chosen.summary, chosen.definition, read)
+          : chosen.overlay,
+    });
   }
   /** Back to the list: forgets the run, its data and a Debug request for it. */
   leave(): void {
@@ -474,8 +554,7 @@ export class RunsTabState {
     cursor: string | null,
     pages: number,
   ) {
-    const now = new Date(this.env.now());
-    const rows = items.map((item) => runRow(item, now));
+    const rows = this.rowsOf(items);
     this.items.set(items);
     this.rows.set(rows);
     const used = new Set(this.usedVersions());
@@ -496,6 +575,14 @@ export class RunsTabState {
       items.some((item) => item.id === chosen.id && !isUnavailableRun(item))
     )
       void this.choose(chosen.id);
+  }
+  /** The list's rows, each run whose transaction in doubt Studio read with its caption. */
+  private rowsOf(items: readonly RunSummaryItem[]): RunRow[] {
+    const now = new Date(this.env.now());
+    const captions = this.captions();
+    return items.map((item) =>
+      runRow(item, now, captions.get(item.id) ?? null),
+    );
   }
   private listTicket(): ListTicket {
     return {
@@ -570,11 +657,13 @@ export class RunsTabState {
     read: RunRead,
     summary: RunSummary | null,
     definition: Workflow | null,
+    transactions = this.chosen()?.transactions,
   ): RunOverlay {
     this.lastRead = read;
     const draft = this.host.draft();
+    const views = viewsOf(transactions);
     // A loop's steps show one item at a time: the one picked, else the first failed one.
-    const loops = recordedLoops(draft, read.record, read.facts);
+    const loops = recordedLoops(draft, read.record, read.facts, views);
     const picks = loops.length
       ? picksFor(draft, loops, this.picked)
       : undefined;
@@ -592,6 +681,7 @@ export class RunsTabState {
       },
       this.env.now(),
       picks,
+      views,
     );
     return picks
       ? {
@@ -667,6 +757,8 @@ export class RunsTabState {
       overlay: this.overlay(read, chosen.summary, definition),
       following: !done,
     });
+    if (this.wantsTransactions(chosen.summary, definition))
+      await this.readTransactions(ticket);
     return true;
   }
   private stopFollowing() {
@@ -710,6 +802,7 @@ export class RunsTabState {
   private forget(state: RunsTabStatus) {
     this.listGeneration++;
     this.leave();
+    this.captions.set(new Map());
     this.setItems([], null, 0);
     this.error.set(null);
     this.updatedAt.set(null);

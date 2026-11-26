@@ -75,6 +75,8 @@ export const transactionSettings = (): FormSpec => ({
       emptyMapped: true,
       placeholder: "Map a reference of your own",
       templateCapable: true,
+      // Studio never shows a business key, in a run or with test data.
+      withholdsValue: true,
       maxLength: 200,
       hint: "Shown in Operations and in platform events. Use a reference, never personal data.",
     },

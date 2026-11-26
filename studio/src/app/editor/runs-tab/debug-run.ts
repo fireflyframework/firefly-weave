@@ -118,6 +118,11 @@ export class DebugRun {
     if (refusal) return { kind: "refused", message: refusal };
     const record = chosen.record;
     const definition = chosen.data ? chosenDefinition(chosen) : null;
+    // Read before any await, with the run they belong to.
+    const transactions =
+      chosen.transactions && "views" in chosen.transactions
+        ? chosen.transactions.views
+        : null;
     if (!record || !definition)
       return {
         kind: "refused",
@@ -159,6 +164,8 @@ export class DebugRun {
         facts,
         definition,
         failedStep: failedStepOf(chosen),
+        // As the tab read them for this run: what undid a transaction is copied.
+        ...(transactions ? { transactions } : {}),
       },
       host.model.definition,
       runPrints(definition, record.input as Json, host.model),

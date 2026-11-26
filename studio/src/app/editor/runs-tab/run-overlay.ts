@@ -34,7 +34,14 @@ import { failureCodeText } from "../canvas/tile-facts";
 import { allSteps, childLists, withChildIds } from "../ndv/step-walk";
 import { fingerprint } from "../state/fingerprints";
 import { instanceStep } from "../state/instance-keys";
+import { recordedRollback } from "../transactions/rollback";
+import {
+  stateBadge,
+  stateWord,
+  type Tone,
+} from "../transactions/transaction-words";
 import type { RunRecord } from "./run-record";
+import type { RunTransactionView } from "./run-transactions";
 import { failedStep } from "./runs-list-model";
 
 export type RunStepState =
@@ -264,6 +271,21 @@ function itemStatus(
   return terminalRunStatuses.includes(run) ? cutOff : "running";
 }
 
+/**
+ * How far a transaction left its normal path, by its badge's tone: in doubt
+ * or force ended, then undone or canceled, then reconciled; 0 while it runs
+ * or once it completed.
+ */
+const OFF_PATH: Readonly<Record<Tone, number>> = {
+  danger: 3,
+  warning: 2,
+  muted: 1,
+  success: 0,
+  live: 0,
+};
+const offPath = (view: RunTransactionView) =>
+  OFF_PATH[stateBadge({ state: view.state }).tone];
+
 /** Each loop of a workflow, the loops around it and the steps inside it. */
 function loopsOf(
   steps: readonly Step[],
@@ -298,6 +320,8 @@ export function recordedLoops(
   definition: Workflow,
   run: RunRecord,
   facts: readonly StepFact[] | null,
+  /** The run's transactions, when read: an item whose transaction was undone or is in doubt says so. */
+  transactions: readonly RunTransactionView[] = [],
 ): RecordedLoop[] {
   const over = terminalRunStatuses.includes(run.status);
   const marks: [string, RecordedItem["status"], string | null][] = [
@@ -372,16 +396,35 @@ export function recordedLoops(
             : undefined;
         const count =
           recorded ?? Math.max(0, ...[...items.keys()].map((i) => i + 1));
+        // The transactions inside the loop, by the item they ran for.
+        const undone = new Map<number, RunTransactionView>();
+        for (const view of transactions) {
+          const at = view.iteration;
+          if (
+            !loop.inside.has(view.node_id) ||
+            at.length <= depth ||
+            compareIndexes(at.slice(0, depth), prefix) !== 0
+          )
+            continue;
+          const was = undone.get(at[depth]);
+          if (!was || offPath(view) > offPath(was)) undone.set(at[depth], view);
+        }
         return {
           id: loop.id,
           within: prefix,
           count,
           known: recorded !== undefined,
-          items: Array.from(
-            { length: count },
-            (_, index): RecordedItem =>
-              items.get(index) ?? { index, status: "not-run", code: null },
-          ),
+          items: Array.from({ length: count }, (_, index): RecordedItem => {
+            const item = items.get(index) ?? {
+              index,
+              status: "not-run",
+              code: null,
+            };
+            const view = undone.get(index);
+            return view && offPath(view) > 0
+              ? { ...item, transaction: stateWord(view.state) }
+              : item;
+          }),
           results: Array.isArray(output) ? output.length : null,
         };
       })
@@ -508,6 +551,8 @@ export function overlayOf(
   now?: number,
   /** Loop step ID to the item its steps show; without it, every item at once. */
   picks?: Readonly<Record<string, number>>,
+  /** Its transactions as runs.transactions recorded them, when read. */
+  transactions?: readonly RunTransactionView[],
 ): RunOverlay {
   // A step inside a loop shows its instance in the items picked.
   const wanted = new Map<string, string>();
@@ -564,6 +609,8 @@ export function overlayOf(
       );
     }
   const diff = versions.run ? versionDiff(versions.run, versions.draft) : null;
+  // The transactions of the items picked: their frames and steps read them.
+  const shown = transactions?.filter((view) => counts(view.instance_key));
   return {
     canvas: {
       mode: "real",
@@ -577,8 +624,9 @@ export function overlayOf(
       failures,
       ...(Object.keys(handled).length ? { handled } : {}),
       ...(Object.keys(runningFor).length ? { runningFor } : {}),
-      loops: recordedLoops(versions.draft, run, facts),
+      loops: recordedLoops(versions.draft, run, facts, transactions),
       ...(picks ? { picks: { ...picks } } : {}),
+      ...(shown?.length ? { transactions: recordedRollback(shown) } : {}),
     },
     states,
     diff,

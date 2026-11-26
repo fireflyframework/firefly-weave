@@ -35,7 +35,9 @@ import {
   untracked,
   viewChild,
 } from "@angular/core";
+import { Router } from "@angular/router";
 import { Icon } from "../../../icon";
+import { viewPath } from "../../../operate/operate-routes";
 import { DataTree } from "./data-tree";
 import { IterationPicker, loopRows, type PickerLoop } from "./iteration-picker";
 import { DataTable } from "./data-table";
@@ -661,6 +663,36 @@ import { describeError } from "../../../errors";
                 <p>Changed since this run.</p>
               </div>
             }
+            @if (recorded.doubt; as doubt) {
+              <!-- A real transaction in doubt: only Operate resolves it. -->
+              <div
+                class="notice pane-run-notice pane-in-doubt"
+                data-tone="danger"
+              >
+                <weave-icon name="critical" [size]="16" />
+                <div>
+                  <p class="pane-in-doubt-title">{{ doubt.title }}</p>
+                  @if (doubt.detail) {
+                    <p>{{ doubt.detail }}</p>
+                  }
+                  @if (doubt.incident && canOpenIncident()) {
+                    <button
+                      type="button"
+                      class="sm"
+                      (click)="openIncident(doubt.incident)"
+                    >
+                      <weave-icon name="external" [size]="16" />Open in Operate
+                    </button>
+                  }
+                </div>
+              </div>
+            }
+            @if (recorded.undone; as line) {
+              <div class="notice pane-run-notice" data-tone="info">
+                <weave-icon name="undo" [size]="16" />
+                <p>{{ line }}</p>
+              </div>
+            }
             @if (recorded.failed) {
               @let callFailed = callFailure(recorded.runId);
               <div class="notice pane-run-notice" data-tone="danger">
@@ -689,7 +721,9 @@ import { describeError } from "../../../errors";
                 </div>
               }
               @case ("none") {
-                @if (!recorded.failed) {
+                @if (recorded.doubt) {
+                  <p class="pane-empty-text">{{ recorded.doubt.result }}</p>
+                } @else if (!recorded.failed) {
                   <p class="pane-empty-text">{{ recorded.none }}</p>
                 }
               }
@@ -915,6 +949,7 @@ export class OutputPane {
   ];
   readonly radioKey = radioKey;
   private readonly lifetime = inject(DestroyRef);
+  private readonly router = inject(Router);
   constructor() {
     // Another step opened in step details: an open edit belonged to the previous one.
     effect(() => {
@@ -1187,27 +1222,34 @@ export class OutputPane {
     const handled = state === "handled" ? run.handled(key) : null;
     const canvas = host.canvasRun?.() ?? null;
     const item = /\[(\d+)\]$/.exec(key);
+    // A transaction in doubt, or a step its transaction undid.
+    const transaction = run.transaction(target, key);
+    const doubt = transaction?.kind === "in-doubt" ? transaction : null;
     return {
       output,
       runId: run.runId,
+      doubt,
+      undone: transaction?.kind === "undone" ? transaction.line : null,
       iteration: several ? key : null,
       scope: `${host.stepDataScope ?? ""}|${host.profile?.environmentId ?? ""}`,
       tag: `From ${run.label()}${several && item ? `, item ${Number(item[1]) + 1}` : ""}`,
       handled,
-      pill: handled
-        ? "Failed, continued"
-        : state === "failed"
-          ? "Failed in this run"
-          : output.kind === "omitted"
-            ? "Not shown"
-            : state === "running"
-              ? "Running in this run"
-              : state === "not-reached"
-                ? "Not reached"
-                : "Finished in this run",
+      pill: doubt
+        ? doubt.pill
+        : handled
+          ? "Failed, continued"
+          : state === "failed"
+            ? "Failed in this run"
+            : output.kind === "omitted"
+              ? "Not shown"
+              : state === "running"
+                ? "Running in this run"
+                : state === "not-reached"
+                  ? "Not reached"
+                  : "Finished in this run",
       tone: handled
         ? "warning"
-        : state === "failed"
+        : doubt || state === "failed"
           ? "danger"
           : output.kind === "omitted" || state === "not-reached"
             ? null
@@ -1233,6 +1275,24 @@ export class OutputPane {
   retryRun() {
     const { controller, target } = this.session();
     controller.retryRunOutput(target);
+  }
+  /** Studio can show Operate's incidents from here. */
+  canOpenIncident(): boolean {
+    return !!this.session().host.navigate;
+  }
+  /**
+   * Opens the incident of a transaction in doubt in Operate, where a person
+   * resolves it: the page first, then its address, which names the incident
+   * only. A person who is elsewhere by then stays there.
+   */
+  async openIncident(id: string): Promise<void> {
+    const { host } = this.session();
+    await host.navigate?.("incidents");
+    if (host.view !== "incidents") return;
+    await this.router.navigateByUrl(
+      `${viewPath("incidents")}?incident=${encodeURIComponent(id)}`,
+      { replaceUrl: true },
+    );
   }
   openRun(id: string) {
     void this.session().host.viewRun?.({ id });

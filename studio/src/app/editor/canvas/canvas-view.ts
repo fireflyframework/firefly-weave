@@ -1071,6 +1071,7 @@ export class CanvasView implements OnInit, DoCheck {
     // A loop the run finished says how many items it had under its frame;
     // a failed one says it in its header, and its failed step shows the code.
     // Under the frame once the whole playback has ended, not while later steps play.
+    // A transaction that shows how it stands says it in its header, in a recorded run too.
     const finishedLoop =
       state.loop?.status === "done" && state.ended && state.loop.count !== null
         ? state.loop
@@ -1086,7 +1087,7 @@ export class CanvasView implements OnInit, DoCheck {
         ? runFact(shown)
         : state.left
           ? transactionFact(state.left)
-          : recordedRun
+          : recordedRun || (state.frame && state.stands)
             ? null
             : recorded
               ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])

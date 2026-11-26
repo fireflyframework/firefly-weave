@@ -1301,7 +1301,7 @@ export class FormSession {
   }
   /** What a value resolves to at this field: a Fixed value as it is, a formula through the preview. */
   previewOf(spec: ParamSpec, value: ParamValue): PreviewResult | null {
-    if (value.mode === "absent") return null;
+    if (value.mode === "absent" || spec.withholdsValue) return null;
     if (value.mode === "fixed") return { ok: true, value: value.value };
     return this.controller
       .ndvContext(this.target)
@@ -1453,7 +1453,7 @@ export class FormSession {
       };
     if (address) return { kind: "preview", text: `= ${address.address}` };
     const value = this.read(spec);
-    if (value.mode === "mapped") {
+    if (value.mode === "mapped" && !spec.withholdsValue) {
       const preview = this.controller
         .ndvContext(this.target)
         .evaluate(value.expression, spec.path);

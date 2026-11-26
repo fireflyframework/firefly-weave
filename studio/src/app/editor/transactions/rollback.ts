@@ -20,7 +20,9 @@ SPDX-License-Identifier: Apache-2.0
 // the answer of Execute, as it ended and at each moment of its playback.
 // Pure; loaded with Execute and the canvas.
 import type { Step, Workflow } from "../../model";
+import { failureCodeText } from "../canvas/tile-facts";
 import { allSteps } from "../ndv/step-walk";
+import type { RunTransactionView } from "../runs-tab/run-transactions";
 import type {
   ExecuteResponse,
   ParticipantTrace,
@@ -204,6 +206,77 @@ export function simulatedRollback(
     ),
     rowsOf(answer, workflow),
   );
+}
+
+/**
+ * What a recorded run did to its transactions (runs.transactions), in the
+ * words a simulated run shows for the same transactions. A run records no
+ * undo step rows.
+ */
+export function recordedRollback(
+  views: readonly RunTransactionView[],
+): TransactionRun {
+  return runOf(
+    views.map((view) =>
+      at(
+        {
+          nodeId: view.node_id,
+          instanceKey: view.instance_key,
+          state: view.state,
+          participants: view.participants.map((one) => ({
+            nodeId: one.node_id,
+            instanceKey: one.instance_key,
+            mode: one.mode,
+            status: one.status,
+            effect: one.effect,
+          })),
+        },
+        { state: view.state },
+        ({ status }) => status,
+        view.cause?.instance_key ?? null,
+      ),
+    ),
+    [],
+  );
+}
+
+/** The incident a stuck step of a transaction in doubt opens, as the kernel names it. */
+const STUCK: Readonly<Partial<Record<ParticipantStatus, string>>> = {
+  undo_stuck: "WV-TXN-UNDO-STUCK",
+  cancel_stuck: "WV-TXN-CANCEL-STUCK",
+  confirm_stuck: "WV-TXN-CONFIRM-STUCK",
+};
+/**
+ * The run header's caption for a run whose transaction is in doubt: "Failed
+ * at submit: REQUEST_REFUSED · transaction move is in doubt ·
+ * WV-TXN-UNDO-STUCK". The step and code come from the first transaction in
+ * doubt's cause, the last part from its stuck step (a run records no
+ * incident code with a transaction); a cause its steps don't explain leaves
+ * that part out. Null when no transaction is in doubt.
+ */
+export function inDoubtHeader(
+  views: readonly RunTransactionView[],
+): string | null {
+  const doubt = views.find((view) => view.state === "in_doubt");
+  if (!doubt) return null;
+  const { cause, node_id, participants } = doubt;
+  const stuck = participants.find(
+    ({ mode, status }) =>
+      STUCK[status] !== undefined ||
+      (mode === "irreversible" && status === "unknown"),
+  );
+  const code = stuck && (STUCK[stuck.status] ?? "WV-TXN-PIVOT-UNKNOWN");
+  // "submit, item 3" inside a loop, as the run header names a failed step.
+  const item = cause && itemOf(cause.instance_key);
+  return [
+    ...(cause
+      ? [
+          `Failed at ${instanceStep(cause.instance_key)}${item && `, ${item}`}: ${failureCodeText(cause.code)}`,
+          `transaction ${node_id} is in doubt`,
+        ]
+      : [`Transaction ${node_id} is in doubt`]),
+    ...(code ? [code] : []),
+  ].join(" · ");
 }
 
 /** A moment of the playback: a step of the trace, or an undo step after it. */

@@ -173,11 +173,28 @@ export interface RunRow {
   failedAt: string | null;
   /** The step the run stopped at ("send"); null when it didn't stop at one. */
   at: string | null;
+  /**
+   * A run whose transaction is in doubt: "Failed at submit · move in doubt"
+   * once its transactions are read, else "Transaction in doubt"; null otherwise.
+   */
+  transaction: string | null;
   /** The platform can't show this run: only its ID is known. */
   unavailable: boolean;
 }
 
-export function runRow(item: RunSummaryItem, now: Date): RunRow {
+/** The Runs list's caption of a run in doubt whose transactions Studio hasn't read. */
+export const TRANSACTION_IN_DOUBT = "Transaction in doubt";
+
+/**
+ * One row of the list. `inDoubt` is the caption of this run's transaction in
+ * doubt, when Studio read its transactions; the run summary names neither
+ * the transaction nor its cause.
+ */
+export function runRow(
+  item: RunSummaryItem,
+  now: Date,
+  inDoubt: string | null = null,
+): RunRow {
   if (isUnavailableRun(item))
     return {
       id: item.id,
@@ -194,6 +211,7 @@ export function runRow(item: RunSummaryItem, now: Date): RunRow {
       link: null,
       failedAt: null,
       at: null,
+      transaction: null,
       unavailable: true,
     };
   const outcome = runOutcome(item);
@@ -220,6 +238,10 @@ export function runRow(item: RunSummaryItem, now: Date): RunRow {
       ? `Failed at ${failedStep(item.failed_step)}`
       : null,
     at: item.failed_step ? failedStep(item.failed_step) : null,
+    transaction:
+      item.transaction_state === "in_doubt"
+        ? (inDoubt ?? TRANSACTION_IN_DOUBT)
+        : null,
     unavailable: false,
   };
 }

@@ -43,7 +43,9 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
 import { statusLabel, statusTone } from "../../status-labels";
 import { DebugRun, debugRefusal } from "./debug-run";
 import { dropDebug, takeDebug } from "./run-links";
+import { inDoubtHeader } from "../transactions/rollback";
 import { bannerSummary, handledCaption } from "./run-overlay";
+import { MORE_TRANSACTIONS, TRANSACTIONS_REFUSED } from "./run-transactions";
 import { OTHER_WORKFLOW } from "./runs-tab-state";
 import { environmentName, type RunsView } from "./runs-view";
 
@@ -75,6 +77,7 @@ export class RunHeader {
   /** The list has runs to choose from. */
   readonly listed = computed(() => !!this.tab().state()?.rows().length);
   readonly app = computed(() => this.tab().host());
+  readonly refusedNote = TRANSACTIONS_REFUSED;
   readonly view = computed(() => {
     const chosen = this.chosen();
     if (!chosen) return null;
@@ -104,7 +107,18 @@ export class RunHeader {
     // those Studio read; Debug in editor turns them into simulated ones.
     const handled = chosen.overlay?.handled ?? [];
     const handledCount = Math.max(summary?.handled_errors ?? 0, handled.length);
+    // A run whose transaction is in doubt is on hold, not failed: the step
+    // that failed and the transaction, in parts that wrap whole.
+    const read = chosen.transactions;
+    const doubt = read && "views" in read ? inDoubtHeader(read.views) : null;
     return {
+      inDoubt: doubt ? doubt.split(" · ") : null,
+      transactionsNote:
+        read && "refused" in read && read.refused === "forbidden"
+          ? TRANSACTIONS_REFUSED
+          : read && "more" in read && read.more
+            ? MORE_TRANSACTIONS
+            : null,
       id: chosen.id,
       short: shortId(chosen.id),
       status,
@@ -113,7 +127,8 @@ export class RunHeader {
       failed,
       failedAt: failed ? failedAt : null,
       handled: failed ? "" : handledCaption(handledCount, handled[0] ?? null),
-      debug: failed || handledCount > 0,
+      // A transaction in doubt: Debug in editor reproduces what undid it.
+      debug: failed || handledCount > 0 || !!doubt,
       version,
       older:
         !!version &&
