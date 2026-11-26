@@ -120,7 +120,8 @@ export function transactionSummary({
   );
   return (
     (undone && {
-      text: `The simulated run failed: the transaction ${undone.nodeId} was undone.`,
+      // A failure that changed nothing: the frame and the run log say Canceled.
+      text: `The simulated run failed: the transaction ${undone.nodeId} was ${undone.state === "cancelled" ? "canceled" : "undone"}.`,
       detail: null,
       inDoubt: false,
     }) ??

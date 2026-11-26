@@ -749,13 +749,19 @@ describe.skipIf(!hasPython)("the undo steps played back", () => {
 
 describe.skipIf(!hasPython)("how the run ended, in a sentence", () => {
   const said = (name: Name) => transactionSummary(answers[name]);
-  it("says the transaction was undone, or is in doubt and why", () => {
-    for (const name of ["undone", "definite", "loopStopped"] as const)
+  it("says the transaction was undone or canceled, or is in doubt and why", () => {
+    for (const name of ["undone", "loopStopped"] as const)
       expect(said(name), name).toEqual({
         text: "The simulated run failed: the transaction move was undone.",
         detail: null,
         inDoubt: false,
       });
+    // A failure that changed nothing: the frame and the run log say Canceled.
+    expect(said("definite")).toEqual({
+      text: "The simulated run failed: the transaction move was canceled.",
+      detail: null,
+      inDoubt: false,
+    });
     expect(said("stuck")).toEqual({
       text: "The transaction move is in doubt, so the simulated run stopped.",
       detail:
