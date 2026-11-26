@@ -474,6 +474,16 @@ async def test_a_link_to_an_incident_whose_run_is_withheld_is_left_out(platform)
     assert holding["status"] == "active" and "held_by" not in holding
 
 
+async def test_a_settle_timeout_after_another_incident_still_holds_its_called_run(platform):
+    start = await plain_run(platform)
+    parent, child = await start(), await start()
+    settle, [held] = await seed_case(platform, platform.scope, parent, [child])
+    # Another incident put the transaction in doubt first, so its record names that one; the timeout came after it.
+    await platform.execute("UPDATE run_transactions SET incident_key='hold#confirm:0' WHERE run_id=:run", run=parent)
+    assert [item["id"] for item in (await read(platform, settle))["waits_on"]] == [str(held)]
+    assert (await read(platform, held))["held_by"]["id"] == str(settle)
+
+
 async def test_a_retried_call_leaves_its_earlier_run_in_doubt_out_of_the_case(platform):
     start = await plain_run(platform)
     parent, earlier, retried = await start(), await start(), await start()

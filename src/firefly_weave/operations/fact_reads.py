@@ -143,7 +143,8 @@ _WAITS_ON = (
     "AND i.code='WV-TXN-SETTLE-TIMEOUT' ORDER BY cf.opened_at ASC NULLS LAST,ci.id LIMIT :waits_limit) w) w ON true "
 )
 # An active in-doubt incident of a called run is held by its caller's active settle timeout, when that timeout's
-# transaction lists the step whose latest call started this run.
+# transaction lists the step whose latest call started this run. A settle timeout is at its transaction's own key; the
+# transaction's record names only the first incident that put it in doubt.
 _HELD_BY = (
     "LEFT JOIN LATERAL (SELECT "
     + _linked("pi", "pf", "pr")
@@ -152,7 +153,7 @@ _HELD_BY = (
     + " AND pi.run_id=c.caller_run_id AND pi.status='active' AND pi.code='WV-TXN-SETTLE-TIMEOUT' "
     "JOIN run_transactions pt ON "
     + _SAME.format(a="pt", b="pi")
-    + " AND pt.run_id=pi.run_id AND pt.incident_key=pi.incident_key LEFT JOIN incident_facts pf ON "
+    + " AND pt.run_id=pi.run_id AND pt.instance_key=pi.node_id LEFT JOIN incident_facts pf ON "
     + _SAME.format(a="pf", b="pi")
     + " AND pf.incident_id=pi.id LEFT JOIN run_facts pr ON "
     + _SAME.format(a="pr", b="pi")
