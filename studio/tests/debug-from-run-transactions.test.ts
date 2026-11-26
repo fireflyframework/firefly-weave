@@ -263,6 +263,29 @@ describe("Debug in editor on a run whose transaction was undone", () => {
     expect(JSON.stringify(data)).not.toMatch(/message/i);
   });
 
+  it("copies an unknown outcome as one that may have changed something, whatever effect the view gives", () => {
+    const view_ = view(
+      "in_doubt",
+      [
+        participant("hold", "reserve", "done"),
+        participant("add", "compensate", "unknown", "none"),
+      ],
+      { code: "TIMEOUT", instance_key: "add", effect: "none" },
+    );
+    const { data } = built(
+      source(
+        "suspended",
+        [view_],
+        [FACTS[0], fact("add", "failed", { error_code: "TIMEOUT" })],
+      ),
+    );
+    expect(data.errors?.["add"]).toMatchObject({
+      code: "TIMEOUT",
+      outcome: "unknown",
+      effect: "unknown",
+    });
+  });
+
   it("copies a step with nothing to undo whose failure undid the transaction, without an effect", () => {
     const view_ = view(
       "compensated",
