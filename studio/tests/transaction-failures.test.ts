@@ -524,9 +524,9 @@ describe("where a failure of an undo step is written and read", () => {
 });
 
 /** A controller over the transaction, with what the host checked and the toasts. */
-function controllerOf() {
+function controllerOf(workflow: Workflow = MOVE) {
   const model = new StructuredCanvasAdapter();
-  model.setSource(JSON.stringify(MOVE), "json");
+  model.setSource(JSON.stringify(workflow), "json");
   model.clearHistory();
   const testData = new TestDataService({
     api: {
@@ -553,6 +553,7 @@ function controllerOf() {
   const controller = new StepDetailsController(
     {
       model,
+      draftId: "draft-1",
       perform: (edit: () => void) => edit(),
       notify: (text: string, action?: ToastAction) =>
         void toasts.push({ text, action }),
@@ -671,6 +672,52 @@ describe("what an answer of the dialog writes", () => {
         "hold",
       ),
     ).toMatchObject({ key: "hold#cancel", replacing: null });
+  });
+
+  it("reopens an undo's failure saved for every item of a loop as every item's", async () => {
+    const looped = workflowOf([
+      HOLD,
+      {
+        id: "each",
+        kind: "forEach",
+        items: { ref: "/input/items" },
+        body: { steps: [ADD], output: { literal: null } },
+      },
+      SUBMIT,
+    ]);
+    const { controller } = controllerOf(looped);
+    await controller.setFailure("add#undo", { code: "UNAVAILABLE" });
+    await controller.setFailure("add[1]#undo", { code: "TIMEOUT" });
+    const reopened = (key: string) => {
+      controller.pickOpenedItem({ draftId: "draft-1", key }, "add");
+      const open = simulateOpening(controller, "add", "undo")!;
+      return [open.key, open.current];
+    };
+    // The third item has no failure of its own: every item's stands for it.
+    expect(reopened("add[2]")).toEqual([
+      "add[2]",
+      [
+        {
+          phase: "undo",
+          key: "add#undo",
+          code: "UNAVAILABLE",
+          outcome: "failed",
+          every: true,
+        },
+      ],
+    ]);
+    expect(reopened("add[1]")).toEqual([
+      "add[1]",
+      [
+        {
+          phase: "undo",
+          key: "add[1]#undo",
+          code: "TIMEOUT",
+          outcome: "failed",
+          every: false,
+        },
+      ],
+    ]);
   });
 
   it("is dropped when the item picked isn't the one the dialog opened on", () => {
