@@ -467,7 +467,8 @@ BROKEN = {
 # What Studio adds for a new step; those a person still has to finish.
 NEW = {
     "action": {"uses": "", "with": {"literal": {}}},
-    "callWorkflow": {"uses": "", "with": {"object": {}}, "mode": "wait"},
+    # Studio names no workflow until one is chosen.
+    "callWorkflow": {"mode": "wait", "with": {"literal": {}}},
     "decisionTable": {"uses": "", "with": ref("/input")},
     "forEach": {"concurrency": 1, "maxItems": 1000, "collect": "all", "body": block(output=ref("/item"))},
     "llm": {
