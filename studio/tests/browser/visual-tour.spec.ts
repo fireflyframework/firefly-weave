@@ -203,6 +203,14 @@ import {
   type RunsPage,
 } from "./runs-po";
 import {
+  ADD_STEP as MOVE_ADD,
+  HOLD_STEP as MOVE_HOLD,
+  moveWorkflow,
+  openConnectedMove,
+  step as moveStep,
+  SUBMIT_STEP as MOVE_SUBMIT,
+} from "./transaction-po";
+import {
   EXECUTE_ASKING,
   EXECUTE_CHAIN,
   EXECUTE_ROUTED,
@@ -6291,6 +6299,26 @@ spec:
       new CanvasPage(page).tile("submit").locator(".tile-badge"),
     ).toHaveAttribute("data-badge", "handled");
     await shot("239-error-recorded", { tabs: 0 });
+  },
+  // Publishing a transaction that isn't safe: its problems with their fixes.
+  async "transaction-publish"({ page, shot }) {
+    await openConnectedMove(
+      page,
+      moveWorkflow(
+        MOVE_HOLD() +
+          moveStep("adjust", "target-system.add-quantity@1.0.0") +
+          MOVE_SUBMIT +
+          MOVE_ADD,
+      ),
+    );
+    await command(page, "Publish…");
+    const dialog = page.getByRole("dialog", {
+      name: "Publish move-between-systems 1.0.0",
+    });
+    await expect(dialog).toContainText(
+      "This transaction isn't safe to publish: 3 problems",
+    );
+    await shot("293-transaction-publish", { tabs: 2 });
   },
   async "call-step"({ page, shot }) {
     const details = await openCallStep(page);

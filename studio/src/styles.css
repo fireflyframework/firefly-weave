@@ -1185,6 +1185,12 @@ dd {
 .modal-panel:focus {
   outline: none;
 }
+/* A panel whose content scrolls is a Tab stop of its own: from the keyboard
+   it shows the focus ring, inside its edge. */
+.modal-panel:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
 /* Every dialog ends in one footer: its answers on a rule across the panel,
    at the panel's bottom edge while its content scrolls (the panel's side
    and bottom padding is 28 px). */
