@@ -25,7 +25,6 @@ import { describe, expect, it } from "vitest";
 import {
   leftOutText,
   testDataFromRun,
-  UNDO_LEFT_OUT,
   type RunSource,
 } from "../src/app/editor/runs-tab/debug-from-run";
 import { DebugRun, type DebugHost } from "../src/app/editor/runs-tab/debug-run";
@@ -333,13 +332,52 @@ describe("Debug in editor on a run whose transaction was undone", () => {
     expect(leftOut).toContainEqual({
       key: "add#undo",
       reason: "undo",
-      detail: UNDO_LEFT_OUT,
+      detail:
+        "Studio can't copy an undo's failure from a run. Use Simulate a failure… › Its undo.",
     });
-    expect(UNDO_LEFT_OUT).toBe(
-      "Studio can't copy an undo's failure from a run yet. Use Fail its undo.",
-    );
     expect(leftOutText(leftOut, [])).toBe(
-      "Left out 1 value: add#undo (use Fail its undo).",
+      "Left out 1 value: add#undo (use Simulate a failure… › Its undo).",
+    );
+  });
+
+  it("names Its release or Its confirm for a release or a confirm that got stuck", () => {
+    const released = view(
+      "in_doubt",
+      [
+        participant("hold", "reserve", "cancel_stuck"),
+        participant("add", "compensate", "undone"),
+        participant("submit", "irreversible", "failed", "none"),
+      ],
+      REFUSED,
+    );
+    const release = built(source("suspended", [released])).leftOut;
+    expect(release).toContainEqual({
+      key: "hold#cancel",
+      reason: "undo",
+      detail:
+        "Studio can't copy a release's failure from a run. Use Simulate a failure… › Its release.",
+    });
+    expect(leftOutText(release, [])).toContain(
+      "hold#cancel (use Simulate a failure… › Its release)",
+    );
+    const confirmed = view(
+      "in_doubt",
+      [
+        participant("hold", "reserve", "confirm_stuck"),
+        participant("add", "compensate", "done"),
+        participant("submit", "irreversible", "done", "none"),
+      ],
+      null,
+    );
+    const confirm = built(source("suspended", [confirmed])).leftOut;
+    expect(confirm).toContainEqual({
+      key: "hold#confirm",
+      reason: "undo",
+      detail:
+        "Studio can't copy a confirm's failure from a run. Use Simulate a failure… › Its confirm.",
+    });
+    expect(leftOutText(confirm, [])).toBe(
+      "Left out 1 value: hold#confirm (use Simulate a failure… › Its confirm).",
     );
   });
 

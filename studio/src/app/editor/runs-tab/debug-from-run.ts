@@ -43,7 +43,7 @@ import type {
   StudioTestData,
 } from "../state/test-data";
 import { emptyTestData, fitsTestData } from "../state/test-data-ops";
-import { phaseKey, type Phase } from "../transactions/phase-keys";
+import { phaseKey, splitPhase, type Phase } from "../transactions/phase-keys";
 import { undoChoiceOf } from "../transactions/points";
 import { handledFailures, OVERLAY_FACTS_LIMIT } from "./run-overlay";
 import type { RunRecord } from "./run-record";
@@ -73,7 +73,7 @@ export type LeftOutReason =
   | "code"
   /** A handled failure after more attempts than a simulation takes. */
   | "attempts"
-  /** An undo, release or confirm that got stuck: Fail its undo simulates it. */
+  /** An undo, release or confirm that got stuck: Simulate a failure simulates it. */
   | "undo";
 export interface LeftOut {
   key: string;
@@ -113,8 +113,20 @@ const WAIT_TIMEOUTS: Readonly<Record<string, string>> = {
   humanTask: "WV-HUMAN-EXPIRED",
 };
 export const CODE_LEFT_OUT = "Studio can't simulate this failure's code.";
-export const UNDO_LEFT_OUT =
-  "Studio can't copy an undo's failure from a run yet. Use Fail its undo.";
+/** Why an undo, release or confirm that got stuck is left out, and where to simulate it instead. */
+const UNDO_LEFT_OUT: Readonly<Record<Phase, string>> = {
+  undo: "Studio can't copy an undo's failure from a run. Use Simulate a failure… › Its undo.",
+  cancel:
+    "Studio can't copy a release's failure from a run. Use Simulate a failure… › Its release.",
+  confirm:
+    "Studio can't copy a confirm's failure from a run. Use Simulate a failure… › Its confirm.",
+};
+/** The same, in the list of what was left out. */
+const UNDO_LEFT_OUT_SHORT: Readonly<Record<Phase, string>> = {
+  undo: "use Simulate a failure… › Its undo",
+  cancel: "use Simulate a failure… › Its release",
+  confirm: "use Simulate a failure… › Its confirm",
+};
 /** The undo step a stuck status names. */
 const STUCK_PHASES: Readonly<Partial<Record<string, Phase>>> = {
   undo_stuck: "undo",
@@ -340,7 +352,7 @@ export function testDataFromRun(
         leftOut.push({
           key: phaseKey(one.instance_key, phase),
           reason: "undo",
-          detail: UNDO_LEFT_OUT,
+          detail: UNDO_LEFT_OUT[phase],
         });
       // An undo step that ran without a fact of its own: Execute asks for
       // its test output, and the list says why it wasn't copied.
@@ -536,7 +548,7 @@ const phraseOf = (item: LeftOut) =>
       : item.reason === "attempts"
         ? "more than 1,000 attempts"
         : item.reason === "undo"
-          ? "use Fail its undo"
+          ? UNDO_LEFT_OUT_SHORT[splitPhase(item.key)?.phase ?? "undo"]
           : item.detail;
 
 /** "Left out 2 values: send (marked secret), log (not in this draft)."; "" when nothing was. */
