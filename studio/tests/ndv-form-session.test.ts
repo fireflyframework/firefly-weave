@@ -44,6 +44,7 @@ import { StepDetailsController } from "../src/app/editor/ndv/step-details-contro
 import { openRequest } from "../src/app/editor/ndv/step-details-service";
 import type { StepDetailsHost } from "../src/app/editor/ndv/step-details-host";
 import { StructuredCanvasAdapter } from "../src/app/model";
+import type { RunDataPort } from "../src/app/editor/runs-tab/run-port";
 
 vi.hoisted(() =>
   vi.stubGlobal("document", {
@@ -1931,12 +1932,10 @@ describe("a transaction's business key", () => {
       confirm: async () => true,
       announce: () => undefined,
     });
-    return { form, controller };
+    return { form, controller, host };
   }
-
-  it("never shows what it resolves to with test data, while Result does", async () => {
-    const { form, controller } = transactionSession();
-    await controller.setTestEvent({ moveId: "m-0193" });
+  /** Result shows the value the input gives; the business key never does, in previewOf or in line(). */
+  function expectWithheld(form: FormSession) {
     const result = form
       .state("parameters")
       .fields.find((entry) => entry.spec.path.join("/") === "output")!;
@@ -1958,5 +1957,36 @@ describe("a transaction's business key", () => {
     const line = form.line(key.spec, key);
     expect(line.kind).not.toBe("preview");
     expect(JSON.stringify(line)).not.toContain("m-0193");
+  }
+
+  it("never shows what it resolves to with test data, while Result does", async () => {
+    const { form, controller } = transactionSession();
+    await controller.setTestEvent({ moveId: "m-0193" });
+    expectWithheld(form);
+  });
+
+  it("never shows what it resolved to in a recorded run, while Result does", () => {
+    const { form, host } = transactionSession();
+    // Step details on the Runs tab read the run's own input.
+    Object.assign(host, {
+      runData: {
+        runId: "1c0d7f8a-4d66-4e7c-8b62-5a2c1d3e8f12",
+        environmentId: "4a1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        version: () => 0,
+        input: () => ({ moveId: "m-0193" }),
+        read: () => undefined,
+        refused: () => undefined,
+        output: () => ({ kind: "missing" }),
+        state: () => "finished",
+        iterations: () => [],
+        failure: () => null,
+        handled: () => null,
+        childRun: () => null,
+        label: () => "run 1c0d7f8a",
+        definitionVersion: () => "1.0.0",
+        transaction: () => null,
+      } satisfies Partial<RunDataPort>,
+    });
+    expectWithheld(form);
   });
 });
