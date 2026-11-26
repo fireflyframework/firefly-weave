@@ -39,6 +39,7 @@ import type { Choice, ParamSpec } from "../src/app/editor/ndv/registry";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import { FormSession } from "../src/app/editor/ndv/params/form-session";
+import { formulaPreviews } from "../src/app/editor/formula/preview";
 import { StepDetailsController } from "../src/app/editor/ndv/step-details-controller";
 import { openRequest } from "../src/app/editor/ndv/step-details-service";
 import type { StepDetailsHost } from "../src/app/editor/ndv/step-details-host";
@@ -1875,5 +1876,87 @@ describe("formula scope in loop bodies", () => {
     expect(fixture.session.completionScope(spec).loopEntries).toEqual([]);
     await new Promise((settle) => setTimeout(settle, 0));
     expect(fixture.asked).toEqual([]);
+  });
+});
+
+describe("a transaction's business key", () => {
+  /** move maps its business key and its result from the test input's moveId. */
+  function transactionSession() {
+    const model = new StructuredCanvasAdapter();
+    model.replace({
+      apiVersion: "weave/v1alpha1",
+      kind: "Workflow",
+      metadata: { name: "move-between-systems", version: "1.0.0" },
+      spec: {
+        inputSchema: {
+          type: "object",
+          properties: { moveId: { type: "string" } },
+        },
+        outputSchema: {},
+        steps: [
+          {
+            id: "move",
+            kind: "transaction",
+            businessKey: { ref: "/input/moveId" },
+            steps: [{ id: "note", kind: "transform", value: { literal: {} } }],
+            output: { ref: "/input/moveId" },
+          },
+        ],
+        output: { literal: null },
+      },
+    } as unknown as Workflow);
+    const host = {
+      model,
+      perform: (edit: () => void) => edit(),
+      notify: () => undefined,
+      catalogContracts: new Map(),
+      decisionContracts: new Map(),
+      actionVersions: [],
+      label: (kind: string) => kind,
+      editingLocked: false,
+      profile: null,
+      api: {} as never,
+      diagnostics: null,
+      diagnosticsDefinition: null,
+      can: () => true,
+      refreshView: () => undefined,
+    } as unknown as StepDetailsHost;
+    // The formula previews step details use in the app.
+    const controller: StepDetailsController = new StepDetailsController(
+      host,
+      () => Date.now(),
+      formulaPreviews(() => controller.previewData()),
+    );
+    const form = new FormSession(host, controller, openRequest("move"), {
+      confirm: async () => true,
+      announce: () => undefined,
+    });
+    return { form, controller };
+  }
+
+  it("never shows what it resolves to with test data, while Result does", async () => {
+    const { form, controller } = transactionSession();
+    await controller.setTestEvent({ moveId: "m-0193" });
+    const result = form
+      .state("parameters")
+      .fields.find((entry) => entry.spec.path.join("/") === "output")!;
+    const key = form
+      .state("settings")
+      .fields.find((entry) => entry.spec.id === "businessKey")!;
+    // The test input reaches the preview: Result, and the Result panel, show it.
+    expect(form.previewOf(result.spec, form.read(result.spec))).toEqual({
+      ok: true,
+      value: "m-0193",
+    });
+    expect(form.line(result.spec, result)).toMatchObject({
+      kind: "preview",
+      text: "= m-0193",
+    });
+    // The business key shows its mapping only: no preview, no "=" line.
+    expect(form.read(key.spec)).toMatchObject({ mode: "mapped" });
+    expect(form.previewOf(key.spec, form.read(key.spec))).toBeNull();
+    const line = form.line(key.spec, key);
+    expect(line.kind).not.toBe("preview");
+    expect(JSON.stringify(line)).not.toContain("m-0193");
   });
 });
