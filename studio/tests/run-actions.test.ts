@@ -29,6 +29,7 @@ import {
   waitingSignal,
 } from "../src/app/operate/runs/run-actions";
 import type { App } from "../src/app/app";
+import { describeError } from "../src/app/errors";
 import type { Node } from "../src/app/model";
 import type { RunTransactionView } from "../src/app/operate/transactions/transaction-contracts";
 import { typedConfirmation } from "../src/app/operate/transactions/transaction-record";
@@ -184,6 +185,8 @@ function shell(open: string | null = first) {
   const platform: {
     transactions: RunTransactionView[] | null;
     pages?: RunTransactionView[][];
+    /** What a read answers instead, when the platform refuses it. */
+    refusal?: unknown;
   } = {
     transactions: [],
   };
@@ -215,6 +218,7 @@ function shell(open: string | null = first) {
       }),
       request: async <T>(path: string): Promise<T> => {
         calls.transactionReads.push(path);
+        if (platform.refusal) throw platform.refusal;
         if (platform.transactions === null)
           throw refused(503, "WV-UNAVAILABLE", "Down");
         const pages = platform.pages ?? [platform.transactions];
@@ -1034,6 +1038,58 @@ describe("Cancel without undoing", () => {
       "add · Reversible: still running and may finish; Weave won't undo it",
       "ship · Reversible: Weave won't undo it",
     ]);
+  });
+
+  it.each([
+    [429, "WV-RUNTIME-LIMIT", "Retained run exceeds the bounded fetch budget"],
+    [409, "WV-LEGACY-UNAVAILABLE", "Run state is unavailable"],
+  ])(
+    "of a run whose read answers %s %s is the way out: offered, with nothing listed, and sends skip_undo",
+    async (status, code, message) => {
+      const s = shell();
+      const refusal = refused(status, code, message);
+      // The run's page couldn't list its transactions: the platform takes no decision on its incidents.
+      s.actions.unreadable(first, describeError(refusal));
+      expect(s.actions.withoutUndoing()).toEqual({ blocked: null });
+      expect(s.actions.waits()).toBeNull();
+      s.platform.refusal = refusal;
+      await s.actions.cancelWithoutUndoing();
+      expect(s.actions.cancelDialog).toMatchObject({
+        mode: "without_undo",
+        lines: [],
+        unlisted: true,
+      });
+      void s.actions.confirmWithoutUndoing("Too large to decide");
+      await s.settle();
+      expect(s.calls.sent).toEqual([
+        {
+          path: `/env/runs/${first}/cancel`,
+          body: { reason: "Too large to decide", skip_undo: true },
+        },
+      ]);
+    },
+  );
+
+  it("isn't offered for a run whose read failed for any other reason", async () => {
+    const s = shell();
+    s.actions.unreadable(
+      first,
+      describeError(refused(503, "WV-UNAVAILABLE", "Down")),
+    );
+    expect(s.actions.withoutUndoing()).toBeNull();
+    // Nor once its transactions are read: they say what is offered.
+    s.actions.unreadable(
+      first,
+      describeError(refused(429, "WV-RUNTIME-LIMIT", "Too large")),
+    );
+    s.actions.know(first, [settled], true);
+    expect(s.actions.withoutUndoing()).toBeNull();
+    // A run the platform can't read is about that run alone.
+    s.actions.unreadable(
+      second,
+      describeError(refused(429, "WV-RUNTIME-LIMIT", "Too large")),
+    );
+    expect(s.actions.withoutUndoing()).toBeNull();
   });
 
   it("refuses in Studio when pages remain past the ones it reads, and sends nothing", async () => {

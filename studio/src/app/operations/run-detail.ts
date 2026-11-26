@@ -281,6 +281,7 @@ const isRecord = (value: unknown): value is Json =>
         [mode]="cancel.mode"
         [runId]="cancel.target.id"
         [lines]="cancel.lines"
+        [unlisted]="cancel.unlisted"
         [incidentId]="cancel.incidentId"
         [sending]="cancel.sending"
         (confirm)="actions.confirmWithoutUndoing($event)"
@@ -421,7 +422,10 @@ const isRecord = (value: unknown): value is Json =>
         listed = $event;
         actions.know($event.runId, $event.views, $event.complete)
       "
-      (unread)="listed = { runId: $event, views: [], complete: false }"
+      (unread)="
+        listed = { runId: $event.runId, views: [], complete: false };
+        actions.unreadable($event.runId, $event.problem)
+      "
     />
     @if (timeline(); as view) {
       <weave-step-timeline [view]="view" />

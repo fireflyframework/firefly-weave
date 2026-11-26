@@ -418,7 +418,10 @@ the run ends. **Cancel without undoing** lists what stays done in other systems
 and asks for a reason and the run's short ID. While a transaction is in doubt,
 neither is sent: **Open incident** takes you to the decision it waits for. A run
 held because it grew too large to undo its transactions can't be canceled either
-way: force end it from its incident.
+way: force end it from its incident. When the platform can't read the run,
+because it is too large or withheld, its incidents take no decision, so
+**Cancel without undoing** is offered as the way out; Studio can't list what
+stays done then.
 
 ### Know when a transaction is in doubt
 

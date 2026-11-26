@@ -286,8 +286,8 @@ export class RunTransactions implements DoCheck, OnDestroy {
     views: RunTransactionView[];
     complete: boolean;
   }>();
-  /** A read failed or was refused and no transaction of the run is listed. */
-  unread = output<string>();
+  /** A read failed or was refused, with why, and no transaction of the run is listed. */
+  unread = output<{ runId: string; problem: PlainError }>();
   private cdr = inject(ChangeDetectorRef);
   private element = inject(ElementRef<HTMLElement>);
   private router = inject(Router);
@@ -401,14 +401,15 @@ export class RunTransactions implements DoCheck, OnDestroy {
         this.phase = "forbidden";
         this.views = [];
         this.next = null;
-        this.unread.emit(scope.runId);
+        this.unread.emit({ runId: scope.runId, problem: plain });
         this.changed();
         return;
       }
       this.failures++;
       this.problem = plain;
       this.phase = "failed";
-      if (!this.views.length) this.unread.emit(scope.runId);
+      if (!this.views.length)
+        this.unread.emit({ runId: scope.runId, problem: plain });
     }
     this.schedule(scope);
     this.changed();

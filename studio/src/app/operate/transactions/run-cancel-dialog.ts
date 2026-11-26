@@ -69,7 +69,12 @@ import { typedConfirmation, type StaysDoneLine } from "./transaction-record";
             Steps already done stay done in other systems: Weave won't undo
             them, and the run's transactions end Force ended.
           </p>
-          @if (lines().length) {
+          @if (unlisted()) {
+            <p class="dialog-message">
+              The platform can't read this run, so Studio can't list what stays
+              done. Check the other systems after it ends.
+            </p>
+          } @else if (lines().length) {
             <section class="stays-done" aria-labelledby="stays-done-title">
               <h3 id="stays-done-title">Stays done in other systems</h3>
               <ul>
@@ -140,6 +145,8 @@ export class RunCancelDialog {
   mode = input.required<"in_doubt" | "without_undo">();
   runId = input.required<string>();
   lines = input<StaysDoneLine[]>([]);
+  /** The platform can't read the run: nothing it did can be listed. */
+  unlisted = input(false);
   incidentId = input<string | null>(null);
   sending = input(false);
   confirm = output<string>();

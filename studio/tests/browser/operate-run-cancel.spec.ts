@@ -77,10 +77,17 @@ interface Platform {
   /** Answers runs.cancel; the default accepts it. */
   cancel: (route: Route) => Promise<void>;
 }
+/** What the platform answers every read of the run with when it can't read it. */
+interface Unreadable {
+  status: number;
+  code: string;
+  message: string;
+}
 async function platform(
   page: Page,
   capabilities: string[],
   transactions: RunTransactionView[],
+  unreadable?: Unreadable,
 ): Promise<Platform> {
   await connected(page, { capabilities });
   const result: Platform = {
@@ -88,7 +95,13 @@ async function platform(
     posts: [],
     cancel: (route) => route.fulfill({ json: { id: loopRunId } }),
   };
+  const refuse = (route: Route) =>
+    route.fulfill({
+      status: unreadable!.status,
+      json: { code: unreadable!.code, message: unreadable!.message },
+    });
   await page.route(`${environment}/runs/*`, (route) => {
+    if (unreadable) return refuse(route);
     const id = new URL(route.request().url()).pathname.split("/").pop()!;
     return route.fulfill({
       json: {
@@ -117,6 +130,7 @@ async function platform(
   );
   // Pages of 50, as Studio asks for them; the cursor is where the next starts.
   await page.route(`${environment}/runs/*/transactions?*`, (route) => {
+    if (unreadable) return refuse(route);
     const url = new URL(route.request().url());
     const at = Number(url.searchParams.get("cursor") ?? 0);
     const end = at + 50;
@@ -423,6 +437,42 @@ test("Cancel without undoing is offered past the first 50 transactions, and list
     /add\[6\]\s*· Reversible: still running and may finish; Weave won't undo it/,
   ]);
 });
+
+for (const unreadable of [
+  {
+    status: 429,
+    code: "WV-RUNTIME-LIMIT",
+    message: "Retained run exceeds the bounded fetch budget",
+  },
+  {
+    status: 409,
+    code: "WV-LEGACY-UNAVAILABLE",
+    message: "Run state is unavailable",
+  },
+])
+  test(`Cancel without undoing is the way out of a run whose reads answer ${unreadable.code}`, async ({
+    page,
+  }) => {
+    const runs = await platform(page, reconciler, [running], unreadable);
+    const button = actionRow(page).getByRole("button", {
+      name: "Cancel without undoing",
+    });
+    await expect(button).not.toHaveAttribute("aria-disabled", "true");
+    await button.click();
+    const cancel = dialog(page, "Cancel without undoing?");
+    await expect(cancel).toContainText(
+      "The platform can't read this run, so Studio can't list what stays done.",
+    );
+    await expect(cancel.locator(".stays-done")).toHaveCount(0);
+    await cancel.getByLabel("Reason").fill("Too large to decide");
+    await cancel.getByLabel(`Type ${short} to confirm`).fill(short);
+    await cancel
+      .getByRole("button", { name: "Cancel without undoing" })
+      .click();
+    await expect
+      .poll(() => runs.posts)
+      .toEqual([{ reason: "Too large to decide", skip_undo: true }]);
+  });
 
 test("Cancel without undoing isn't offered without an unfinished transaction", async ({
   page,

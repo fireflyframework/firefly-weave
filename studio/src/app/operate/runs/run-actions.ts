@@ -204,6 +204,20 @@ export const IN_DOUBT_LINE =
 /** Why neither cancel can be sent for a run held whole. */
 export const HELD_LINE =
   "This run is held, so it can't be canceled. Force end it from its incident.";
+/**
+ * Whether a read of the run answers that the platform can't read it: too
+ * large to read (HTTP 429 WV-RUNTIME-LIMIT), or withheld (HTTP 409
+ * WV-LEGACY-UNAVAILABLE). Its incidents then take no decision, so the
+ * platform lets Cancel without undoing end it.
+ */
+export function platformCantRead(
+  problem: Pick<PlainError, "status" | "code">,
+): boolean {
+  return (
+    (problem.status === 429 && problem.code === "WV-RUNTIME-LIMIT") ||
+    (problem.status === 409 && problem.code === "WV-LEGACY-UNAVAILABLE")
+  );
+}
 /** Why a cancel waits, and the incident to resolve first when one is known. */
 export interface CancelWait {
   text: string;
@@ -222,6 +236,8 @@ export interface CancelDialog {
   incidentId: string | null;
   /** What stays done in other systems, from the transactions just read. */
   lines: StaysDoneLine[];
+  /** The platform can't read the run, so nothing can be listed. */
+  unlisted: boolean;
   sending: boolean;
 }
 
@@ -256,6 +272,8 @@ export class RunActions {
      */
     base: boolean;
   } | null = null;
+  /** The run whose last read answered that the platform can't read it. */
+  private unreadRun = "";
 
   constructor(
     private readonly host: () => App,
@@ -290,6 +308,8 @@ export class RunActions {
       this.known = null;
       return;
     }
+    // Read now, it says what is offered.
+    if (this.unreadRun === runId) this.unreadRun = "";
     if (base || !held?.base || held.runId !== runId) {
       this.known = { runId, views, complete, base };
       return;
@@ -306,6 +326,15 @@ export class RunActions {
       complete: false,
       base: true,
     };
+  }
+  /**
+   * A read of the run's transactions failed with `problem`: when the platform
+   * can't read the run, Cancel without undoing is its way out, though nothing
+   * can be listed. Any other failure says nothing of what is offered.
+   */
+  unreadable(runId: string, problem: PlainError) {
+    if (platformCantRead(problem)) this.unreadRun = runId;
+    else if (this.unreadRun === runId) this.unreadRun = "";
   }
   /** The detail is gone; answers still say what happened, but draw nothing. */
   destroy() {
@@ -411,6 +440,7 @@ export class RunActions {
         target,
         incidentId: doubt.incident_id ?? null,
         lines: [],
+        unlisted: false,
         sending: false,
       };
       this.changed();
@@ -505,16 +535,19 @@ export class RunActions {
    * while a transaction of the run hasn't settled, or while some of its
    * transactions are unread, where one may not have: pressing it reads every
    * page, which decides. `blocked` says why it waits while one is in doubt, or
-   * while the run is held whole. Null when it isn't offered.
+   * while the run is held whole. A run the platform can't read is offered it
+   * as its way out. Null when it isn't offered.
    */
   withoutUndoing(): { blocked: CancelWait | null } | null {
     const host = this.host();
     const run = this.run();
     const id = text(run["id"]);
     const known = this.known;
-    if (!id || isTerminal(run) || known?.runId !== id) return null;
+    if (!id || isTerminal(run)) return null;
     if (!host.can("run.cancel", id) || !host.can("transaction.reconcile", id))
       return null;
+    if (this.unreadRun === id) return { blocked: null };
+    if (known?.runId !== id) return null;
     if (
       known.complete &&
       !known.views.some((view) => UNSETTLED.includes(view.state))
@@ -555,6 +588,19 @@ export class RunActions {
         undefined,
         "danger",
       );
+    if (!read && this.unreadRun === target.id) {
+      // The platform can't read the run: this cancel is its way out.
+      this.cancelDialog = {
+        mode: "without_undo",
+        target,
+        incidentId: null,
+        lines: [],
+        unlisted: true,
+        sending: false,
+      };
+      this.changed();
+      return;
+    }
     if (!read) return unread("its transactions");
     this.know(target.id, read.views, read.complete, true);
     const doubt = read.views.find((view) => view.state === "in_doubt");
@@ -573,6 +619,7 @@ export class RunActions {
       target,
       incidentId: null,
       lines: staysDone(unsettled),
+      unlisted: false,
       sending: false,
     };
     this.changed();
@@ -638,8 +685,9 @@ export class RunActions {
   }
   /**
    * The run's transactions, page after page up to MAX_PAGES (500), and
-   * whether that was all of them; null when they couldn't be read. Its
-   * newest transactions, the likeliest unsettled, come last.
+   * whether that was all of them; null when they couldn't be read, and then
+   * whether the platform can't read the run is kept. Its newest
+   * transactions, the likeliest unsettled, come last.
    */
   private async readTransactions(
     target: RunTarget,
@@ -659,7 +707,8 @@ export class RunActions {
         if (!cursor) break;
       }
       return { views, complete: !cursor };
-    } catch {
+    } catch (error) {
+      this.unreadable(target.id, describeError(error));
       return null;
     }
   }
