@@ -191,7 +191,9 @@ and the trigger, and **On error** for every step except **Wait for time**,
 **Fail** and a **Call a workflow** that doesn't wait; End has no **Settings**
 tab. **Result on error** joins **On error** while it is **Continue with error
 output**; [On error in Settings](#on-error-in-settings) lists what each step
-offers. Labels can
+offers. A step inside a transaction that changes data also has
+[How it's undone](#how-its-undone-in-settings) between **Timeout** and **On
+error**. Labels can
 differ from the inspector's: the same property may read **Assign to** in step
 details and **Assignment binding** in the inspector.
 
@@ -218,6 +220,7 @@ details and **Assignment binding** in the inspector.
 | Fail | **Error code**, **Message** | | |
 | Call a workflow | **Workflow**, **Input**, **When it runs**, and **If it fails** for a call that waits | **Business key** | **On error** and **Result on error** for a call that waits |
 | Loop over items | **Items** | **At a time**, **Up to**, **Results**, **Result per item** | **On error**, read-only **Stop the run** |
+| Transaction | **Result** | | **Business key**, **Hold reservations for**, **Undo retries**, **Give up undoing after**, **On error**, **Result on error** |
 | End | **Result fields** | **Result schema** | |
 
 #### On error in Settings
@@ -236,6 +239,7 @@ to use them. What the row shows depends on the step:
 | Wait for signal | The three choices | "Applies when no signal arrives within Wait at most." |
 | Human task | The three choices | "Applies when the task expires (Expires after)." |
 | Decision, Parallel, Loop over items | **Stop the run**, read-only | "The run fails with this step's error. You can retry it from Operate." |
+| Transaction | The three choices, each about the transaction being undone: "If the transaction is undone, the run fails. Nothing stays applied." | "A transaction in doubt always waits for a person; On error never handles it." |
 | Wait for time, Fail, a Call a workflow that doesn't wait | No row | — |
 
 On a platform that can't handle step errors (its language manifest doesn't list
@@ -244,6 +248,27 @@ read-only instead, with "Update the platform to continue after errors."
 **Result on error** is what later steps read as the step's output after its
 error path. It opens as an empty Mapped field that reads "Empty (null)" until
 you map it or choose Fixed. Cleared, it is null again.
+
+#### How it's undone in Settings
+
+**How it's undone** appears on a step inside a transaction that changes data:
+an action, an API or email step, or a **Call a workflow** that waits. It offers
+three choices, with nothing chosen until you choose; the
+[Studio guide](studio.md#say-how-each-step-is-undone) shows how to use them.
+
+| Choice | Fields | Written to the step |
+| --- | --- | --- |
+| **Reserve, then confirm** | **Confirm with**, **Release with**, **Hold for** (the transaction's **Hold reservations for** by default) | `confirm`, `cancel`, and `holdSeconds` only when **Hold for** differs |
+| **An action that reverses it** | **Reverse with** | `compensate` |
+| **Can't be undone** | None | `irreversible: true` |
+
+Each operation field lists the project's published actions, then its workflows,
+and shows the chosen one's input as rows. A row that can't be chosen says why:
+an action that isn't safe to retry, or a workflow without a time limit. An
+action that only reads shows "Doesn't change anything, nothing to undo," read
+only. A step outside a transaction that still has these fields shows the
+compiler's finding with **Clear How it's undone**. A **Call a workflow** that
+doesn't wait has no row.
 
 ### Manual form trigger
 
@@ -546,6 +571,19 @@ empty results), and **Result per item** at the item itself. Removing an option
 writes its default back. The steps inside read the current item as `item`, its
 position as `index`, and an outer loop's item as `loops.<id>.item`. On error
 stays **Stop the run**. See [Loop over items](studio.md#loop-over-items) for the
+whole path.
+
+### Transaction
+
+A **Transaction** runs its steps so that either all of them go through or what
+they did is undone. Add steps to its frame like a loop's, or select steps next
+to each other and choose **Group in a transaction**. **Result** is what later
+steps read as its output; they can't read the steps inside it. **Business key**
+is shown in Operations and in platform events, never in Studio, so map a
+reference, never personal data. **Hold reservations for** (15 minutes), **Undo
+retries** (10 tries, 2 s to 5 min apart) and **Give up undoing after** (1 day)
+write `policy` only once one of them differs from its default. See
+[Run steps as a transaction](studio.md#run-steps-as-a-transaction) for the
 whole path.
 
 ### Call an API

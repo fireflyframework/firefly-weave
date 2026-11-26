@@ -289,6 +289,21 @@ start never suspends a run or opens an incident:
 The `weave.event_starts` metric counts starts by status (`ok`, `rejected`,
 `blocked`).
 
+## In Studio
+
+Studio builds the same transaction on the canvas. **Add a step** › **Flow** ›
+**Transaction** draws a frame, and **Group in a transaction** puts steps you
+already have into one. Each step inside it says how it is undone in
+**Settings** › **How it's undone**: **Reserve, then confirm**, **An action that
+reverses it** or **Can't be undone**. A dashed **Point of no return** follows
+the step that can't be undone, and the compiler's findings come with fixes such
+as **Move to end**. **Simulate a failure…** fails a step or its undo, and
+**Execute workflow** plays the undo steps in the order Weave runs them. The
+**Runs** tab shows a recorded run's transactions with the same words, and
+**Open in Operate** opens a transaction in doubt.
+[Run steps as a transaction](studio.md#run-steps-as-a-transaction) walks
+through it.
+
 ## Test a step that takes part in a transaction
 
 A debug session simulates a transaction with mocks for each step and for its
