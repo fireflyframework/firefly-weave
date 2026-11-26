@@ -135,9 +135,38 @@ SPDX-License-Identifier: Apache-2.0
   `WV-RUNTIME-EVENT` or stops the environment's recovery. That work is canceled,
   its lease is revoked, a late report answers `409 WV-LEASE`, and the run goes on
   or ends as decided. Environments an earlier version left stuck recover by
-  themselves. Mark as reconciled answers `409 WV-RUNTIME-STATE` while a failed
-  attempt of one of the transaction's steps is still handled: send it again after
-  the next recovery scan. Force end doesn't wait.
+  themselves.
+- A transaction in doubt behind more than one incident can be decided: each
+  incident takes a decision, Mark as reconciled and Force end close all of them,
+  and the person is recorded on each. A run an earlier version left suspended
+  goes on from its incident (`retry_safe` closes one with nothing left to decide,
+  recorded as `leftover`), and pausing a suspended run that shows no incident
+  brings it back. An incident can open again under the same ID.
+- A decision is checked against the deadlines and called runs that fell due
+  before it: one taken on an older view answers `409 WV-INCIDENT-REVISION` and
+  changes nothing. A `receipt_id` already used in the run answers
+  `409 WV-INCIDENT-RECEIPT-CONFLICT`. A decision is no longer refused when, in
+  the same event, another transaction finished its block. Force end applies only
+  what ends the run, and it works at a full byte quota and for a run held for
+  its size. The `run.cancel` audit row lists the incidents it closed in
+  `closed`.
+- **Behavior change:** `incidents.resolve` answers
+  `422 WV-TXN-RECONCILE-INCOMPLETE` when a record leaves out a step whose end
+  Weave doesn't know; an incident's revision rises with its transaction; a
+  cancel with `skip_undo` answers `409 WV-TXN-IN-DOUBT` while the run has an
+  open transaction and any incident in doubt is open. `transaction.in_doubt` is
+  sent again when another incident holds the transaction. Upgrade CLIs, SDKs,
+  and Studio with the server.
+- A page of incidents ends before 8 MiB with a `next_cursor`, where it used to
+  answer `429`, so a page can hold fewer than `limit` incidents and still have
+  more after it.
+- A step that fails for good beside the one that can't be undone is no longer
+  lost: it goes back with the transaction, or waits for a person once that one
+  went through.
+- It happened works after a called step's time is up, also when its run ended
+  badly, and a run that fails as one of its transactions finishes ends.
+- A simulated cancel while a transaction is in doubt answers `WV-DEBUG-STATE`,
+  as a platform does.
 
 ### Operations
 
