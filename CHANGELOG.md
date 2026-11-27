@@ -167,6 +167,22 @@ SPDX-License-Identifier: Apache-2.0
   badly, and a run that fails as one of its transactions finishes ends.
 - A simulated cancel while a transaction is in doubt answers `WV-DEBUG-STATE`,
   as a platform does.
+- Incident lists filter by `priority` (`high` for transactions in doubt,
+  `normal` for every other incident), each with its own cursor.
+- A settle timeout names the in-doubt incidents of the called runs it waits for
+  (`waits_on`), and they name it (`held_by`). Called transaction steps name
+  their run (`child_run_id`).
+- The environment summary counts the transactions in doubt and those being
+  undone, and incidents of transactions in doubt lead **Needs attention**.
+- Alert rules can watch `transactions.in_doubt` and
+  `transactions.undo_age_seconds`; a rule on either needs `run.read`. Every
+  environment gets the rule "Transactions in doubt" (critical), an existing one
+  at the alert evaluator's next visit, and "A transaction has been undoing over
+  1 hour" is suggested.
+- A run's transactions name the workflow run that resolved them: a
+  `runs.transactions` resolution applied by a workflow run's resolve step
+  carries `workflow_run_id`, as the incident's resolution does; a resolution by
+  a person leaves it out.
 
 ### Operations
 
@@ -474,6 +490,56 @@ SPDX-License-Identifier: Apache-2.0
   with **Apply**, telemetry export, and how long operations data is kept; each
   section says what access it needs when you lack it. **Settings › Preferences**
   adds **My alert address**.
+- **Operate › Runs** shows the state of each run's worst transaction in a
+  **Transaction** column, and **Needs attention** and **More filters ›
+  Transaction** filter on it. A run's detail has a **Transactions** section with
+  each transaction's steps, how each is undone, its operation keys, and how it
+  was resolved. From there, **Cancel run** undoes a run's unfinished
+  transactions before it ends, and **Cancel without undoing** lists what stays
+  done in other systems and asks for a reason and the run's short ID.
+- **Operate › Overview** counts the transactions in doubt and those being
+  undone, and links to the runs that need attention. The alert rule editor says
+  that the two signals about transactions count the whole environment.
+- **Operate › Incidents** lists transactions in doubt first, under **High
+  priority**, and groups a caller's settle timeout with the called run's
+  incident to resolve first. The drawer of a transaction in doubt shows its
+  record, what stays applied, its business key, and the related incidents. An
+  incident of a transaction in a loop names its iteration, such as `hold[3]`, in
+  its row, its drawer, and its case.
+- For a transaction in doubt, **Operate › Incidents** offers the decisions that
+  fit it and the person: retry the undo, release, confirm, or step, **Wait
+  again**, **Mark as reconciled** with a checklist of every step whose end Weave
+  doesn't know, **It happened** or **It didn't happen** for the step that can't
+  be undone, and **Force end**.
+- Mark as reconciled asks about every step after the point of no return that
+  failed behind its own open incident, whichever incident it is opened from. A
+  record the platform refuses for a step it leaves out
+  (`WV-TXN-RECONCILE-INCOMPLETE`) is read again and shown under the checklist.
+- An incident whose transaction a person already ended offers only **Continue
+  the run**, which closes it, and **Force end**.
+- A typed result is refused when a number or a repeated key would be sent as
+  another value, in **Resolve incident** too.
+- **Cancel without undoing** is offered for a run the platform can't read, too
+  large or withheld, as its way out; its dialog says Studio can't list what
+  stays done.
+- For a withheld run, the **Cancel without undoing** dialog says that Weave
+  won't undo the steps already done and that Studio can't list them, so check
+  the other systems after the run ends. It says that the run's transactions end
+  **Force ended** only for a run too large to read.
+- On a run with more than 500 transactions, **Cancel without undoing** still
+  says when one of them is in doubt.
+- Studio's Incidents page works with earlier platforms: 0.1.0a16 to 0.1.0a19,
+  which refuse `priority`, and older ones, which ignore it, show one list
+  without a **High priority** band.
+- A refresh of the Incidents page keeps the keyboard focus on its incident's
+  row, in one list, in the bands, and in a case. When an incident leaves the
+  list, the focus goes to the next row, and it stays on **Try again** when an
+  incident fails in another way. Closing the drawer returns the focus to the row
+  that opened it, or to the list when the drawer sits beside it.
+- An incident that can't be found or is refused offers **Try again**, and
+  **Open** on a case member that isn't in the list reads it again. An incident
+  still being read doesn't open after the address stops naming it, and a
+  decided incident's drawer keeps when it opened and its workflow.
 
 ### Development and testing
 

@@ -18,7 +18,8 @@
 
 Lists are newest opened first by default; incidents with an unknown opening time come last. Explicit ID order without
 filters keeps the cursors issued before incidents had filters. `node_id` is a static step ID and matches every
-instance of that step.
+instance of that step. `priority` lists the incidents of transactions in doubt (`high`) or every other one (`normal`),
+so a reader can show the first ahead of the rest with a cursor for each.
 """
 
 from __future__ import annotations
@@ -42,6 +43,8 @@ from firefly_weave.contracts.run_views import (
 
 type IncidentStatus = Literal["active", "closed", "resolved"]
 type IncidentOrder = Literal["opened_desc", "opened_asc", "id"]
+# high: the incidents of transactions in doubt (the codes in IN_DOUBT_CODES); normal: every other incident.
+type IncidentPriority = Literal["high", "normal"]
 type IncidentStatusFilter = Annotated[list[IncidentStatus], Field(max_length=3)]
 
 
@@ -55,6 +58,8 @@ class IncidentQuery(ContractModel):
     opened_after: AwareDatetime | None = None
     opened_before: AwareDatetime | None = None
     include_test: bool = False
+    # Unset lists both priorities, and is left out of the cursor digest so cursors issued before it stay valid.
+    priority: IncidentPriority | None = None
     order: IncidentOrder = "opened_desc"
     limit: SummaryLimit = 50
     cursor: Cursor | None = None
@@ -85,5 +90,6 @@ class IncidentQuery(ContractModel):
         collection = "incidents" if run_id is None else f"incidents.run/{run_id}"
         if self.order == "id" and self.unfiltered():
             return collection
-        filters = self.model_dump(mode="json", exclude={"order", "limit", "cursor"})
+        unbound = {"order", "limit", "cursor"} | ({"priority"} if self.priority is None else set())
+        filters = self.model_dump(mode="json", exclude=unbound)
         return f"{collection}:{_digest(filters)}:{self.order}"

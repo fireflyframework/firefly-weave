@@ -35,6 +35,7 @@ from firefly_weave.contracts.operations_summary import (
     IncidentsSection,
     LoadSection,
     TargetsSection,
+    TransactionsSection,
     UnavailableSection,
     WorkersSection,
 )
@@ -52,6 +53,7 @@ from firefly_weave.operations.summary import (
     read_runners_offline,
     read_section,
     read_targets,
+    read_transactions,
     read_workers,
 )
 from firefly_weave.persistence.uow import Transaction
@@ -97,6 +99,9 @@ ALERT_SIGNALS: Mapping[str, SignalSpec] = MappingProxyType(
         "targets.runner_offline": SignalSpec("count", "gauge", _TARGET),
         "deployments.reconciliation_required": SignalSpec("count", "gauge", _TARGET),
         "health.degraded": SignalSpec("count", "gauge", _NONE),
+        "transactions.in_doubt": SignalSpec("count", "gauge", _NONE),
+        # The oldest transaction still undoing, counted from when it opened; no data while nothing is undoing.
+        "transactions.undo_age_seconds": SignalSpec("seconds", "gauge", _NONE),
     }
 )
 
@@ -186,6 +191,8 @@ class SignalSource(Protocol):
 
     async def incidents(self) -> IncidentsSection: ...
 
+    async def transactions(self) -> TransactionsSection: ...
+
     async def targets(self, targets: tuple[UUID, ...] | None) -> TargetsSection: ...
 
     async def runners_offline(self, targets: tuple[UUID, ...] | None) -> int: ...
@@ -234,6 +241,9 @@ class DatabaseSource:
 
     async def incidents(self) -> IncidentsSection:
         return await read_incidents(self.reader)
+
+    async def transactions(self) -> TransactionsSection:
+        return await read_transactions(self.reader)
 
     async def targets(self, targets: tuple[UUID, ...] | None) -> TargetsSection:
         return await read_targets(self.reader, targets)
@@ -317,6 +327,19 @@ async def _incidents_active(
     return Value(float((await source.incidents()).active))
 
 
+async def _transactions_in_doubt(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    return Value(float((await source.transactions()).in_doubt))
+
+
+async def _undo_age(
+    source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
+) -> Value:
+    # Nothing undoing is no data: a rule on it neither fires nor resolves on a made-up age.
+    return Value((await source.transactions()).oldest_undoing_seconds)
+
+
 async def _workers_online(
     source: SignalSource, health: LoopHealth, rule: AlertRuleDraft, now: datetime, targets: tuple[UUID, ...] | None
 ) -> Value:
@@ -369,6 +392,8 @@ READERS: Mapping[str, SignalRead] = MappingProxyType(
         "targets.runner_offline": _runner_offline,
         "deployments.reconciliation_required": _reconciliation_required,
         "health.degraded": _health_degraded,
+        "transactions.in_doubt": _transactions_in_doubt,
+        "transactions.undo_age_seconds": _undo_age,
     }
 )
 

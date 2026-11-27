@@ -39,6 +39,8 @@ export const alertSignals = [
   "targets.runner_offline",
   "deployments.reconciliation_required",
   "health.degraded",
+  "transactions.in_doubt",
+  "transactions.undo_age_seconds",
 ] as const;
 export type AlertSignal = (typeof alertSignals)[number];
 export const alertUnits = ["count", "ratio", "seconds"] as const;

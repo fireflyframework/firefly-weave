@@ -18,8 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 // What each operations list shows: its columns, a row's title and secondary
 // line, its status pill, and the run detail's "Now", timeline and step list.
 // Pure functions: the records view renders them, tests check them.
+import { TRANSACTION_CODE_TEXT } from "../editor/transactions/transaction-words";
 import { durationText, relativeTime, shortId, toDate } from "../format";
 import { localKeepLabel } from "../local-drafts";
+import { incidentStep } from "../operate/incidents/incidents-model";
+import { stoppedForTransaction } from "../operate/transactions/transaction-contracts";
 import {
   runStatus,
   statusLabel,
@@ -333,24 +336,43 @@ export function runNow(
       : { lead: "Waiting", subject: "", rest: "", action: "" };
 }
 
-/** "This run stopped at {step}." and the incident text, or null. */
-export function runIncident(run: Json): { step: string; text: string } | null {
+/**
+ * "This run stopped at {step}." and why, or null. The step is null when the
+ * run is stopped whole, at no step of its workflow. The platform names one
+ * code for the run, its first incident's. `code` is the one its notice leads
+ * by: that incident's, or, where that one is no transaction's, the first
+ * transaction's incident of the run. A run that ended keeps the platform's
+ * code and has no incident left, and its `code` is empty.
+ */
+export function runIncident(
+  run: Json,
+): { step: string | null; text: string; code: string } | null {
   const state = isRecord(run["state"]) ? run["state"] : {};
   const incidents = isRecord(state["incidents"])
-    ? Object.values(state["incidents"]).filter(isRecord)
+    ? Object.entries(state["incidents"])
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .flatMap(([, value]) => (isRecord(value) ? [value] : []))
     : [];
-  const message = text(state["incident"]);
-  if (!message && !incidents.length) return null;
+  const named = text(state["incident"]);
+  if (!named && !incidents.length) return null;
   const active = Array.isArray(state["active"]) ? state["active"] : [];
-  const step =
-    text(incidents[0]?.["node_id"]) || text(active[0]) || "an unknown step";
+  const incident =
+    incidents.find((item) => text(item["code"]) === named) ?? incidents[0];
+  const key =
+    text(incident?.["node_id"]) || text(active[0]) || "an unknown step";
+  const own = text(incident?.["code"]);
+  const said = named || own;
+  const sentence = TRANSACTION_CODE_TEXT[said];
+  const support = `Support code: ${said}`;
+  const codes = [own, ...incidents.map((item) => text(item["code"]))];
   return {
-    step,
-    text:
-      message ||
-      (incidents[0]?.["code"]
-        ? `Support code: ${text(incidents[0]["code"])}`
-        : ""),
+    step: incidentStep(key),
+    text: sentence
+      ? `${sentence} ${support}.`
+      : said && said === own
+        ? support
+        : said,
+    code: codes.find(stoppedForTransaction) ?? own,
   };
 }
 

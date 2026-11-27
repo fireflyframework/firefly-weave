@@ -860,6 +860,14 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "studio/tests/fixtures/transaction-corpus.json"
+kind = "commentless"
+reason = "Strict JSON words for the platform's transaction states, step statuses, codes and incident resolutions, whose keys tests/unit/test_transaction_corpus.py pins to the platform; shared by the Python and Studio suites."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "studio/tests/fixtures/schedule-corpus.json"
 kind = "commentless"
 reason = "Strict JSON UTC calendars the platform accepts or refuses, with the next times each fires; shared by the Python and Studio suites."
@@ -879,14 +887,6 @@ license = "Apache-2.0"
 path = "studio/tests/fixtures/callable-corpus.json"
 kind = "commentless"
 reason = "Strict JSON catalog locks, drafts and call steps, with who may call each workflow version as the platform's allows_caller and check_call_target decide it and each call's output as call_output_schema infers it; shared by the Python and Studio suites."
-copyright = "Copyright 2026 Firefly Software Foundation."
-author = "Firefly Software Foundation"
-license = "Apache-2.0"
-
-[[exceptions]]
-path = "studio/tests/fixtures/transaction-corpus.json"
-kind = "commentless"
-reason = "Strict JSON words for the platform's transaction states, step statuses, codes and incident resolutions, whose keys tests/unit/test_transaction_corpus.py pins to the platform; shared by the Python and Studio suites."
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"

@@ -16,13 +16,36 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Operate › Incidents: active incidents first, a drawer with the run's last
-// engine events, and the Resolve incident dialog with its error paths. The
-// server checks incident.resolve, the revision and the receipt.
+// engine events, and the Resolve incident dialog with its error paths; and
+// transactions in doubt first, as one case with the called runs they wait
+// for. The server checks incident.resolve, the revision and the receipt.
+import { mkdirSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import { test, expect, Page, Route } from "@playwright/test";
+import type { IncidentView } from "../../src/app/operate/incidents/incidents-model";
+import {
+  called,
+  caller,
+  held,
+  ids,
+  loop,
+  others,
+  unknown,
+} from "../transaction-incidents-fixture";
+import {
+  earlier,
+  environment,
+  incidentPlatform,
+  type IncidentPlatform,
+} from "./incidents-po";
+import {
+  acmePlatform,
+  platformHost,
+  signInWaiting,
+  type PlatformHost,
+} from "./platform-host";
 import { connected, pauseClock } from "./support";
 
-const environment =
-  "**/studio/api/api/v1/tenants/tenant/projects/project/environments/development";
 const active = "91111111-1111-4111-8111-111111111111";
 const resolved = "92222222-2222-4222-8222-222222222222";
 const runId = "5e6f7a8b-0000-4000-8000-000000000001";
@@ -66,16 +89,19 @@ async function inbox(page: Page, capabilities: string[]) {
   let lists = 0;
   const queries: URLSearchParams[] = [];
   await page.route(`${environment}/incidents?*`, (r) => {
-    lists++;
     const query = new URL(r.request().url()).searchParams;
     queries.push(query);
-    // As the platform does: the status, code and test filters apply here.
+    // One load reads incidents in doubt first, then every other one.
+    const priority = query.get("priority");
+    if (priority !== "high") lists++;
+    // As the platform does: the status, code, test and priority filters apply here.
     const statuses = query.getAll("status");
     const listed = items.filter(
       (item) =>
         (!statuses.length || statuses.includes(String(item.status))) &&
         (!query.get("code") || item.code === query.get("code")) &&
-        (query.get("include_test") === "true" || !item.test),
+        (query.get("include_test") === "true" || !item.test) &&
+        (!priority || (item.priority ?? "normal") === priority),
     );
     return r.fulfill({ json: { items: listed, next_cursor: null } });
   });
@@ -109,6 +135,13 @@ async function inbox(page: Page, capabilities: string[]) {
     });
   });
   return { items, lists: () => lists, queries: () => queries };
+}
+/** Answers the read of incidents in doubt with none, as a platform without any; false for every other read. */
+function noneInDoubt(r: Route): boolean {
+  if (new URL(r.request().url()).searchParams.get("priority") !== "high")
+    return false;
+  void r.fulfill({ json: { items: [], next_cursor: null } });
+  return true;
 }
 /** Narrow screens fold the filters behind "Filters (n)": open them. */
 async function openFilters(page: Page) {
@@ -161,6 +194,7 @@ test("a filter asks the platform for its first page, so a match beyond the loade
   const queries: URLSearchParams[] = [];
   // Without a code filter, the failed incident sits on the third page.
   await page.route(`${environment}/incidents?*`, (r) => {
+    if (noneInDoubt(r)) return;
     const query = new URL(r.request().url()).searchParams;
     queries.push(query);
     if (query.get("code") === "WV-TASK-FAILED")
@@ -294,6 +328,7 @@ test("incidents stop at the page limit and explain remaining records", async ({
   await inbox(page, ["incident.read"]);
   let reads = 0;
   await page.route(`${environment}/incidents?*`, (r) => {
+    if (noneInDoubt(r)) return;
     reads++;
     return r.fulfill({
       json: {
@@ -332,6 +367,7 @@ test("incidents discard an append queued after the page closes", async ({
   let reads = 0;
   let appends = 0;
   await page.route(`${environment}/incidents?*`, (r) => {
+    if (noneInDoubt(r)) return;
     const cursor = new URL(r.request().url()).searchParams.get("cursor");
     if (cursor) appends++;
     if (!cursor && ++reads === 2) {
@@ -919,6 +955,7 @@ for (const viewport of [
     test("a refused next page shows the access it needs", async ({ page }) => {
       await connected(page, { capabilities: ["incident.read"] });
       await page.route(`${environment}/incidents?*`, (r) => {
+        if (noneInDoubt(r)) return;
         const cursor = new URL(r.request().url()).searchParams.get("cursor");
         return cursor
           ? r.fulfill({
@@ -1400,11 +1437,13 @@ test.describe("platform filters, direct links and opening times", () => {
     expect(queries().length).toBe(sent);
     await page.getByRole("button", { name: /^Clear filters/ }).click();
     await expect(page).toHaveURL(/\/operate\/incidents$/);
+    await expect.poll(() => queries().at(-1)?.get("priority")).toBe("normal");
     expect(Object.fromEntries(queries().at(-1)!)).toEqual({
       limit: "50",
       order: "opened_desc",
       include_test: "false",
       status: "active",
+      priority: "normal",
     });
   });
 
@@ -1474,6 +1513,190 @@ test.describe("platform filters, direct links and opening times", () => {
       }),
     ).toBeVisible();
     await expect(page.locator("weave-incident-drawer")).toHaveCount(0);
+  });
+
+  for (const [name, refused, heading] of [
+    [
+      "missing",
+      { status: 404, code: "WV-NOT-FOUND" },
+      "This incident can't be found",
+    ],
+    [
+      "refused",
+      { status: 403, code: "WV-FORBIDDEN" },
+      "You don't have access to this incident",
+    ],
+  ] as const)
+    test(`Try again reads an incident that was ${name}, keeps the focus, and opens it once it answers`, async ({
+      page,
+    }) => {
+      await inbox(page, ["incident.read"]);
+      const reads: Route[] = [];
+      await page.route(`${environment}/incidents/${hidden}`, (route) => {
+        reads.push(route);
+      });
+      const answer = {
+        status: refused.status,
+        json: { code: refused.code, message: "No" },
+      };
+      await page.goto(`/operate/incidents?incident=${hidden}`);
+      await expect.poll(() => reads.length).toBe(1);
+      await reads[0].fulfill(answer);
+      const problem = page.locator(".empty-state").filter({
+        has: page.getByRole("heading", { name: heading }),
+      });
+      const again = problem.getByRole("button", { name: "Try again" });
+      await expect(again).toBeVisible();
+      await page.screenshot({ path: `${captures}/incident-${name}.png` });
+      await again.focus();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => reads.length).toBe(2);
+      // A second press while it is on its way reads nothing.
+      await page.keyboard.press("Enter");
+      await expect(again).toBeFocused();
+      await reads[1].fulfill(answer);
+      await page.evaluate(
+        () => new Promise((done) => requestAnimationFrame(done)),
+      );
+      await expect(again).toBeFocused();
+      expect(reads).toHaveLength(2);
+      await page.keyboard.press("Enter");
+      await expect.poll(() => reads.length).toBe(3);
+      await reads[2].fulfill({ json: incident(hidden, facts) });
+      const title = page.locator("#incident-detail-title");
+      await expect(title).toHaveText("Incident WV-TASK-AMBIGUOUS");
+      await expect(problem).toHaveCount(0);
+      await expect(title).toBeFocused();
+    });
+
+  test("Try again keeps the focus as an incident fails in another way, and leaves it where the person moved it", async ({
+    page,
+  }) => {
+    await inbox(page, ["incident.read"]);
+    const reads: Route[] = [];
+    await page.route(`${environment}/incidents/${hidden}`, (route) => {
+      reads.push(route);
+    });
+    const missing = {
+      status: 404,
+      json: { code: "WV-NOT-FOUND", message: "Incident not found" },
+    };
+    const refused = {
+      status: 403,
+      json: { code: "WV-FORBIDDEN", message: "Not allowed" },
+    };
+    const unavailable = {
+      status: 503,
+      json: { code: "WV-UNAVAILABLE", message: "Unavailable" },
+    };
+    await page.goto(`/operate/incidents?incident=${hidden}`);
+    const again = page.getByRole("button", { name: "Try again" });
+    const ways = [
+      [missing, page.getByText("This incident can't be found")],
+      [unavailable, page.getByText("Support code: WV-UNAVAILABLE")],
+      [refused, page.getByText("You don't have access to this incident")],
+      [
+        { json: { id: hidden, unavailable: true } },
+        page.getByText("Studio can't show this incident"),
+      ],
+      [missing, page.getByText("This incident can't be found")],
+    ] as const;
+    for (const [index, [answer, words]] of ways.entries()) {
+      await expect.poll(() => reads.length).toBe(index + 1);
+      await reads[index].fulfill(answer);
+      await expect(words).toBeVisible();
+      if (index) await expect(again).toBeFocused();
+      else await again.focus();
+      if (index < ways.length - 1) await page.keyboard.press("Enter");
+    }
+    await page.keyboard.press("Enter");
+    await expect.poll(() => reads.length).toBe(ways.length + 1);
+    const workflow = page.getByLabel("Workflow", { exact: true });
+    await workflow.focus();
+    await reads[ways.length].fulfill(unavailable);
+    await expect(ways[1][1]).toBeVisible();
+    await expect(workflow).toBeFocused();
+  });
+
+  for (const [name, to] of [
+    ["no incident", ""],
+    ["the incident that is open", `?incident=${active}`],
+  ])
+    test(`an incident being read never opens once the address names ${name}`, async ({
+      page,
+    }) => {
+      await inbox(page, ["incident.read"]);
+      const reads: Route[] = [];
+      await page.route(`${environment}/incidents/${hidden}`, (route) => {
+        reads.push(route);
+      });
+      const move = (query: string) =>
+        page.evaluate((to) => {
+          history.pushState(null, "", `/operate/incidents${to}`);
+          dispatchEvent(new PopStateEvent("popstate"));
+        }, query);
+      const title = page.locator("#incident-detail-title");
+      await page.goto(`/operate/incidents${to}`);
+      await expect(title).toHaveCount(to ? 1 : 0);
+      await expect(rows(page)).toHaveCount(1);
+      await move(`?incident=${hidden}`);
+      await expect.poll(() => reads.length).toBe(1);
+      if (to) await move(to);
+      else {
+        // A filter leaves it out of the address, as a link to the list does.
+        await page.getByLabel("Include test runs").check();
+        await expect(page).toHaveURL(
+          /\/operate\/incidents\?include_test=true$/,
+        );
+      }
+      await settle(page, `/incidents/${hidden}`, () => {
+        void reads[0].fulfill({
+          json: incident(hidden, { code: "WV-TASK-LOST" }),
+        });
+      });
+      if (to) await expect(title).toHaveText("Incident WV-TASK-AMBIGUOUS");
+      else await expect(title).toHaveCount(0);
+      // Named again, it is read again.
+      await move(`?incident=${hidden}`);
+      await expect.poll(() => reads.length).toBe(2);
+      await reads[1].fulfill({
+        json: incident(hidden, { code: "WV-TASK-LOST" }),
+      });
+      await expect(title).toHaveText("Incident WV-TASK-LOST");
+    });
+
+  test("an incident that couldn't be opened is forgotten once the address no longer names it", async ({
+    page,
+  }) => {
+    await inbox(page, ["incident.read"]);
+    await page.goto(`/operate/incidents?incident=${hidden}`);
+    const problem = page.getByRole("heading", {
+      name: "This incident can't be found",
+    });
+    await expect(problem).toBeVisible();
+    await page.getByLabel("Include test runs").check();
+    await expect(page).toHaveURL(/\/operate\/incidents\?include_test=true$/);
+    await expect(problem).toHaveCount(0);
+    await expect(rows(page)).toHaveCount(1);
+    // Nor after Back, or a link to the list.
+    const move = (query: string) =>
+      page.evaluate((to) => {
+        history.pushState(null, "", `/operate/incidents${to}`);
+        dispatchEvent(new PopStateEvent("popstate"));
+      }, query);
+    await move(`?incident=${hidden}`);
+    await expect(problem).toBeVisible();
+    await move("");
+    await expect(problem).toHaveCount(0);
+    // Nor once it names the incident that is open again.
+    await move(`?incident=${active}`);
+    const title = page.locator("#incident-detail-title");
+    await expect(title).toHaveText("Incident WV-TASK-AMBIGUOUS");
+    await move(`?incident=${hidden}`);
+    await expect(problem).toBeVisible();
+    await move(`?incident=${active}`);
+    await expect(problem).toHaveCount(0);
+    await expect(title).toHaveText("Incident WV-TASK-AMBIGUOUS");
   });
 
   for (const [name, extra, expected, hint] of [
@@ -1580,5 +1803,1226 @@ for (const size of [
       });
       expect(Math.abs(run.button - run.pill)).toBeLessThanOrEqual(0.5);
       if (target === 44) expect(run.height).toBeGreaterThanOrEqual(43.5);
+    });
+  });
+
+// ------------------------------------------------- transactions in doubt
+
+const band = (page: Page, name: string) => page.getByRole("region", { name });
+const high = (page: Page) => band(page, "High priority");
+const other = (page: Page) => band(page, "Other incidents");
+/** The codes a table's rows name, in order. */
+const codes = (scope: ReturnType<typeof band>) =>
+  scope.locator(".resource-row > .row-text:first-child > :first-child");
+const caseOf = (page: Page) =>
+  page.getByRole("rowgroup", {
+    name: "Case: move is waiting for a called run in doubt",
+  });
+const captures = resolvePath(
+  process.env["STUDIO_OPERATE_CAPTURES"]?.trim() || "test-results/operate",
+);
+mkdirSync(captures, { recursive: true });
+
+test.describe("transactions in doubt", () => {
+  test.use({ viewport: { width: 1440, height: 900 }, timezoneId: "UTC" });
+
+  test("come first, in a High priority band above the other incidents, each read by its priority", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    const heading = high(page).getByRole("heading", { level: 2 });
+    await expect(heading).toHaveText("High priority");
+    await expect(heading.locator("weave-icon")).toHaveAttribute(
+      "name",
+      "critical",
+    );
+    await expect(high(page).locator(".band-count")).toHaveText("4 incidents");
+    await expect(high(page)).toContainText(
+      "Transactions that need a person. Other systems may not match Weave until someone resolves them.",
+    );
+    await expect(
+      other(page).getByRole("heading", { level: 2, name: "Other incidents" }),
+    ).toBeVisible();
+    await expect(other(page).locator(".band-count")).toHaveText("4 incidents");
+    await expect(codes(other(page))).toHaveText([
+      "WV-TASK-AMBIGUOUS",
+      "WV-TASK-FAILED",
+      "WV-TASK-LOST",
+      "WV-TASK-AMBIGUOUS",
+    ]);
+    expect(
+      (await high(page).boundingBox())!.y +
+        (await high(page).boundingBox())!.height,
+    ).toBeLessThanOrEqual((await other(page).boundingBox())!.y);
+    // The first load reads the band in doubt, then the rest, with the same filters.
+    expect(platform.queries.map((query) => query.get("priority"))).toEqual([
+      "high",
+      "normal",
+    ]);
+    const [first, second] = platform.queries.map((query) => {
+      const rest = new URLSearchParams(query);
+      rest.delete("priority");
+      return rest.toString();
+    });
+    expect(first).toBe(second);
+    await page.screenshot({ path: `${captures}/inbox-bands-1440.png` });
+  });
+
+  test("a row in the High priority band shows its business key, and neither the pill nor the words the band says", async ({
+    page,
+  }) => {
+    await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    const row = high(page)
+      .locator(".resource-row")
+      .filter({ hasText: "WV-TXN-PIVOT-UNKNOWN" });
+    await expect(row.locator(".row-text").first()).toContainText(
+      "Business key T-1034",
+    );
+    await expect(row.locator(".status-pill")).toHaveText(["Active"]);
+    await expect(row).not.toContainText("In doubt");
+    await expect(row).not.toContainText("High priority");
+    // The key stays whole: it never breaks.
+    await expect(row.locator(".business-key")).toHaveCSS(
+      "white-space",
+      "nowrap",
+    );
+  });
+
+  test("a loop's step names its iteration, in its row, in its drawer and where another row waits for it", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, {
+      items: [
+        loop,
+        {
+          ...called,
+          held_by: { ...called.held_by!, instance_key: "move[3]" },
+        },
+        ...others,
+      ],
+    });
+    await page.goto("/operate/incidents");
+    const row = high(page)
+      .locator(".resource-row")
+      .filter({ hasText: "WV-TXN-CANCEL-STUCK" });
+    await expect(row.getByRole("cell").nth(3)).toHaveText("hold[3]");
+    const waits = high(page).locator(".not-listed");
+    await expect(waits.getByRole("cell").nth(3)).toHaveText("move[3]");
+    await expect(waits).toContainText(
+      "Not in this list · move[3] in run 6d18b3f0",
+    );
+    await expect(high(page).locator(".case-head")).toContainText(
+      "Case: move[3] is waiting for a called run in doubt",
+    );
+    await row
+      .getByRole("button", {
+        name: "Open incident WV-TXN-CANCEL-STUCK at hold[3]",
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.locator("dl.txn-facts dt:text-is('Step') + dd"),
+    ).toHaveText("hold[3]");
+  });
+
+  test("a run held whole is in the band too, tied to no step", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, { items: [held] });
+    await page.goto("/operate/incidents");
+    await expect(
+      high(page).getByRole("button", {
+        name: "Open incident WV-TXN-RUN-OVERSIZED at the run",
+      }),
+    ).toBeVisible();
+    // Its name, then no step: neither the platform's own step nor its code.
+    const row = high(page).locator(".resource-row").first();
+    await expect(row.locator("small").first()).toHaveText(
+      "All its transactions are held",
+    );
+    await expect(row.getByRole("cell").nth(3)).toHaveText("Not tied to a step");
+    await expect(high(page)).not.toContainText("@transactions");
+    // Nothing else is open: the band stands alone.
+    await expect(other(page)).toHaveCount(0);
+    // In one list, where a run's notice leads, its transactions aren't in doubt either.
+    await page.goto("/operate/incidents?code=WV-TXN-RUN-OVERSIZED");
+    const listed = page.locator(".resource-row").first();
+    await expect(listed.locator("small").first()).toHaveText(
+      "All its transactions are held",
+    );
+    await expect(listed).toContainText("High priority");
+    await expect(listed).not.toContainText("In doubt");
+  });
+
+  test("a run that was held whole says nothing of it once it is decided", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, {
+      items: [{ ...held, status: "resolved", revision: 2 }],
+    });
+    await page.goto("/operate/incidents?status=resolved");
+    const row = page.locator(".resource-row").first();
+    await expect(row.locator("small").first()).toHaveText(
+      "First reported as WV-RUNTIME-CAPACITY",
+    );
+  });
+
+  for (const [address, sent] of [
+    ["?code=WV-TXN-PIVOT-UNKNOWN", { code: "WV-TXN-PIVOT-UNKNOWN" }],
+    ["?status=all", {}],
+  ] as const)
+    test(`one list at ${address} says High priority and In doubt on each row in doubt`, async ({
+      page,
+    }) => {
+      const platform = await incidentPlatform(page);
+      await page.goto(`/operate/incidents${address}`);
+      const row = rows(page).filter({ hasText: "WV-TXN-PIVOT-UNKNOWN" });
+      await expect(row.locator(".row-text").first()).toContainText(
+        "In doubt · Business key T-1034",
+      );
+      await expect(row.locator(".status-pill")).toHaveText([
+        "Active",
+        "High priority",
+      ]);
+      await expect(high(page)).toHaveCount(0);
+      await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+      expect(platform.queries).toHaveLength(1);
+      expect(platform.queries[0].has("priority")).toBe(false);
+      for (const [key, value] of Object.entries(sent))
+        expect(platform.queries[0].get(key)).toBe(value);
+      await page.screenshot({
+        path: `${captures}/inbox-one-list-${"code" in sent ? "code" : "status"}-1440.png`,
+      });
+    });
+
+  test("a decided incident is no longer in doubt: one list shows it as any other", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, {
+      items: [{ ...unknown, status: "resolved" }],
+    });
+    await page.goto("/operate/incidents?status=resolved");
+    const row = rows(page).first();
+    await expect(row).toContainText("WV-TXN-PIVOT-UNKNOWN");
+    await expect(row.locator(".status-pill")).toHaveText(["Resolved"]);
+    await expect(row.locator(".row-text").first()).toContainText("submit");
+    await expect(row).not.toContainText("In doubt");
+  });
+
+  test("a caller's settle timeout and its called run's incident are one case, aligned with the columns", async ({
+    page,
+  }) => {
+    await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    const group = caseOf(page);
+    await expect(group).toBeVisible();
+    await expect(group.locator(".case-head")).toContainText(
+      "Resolve first: WV-TXN-UNDO-STUCK in run 9a01c7d2",
+    );
+    await expect(codes(group)).toHaveText([
+      "WV-TXN-SETTLE-TIMEOUT",
+      "WV-TXN-UNDO-STUCK",
+    ]);
+    // Only the one to resolve first says so.
+    await expect(
+      group.locator(".resource-row").nth(0).locator(".tag"),
+    ).toHaveCount(0);
+    await expect(
+      group.locator(".resource-row").nth(1).locator(".tag"),
+    ).toHaveText("Resolve first");
+    // The case sits between the rows before and after it, and nothing shows twice.
+    await expect(codes(high(page))).toHaveText([
+      "WV-TXN-PIVOT-UNKNOWN",
+      "WV-TXN-SETTLE-TIMEOUT",
+      "WV-TXN-UNDO-STUCK",
+      "WV-TXN-CANCEL-STUCK",
+    ]);
+    const edges = await high(page)
+      .getByRole("table")
+      .evaluate((table) => {
+        const lefts = (row: Element) =>
+          [...row.children].map((cell) => cell.getBoundingClientRect().left);
+        return {
+          head: lefts(table.querySelector(".table-head")!),
+          members: [...table.querySelectorAll(".case .resource-row")].map(
+            lefts,
+          ),
+        };
+      });
+    expect(edges.members).toHaveLength(2);
+    for (const member of edges.members)
+      for (const [column, left] of member.entries())
+        expect(
+          Math.abs(left - edges.head[column]),
+          `column ${column}`,
+        ).toBeLessThanOrEqual(1);
+    // The incident's words sit indented inside its own column.
+    const indent = await group
+      .locator(".resource-row .row-open")
+      .first()
+      .evaluate(
+        (button) =>
+          button.getBoundingClientRect().left -
+          button.closest("[role=cell]")!.getBoundingClientRect().left,
+      );
+    expect(indent).toBeCloseTo(22, 0);
+  });
+
+  test("a case member that isn't in the list says where it is, and opens", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, {
+      items: [called, ...others],
+    });
+    await page.goto("/operate/incidents");
+    const group = caseOf(page);
+    await expect(codes(group)).toHaveText([
+      "WV-TXN-UNDO-STUCK",
+      "WV-TXN-SETTLE-TIMEOUT",
+    ]);
+    const missing = group.locator(".resource-row").nth(1);
+    await expect(missing).toContainText(
+      "Not in this list · move in run 6d18b3f0",
+    );
+    await expect(missing.locator(".tag")).toHaveCount(0);
+    await expect(
+      group.locator(".resource-row").nth(0).locator(".tag"),
+    ).toHaveText("Resolve first");
+    await page.screenshot({ path: `${captures}/inbox-case-missing-1440.png` });
+    // The platform holds it, on another page: Open reads it.
+    platform.items.push(caller);
+    await missing
+      .getByRole("button", {
+        name: "Open incident WV-TXN-SETTLE-TIMEOUT, move in run 6d18b3f0",
+      })
+      .click();
+    await expect(
+      page.locator("weave-incident-drawer #incident-detail-title"),
+    ).toHaveText("Incident WV-TXN-SETTLE-TIMEOUT");
+    expect(platform.reads).toEqual([ids.caller]);
+    await expect(page).toHaveURL(
+      new RegExp(`/operate/incidents\\?incident=${ids.caller}$`),
+    );
+  });
+
+  test("Open on a case member that couldn't be read reads it again, once at a time", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, { items: [called, ...others] });
+    const reads: Route[] = [];
+    await page.route(`${environment}/incidents/${ids.caller}`, (route) => {
+      reads.push(route);
+    });
+    await page.goto("/operate/incidents");
+    const open = caseOf(page).getByRole("button", {
+      name: "Open incident WV-TXN-SETTLE-TIMEOUT, move in run 6d18b3f0",
+    });
+    await open.click();
+    await expect.poll(() => reads.length).toBe(1);
+    await reads[0].fulfill({
+      status: 404,
+      json: { code: "WV-NOT-FOUND", message: "Incident not found" },
+    });
+    const missing = page.getByRole("heading", {
+      name: "This incident can't be found",
+    });
+    await expect(missing).toBeVisible();
+    // The address names it already: Open reads it all the same.
+    await open.click();
+    await expect.poll(() => reads.length).toBe(2);
+    // Nor does a press while it is on its way read it once more.
+    await open.click();
+    await page.evaluate(
+      () => new Promise((done) => requestAnimationFrame(done)),
+    );
+    expect(reads).toHaveLength(2);
+    await reads[1].fulfill({ json: caller });
+    await expect(
+      page.locator("weave-incident-drawer #incident-detail-title"),
+    ).toHaveText("Incident WV-TXN-SETTLE-TIMEOUT");
+    await expect(missing).toHaveCount(0);
+    await expect(open).toBeFocused();
+  });
+
+  test("each band loads more with its own cursor, and a refresh reads each band's own pages", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, { pageSize: 3 });
+    await page.goto("/operate/incidents");
+    // Three of four in each band: the case's called run is on the first page.
+    await expect(high(page).locator(".band-count")).toHaveText("3 shown");
+    await expect(other(page).locator(".band-count")).toHaveText("3 shown");
+    await expect(page.getByText("6 incidents loaded")).toBeVisible();
+    await other(page)
+      .getByRole("button", { name: "Load more incidents" })
+      .click();
+    await expect(codes(other(page))).toHaveCount(4);
+    await expect(other(page).locator(".band-count")).toHaveText("4 incidents");
+    await expect(
+      other(page).getByRole("button", { name: "Load more incidents" }),
+    ).toHaveCount(0);
+    await expect(codes(high(page))).toHaveCount(3);
+    await expect(high(page).locator(".band-count")).toHaveText("3 shown");
+    const asked = () =>
+      platform.queries.map(
+        (query) =>
+          `${query.get("priority")} ${query.get("cursor") ?? "from the start"}`,
+      );
+    expect(asked()).toEqual([
+      "high from the start",
+      "normal from the start",
+      "normal normal:3",
+    ]);
+    const before = platform.queries.length;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect
+      .poll(() => asked().slice(before))
+      .toEqual([
+        "high from the start",
+        "normal from the start",
+        "normal normal:3",
+      ]);
+    await high(page)
+      .getByRole("button", { name: "Load more incidents" })
+      .click();
+    await expect(codes(high(page))).toHaveCount(4);
+    expect(asked().at(-1)).toBe("high high:3");
+    await expect(codes(other(page))).toHaveCount(4);
+    await expect(page.getByText("8 incidents", { exact: true })).toBeVisible();
+  });
+
+  test("a code turns the bands into one list that loads more without a priority, and clearing it brings them back", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, {
+      items: [unknown, { ...unknown, id: ids.loop }, caller, ...others],
+      pageSize: 1,
+    });
+    await page.goto("/operate/incidents");
+    await expect(codes(high(page))).toHaveCount(1);
+    await page.getByLabel("Code", { exact: true }).fill("WV-TXN-PIVOT-UNKNOWN");
+    await page.getByLabel("Code", { exact: true }).press("Enter");
+    await expect(high(page)).toHaveCount(0);
+    await expect(rows(page)).toHaveCount(1);
+    await page.getByRole("button", { name: "Load more incidents" }).click();
+    await expect(rows(page)).toHaveCount(2);
+    const last = platform.queries.at(-1)!;
+    expect(last.get("cursor")).toBe("every:1");
+    expect(last.has("priority")).toBe(false);
+    await page.getByRole("button", { name: /^Clear filters/ }).click();
+    await expect(codes(high(page))).toHaveCount(1);
+    await expect(codes(other(page))).toHaveCount(1);
+  });
+
+  test("nothing in doubt: no band and no Other incidents, the list as it was", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, { items: others });
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveCount(4);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+    await expect(page.locator(".band-note")).toHaveCount(0);
+  });
+
+  test("the address keeps the incident and never its business key or the band", async ({
+    page,
+  }) => {
+    await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    const title = await page.title();
+    await high(page)
+      .getByRole("button", {
+        name: "Open incident WV-TXN-PIVOT-UNKNOWN at submit",
+      })
+      .click();
+    await expect(page).toHaveURL(
+      new RegExp(`/operate/incidents\\?incident=${ids.unknown}$`),
+    );
+    await page.getByLabel("Include test runs").check();
+    await expect(page).toHaveURL(/include_test=true/);
+    expect(page.url()).not.toContain("T-1034");
+    expect(page.url()).not.toContain("priority");
+    expect(await page.title()).toBe(title);
+  });
+
+  test("a refresh keeps the open drawer on its incident, whichever band holds it", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    await caseOf(page)
+      .getByRole("button", { name: "Open incident WV-TXN-UNDO-STUCK at add" })
+      .click();
+    const drawer = page.locator("weave-incident-drawer");
+    await expect(drawer.locator("#incident-detail-title")).toHaveText(
+      "Incident WV-TXN-UNDO-STUCK",
+    );
+    platform.items = platform.items.map((item) =>
+      item.id === ids.called ? { ...called, revision: 9 } : item,
+    );
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(drawer.locator("details dd").last()).toHaveText("9");
+    await expect(drawer.locator("#incident-detail-title")).toHaveText(
+      "Incident WV-TXN-UNDO-STUCK",
+    );
+    await expect(caseOf(page).locator(".resource-row.selected")).toHaveCount(1);
+    await page.screenshot({ path: `${captures}/inbox-case-open-1440.png` });
+  });
+
+  test("a decided incident leaves its band at once", async ({ page }) => {
+    const platform = await incidentPlatform(page, {
+      items: [loop, unknown, ...others],
+    });
+    let hold = false;
+    await page.route(`${environment}/incidents?*`, (route) =>
+      hold ? undefined : route.fallback(),
+    );
+    await page.route(
+      `${environment}/incidents/${ids.loop}/resolve`,
+      (route) => {
+        hold = true;
+        platform.items = platform.items.filter((item) => item.id !== ids.loop);
+        return route.fulfill({
+          json: { ...loop, status: "resolved", revision: 2 },
+        });
+      },
+    );
+    await page.goto(`/operate/incidents?incident=${ids.loop}`);
+    await expect(codes(high(page))).toHaveCount(2);
+    const retry = { name: "Retry the release", exact: true };
+    await page
+      .locator("weave-incident-drawer")
+      .getByRole("button", retry)
+      .click();
+    const dialog = page.getByRole("dialog", retry);
+    await dialog.getByLabel("Reason").fill("The source system is back");
+    await dialog.getByRole("button", retry).click();
+    // The reload after it is still on its way: the band already left it out.
+    await expect(codes(high(page))).toHaveText(["WV-TXN-PIVOT-UNKNOWN"]);
+    await expect(codes(other(page))).toHaveCount(4);
+  });
+
+  test("a failed band keeps what was on screen and says so", async ({
+    page,
+  }) => {
+    await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    await expect(codes(high(page))).toHaveCount(4);
+    await page.route(`${environment}/incidents?*priority=normal*`, (route) =>
+      route.fulfill({
+        status: 503,
+        json: { code: "WV-UNAVAILABLE", message: "Unavailable" },
+      }),
+    );
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(page.getByText("Support code: WV-UNAVAILABLE")).toBeVisible();
+    await expect(codes(high(page))).toHaveCount(4);
+    await expect(codes(other(page))).toHaveCount(4);
+  });
+
+  test("an incident Studio can't show keeps the band the platform lists it in", async ({
+    page,
+  }) => {
+    const hidden = "c1000000-0000-4000-8000-000000000001";
+    const platform = await incidentPlatform(page, {
+      items: [unknown, { id: hidden, unavailable: true }, ...others],
+      unavailableInDoubt: [hidden],
+    });
+    await page.goto("/operate/incidents");
+    await expect(codes(high(page))).toHaveText([
+      "WV-TXN-PIVOT-UNKNOWN",
+      "Unavailable incident",
+    ]);
+    await expect(high(page).locator(".band-count")).toHaveText("2 incidents");
+    const row = high(page).locator(".resource-row").nth(1);
+    await expect(row).toContainText("Studio can't show this incident.");
+    await expect(row.getByRole("button")).toHaveCount(0);
+    await expect(codes(other(page))).toHaveCount(4);
+    // Alone there, it still keeps the band.
+    platform.items = platform.items.filter((item) => item.id !== ids.unknown);
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(codes(high(page))).toHaveText(["Unavailable incident"]);
+    await expect(codes(other(page))).toHaveCount(4);
+  });
+});
+
+test.describe("a refresh keeps the keyboard focus on its incident", () => {
+  test.use({ viewport: { width: 1440, height: 900 }, timezoneId: "UTC" });
+
+  /** An incident that opens after every other: the first row of its band. */
+  const newest = (incident: IncidentView): IncidentView => ({
+    ...incident,
+    id: "d1000000-0000-4000-8000-000000000001",
+    code: incident.priority ? "WV-TXN-AFTER-PIVOT-STUCK" : "WV-TASK-REFUSED",
+    opened_at: "2026-11-22T10:53:30Z",
+  });
+  const row = (page: Page, name: string) =>
+    page.getByRole("button", { name: `Open incident ${name}`, exact: true });
+  /** The page's own refresh, not a press that would move the focus. */
+  const refresh = (page: Page) => page.clock.fastForward(16_000);
+
+  test("in one list", async ({ page }) => {
+    const platform = await incidentPlatform(page, { items: others });
+    await page.goto("/operate/incidents");
+    await row(page, "WV-TASK-FAILED at fetch").focus();
+    platform.items = [newest(others[0]), ...others];
+    await refresh(page);
+    await expect(codes(page.locator(".incident-list"))).toHaveCount(5);
+    await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+  });
+
+  for (const [name, kept, added, first, scope] of [
+    [
+      "in the High priority band",
+      "WV-TXN-PIVOT-UNKNOWN at submit",
+      unknown,
+      "WV-TXN-AFTER-PIVOT-STUCK",
+      high,
+    ],
+    [
+      "in Other incidents",
+      "WV-TASK-FAILED at fetch",
+      others[0],
+      "WV-TASK-REFUSED",
+      other,
+    ],
+  ] as const)
+    test(`${name}, as another incident takes its first row`, async ({
+      page,
+    }) => {
+      const platform = await incidentPlatform(page);
+      await page.goto("/operate/incidents");
+      await row(page, kept).focus();
+      platform.items = [newest(added), ...platform.items];
+      await refresh(page);
+      await expect(codes(scope(page)).first()).toHaveText(first);
+      await expect(row(page, kept)).toBeFocused();
+    });
+
+  test("beside a case, as an incident joins it, and as another case comes between", async ({
+    page,
+  }) => {
+    const kept = "WV-TXN-CANCEL-STUCK at hold[3]";
+    const platform = await incidentPlatform(page);
+    await page.goto("/operate/incidents");
+    await row(page, kept).focus();
+    // Between the case and its row.
+    platform.items = platform.items.flatMap((item) =>
+      item.id === ids.loop ? [newest(unknown), item] : [item],
+    );
+    await refresh(page);
+    await expect(codes(high(page))).toHaveText([
+      "WV-TXN-PIVOT-UNKNOWN",
+      "WV-TXN-SETTLE-TIMEOUT",
+      "WV-TXN-UNDO-STUCK",
+      "WV-TXN-AFTER-PIVOT-STUCK",
+      "WV-TXN-CANCEL-STUCK",
+    ]);
+    await expect(row(page, kept)).toBeFocused();
+    // Another case, right before its row: the row belongs to the rows after it.
+    const second: IncidentView = {
+      ...called,
+      id: "d1000000-0000-4000-8000-000000000002",
+      held_by: {
+        ...called.held_by!,
+        id: "d1000000-0000-4000-8000-00000000000f",
+      },
+    };
+    platform.items = platform.items.flatMap((item) =>
+      item.id === ids.loop ? [second, item] : [item],
+    );
+    await refresh(page);
+    await expect(page.locator(".case")).toHaveCount(2);
+    await expect(row(page, kept)).toBeFocused();
+  });
+
+  test("inside a case, as the incident that waits for it leads, or leaves", async ({
+    page,
+  }) => {
+    const kept = "WV-TXN-UNDO-STUCK at add";
+    const platform = await incidentPlatform(page, {
+      items: [unknown, called, ...others],
+    });
+    await page.goto("/operate/incidents");
+    await row(page, kept).focus();
+    platform.items = [unknown, caller, called, ...others];
+    await refresh(page);
+    await expect(codes(caseOf(page))).toHaveText([
+      "WV-TXN-SETTLE-TIMEOUT",
+      "WV-TXN-UNDO-STUCK",
+    ]);
+    await expect(row(page, kept)).toBeFocused();
+    platform.items = [unknown, called, ...others];
+    await refresh(page);
+    await expect(codes(caseOf(page))).toHaveText([
+      "WV-TXN-UNDO-STUCK",
+      "WV-TXN-SETTLE-TIMEOUT",
+    ]);
+    await expect(row(page, kept)).toBeFocused();
+  });
+
+  test("on the Open of an incident that isn't in the list, as a page lists it", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, { items: [called] });
+    await page.goto("/operate/incidents");
+    await row(page, "WV-TXN-SETTLE-TIMEOUT, move in run 6d18b3f0").focus();
+    platform.items = [caller, called];
+    await refresh(page);
+    await expect(page.locator(".not-listed")).toHaveCount(0);
+    await expect(row(page, "WV-TXN-SETTLE-TIMEOUT at move")).toBeFocused();
+  });
+
+  test("as the first incident in doubt turns one list into bands, and as the last one leaves", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, { items: others });
+    await page.goto("/operate/incidents");
+    await row(page, "WV-TASK-FAILED at fetch").focus();
+    platform.items = [unknown, ...others];
+    await refresh(page);
+    await expect(codes(high(page))).toHaveCount(1);
+    await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+    platform.items = others;
+    await refresh(page);
+    await expect(high(page)).toHaveCount(0);
+    await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+  });
+
+  const band = (page: Page, name: string) =>
+    page.getByRole("heading", { level: 2, name });
+  /** Incidents decided elsewhere, as the next refresh finds them gone. */
+  async function decidedElsewhere(
+    page: Page,
+    platform: IncidentPlatform,
+    ...gone: IncidentView[]
+  ) {
+    const out = new Set(gone.map((item) => item.id));
+    platform.items = platform.items.filter((item) => !out.has(item.id));
+    await refresh(page);
+    for (const id of out)
+      await expect(
+        page.locator(`.incident-list .row-open[data-incident="${id}"]`),
+      ).toHaveCount(0);
+  }
+  for (const [name, items, from, gone, to] of [
+    [
+      "one in a list gives it to the next row",
+      others,
+      "WV-TASK-FAILED at fetch",
+      [others[1]],
+      (page: Page) => row(page, "WV-TASK-LOST at send"),
+    ],
+    [
+      "one in a list gives it past the rows that go with it",
+      others,
+      "WV-TASK-FAILED at fetch",
+      [others[1], others[2]],
+      (page: Page) => row(page, "WV-TASK-AMBIGUOUS at write"),
+    ],
+    [
+      "the last of a list gives it to the row before it",
+      others,
+      "WV-TASK-AMBIGUOUS at write",
+      [others[3]],
+      (page: Page) => row(page, "WV-TASK-LOST at send"),
+    ],
+    [
+      "the only one gives it to the page's title",
+      [others[1]],
+      "WV-TASK-FAILED at fetch",
+      [others[1]],
+      (page: Page) => page.getByRole("heading", { level: 1 }),
+    ],
+    [
+      "one of a case gives it to the next of its band",
+      [unknown, caller, called, loop, ...others],
+      "WV-TXN-UNDO-STUCK at add",
+      [caller, called],
+      (page: Page) => row(page, "WV-TXN-CANCEL-STUCK at hold[3]"),
+    ],
+    [
+      "the last of a band gives it to the band's heading",
+      [unknown, loop, ...others],
+      "WV-TXN-CANCEL-STUCK at hold[3]",
+      [loop],
+      (page: Page) => band(page, "High priority"),
+    ],
+    [
+      "the last of Other incidents gives it to that heading",
+      [unknown, ...others],
+      "WV-TASK-AMBIGUOUS at write",
+      [others[3]],
+      (page: Page) => band(page, "Other incidents"),
+    ],
+    [
+      "the only one of a band gives it to the row after it",
+      [unknown, ...others],
+      "WV-TXN-PIVOT-UNKNOWN at submit",
+      [unknown],
+      (page: Page) => row(page, "WV-TASK-AMBIGUOUS at send"),
+    ],
+  ] as const)
+    test(`as incidents leave: ${name}`, async ({ page }) => {
+      const platform = await incidentPlatform(page, { items: [...items] });
+      await page.goto("/operate/incidents");
+      await row(page, from).focus();
+      await decidedElsewhere(page, platform, ...gone);
+      await expect(to(page)).toBeFocused();
+      // It is a place in the list like any other: the next refresh keeps it.
+      platform.items = [...platform.items, newest(others[0])];
+      await refresh(page);
+      await expect(codes(page.locator(".incident-list")).last()).toHaveText(
+        "WV-TASK-REFUSED",
+      );
+      await expect(to(page)).toBeFocused();
+    });
+
+  test("and leaves it alone once the person moved it", async ({ page }) => {
+    const platform = await incidentPlatform(page, { items: others });
+    await page.goto("/operate/incidents");
+    await row(page, "WV-TASK-FAILED at fetch").focus();
+    await page.getByLabel("Workflow", { exact: true }).focus();
+    platform.items = [unknown, ...others];
+    await refresh(page);
+    await expect(codes(high(page))).toHaveCount(1);
+    await expect(page.getByLabel("Workflow", { exact: true })).toBeFocused();
+    // Nor does a focus nobody has go to a row.
+    await page.getByLabel("Workflow", { exact: true }).blur();
+    platform.items = others;
+    await refresh(page);
+    await expect(high(page)).toHaveCount(0);
+    await expect(page.locator("body")).toBeFocused();
+  });
+
+  test.describe("beside the drawer at 1440x900, as it closes", () => {
+    const drawer = (page: Page) => page.locator("weave-incident-drawer");
+    const closing = (page: Page) =>
+      drawer(page).getByRole("button", { name: "Close detail" });
+    /** Two incidents open in turn, the last from its row, with the keyboard in its drawer. */
+    async function inDrawer(page: Page) {
+      const platform = await incidentPlatform(page, { items: [...others] });
+      await page.goto("/operate/incidents");
+      await row(page, "WV-TASK-AMBIGUOUS at send").click();
+      await expect(closing(page)).toBeVisible();
+      await row(page, "WV-TASK-FAILED at fetch").focus();
+      await page.keyboard.press("Enter");
+      await expect(drawer(page)).toContainText("WV-TASK-FAILED");
+      await closing(page).focus();
+      return platform;
+    }
+
+    test("returns to the row that opened it", async ({ page }) => {
+      await inDrawer(page);
+      await page.keyboard.press("Enter");
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+    });
+
+    test("returns to the next row once its incident left the list", async ({
+      page,
+    }) => {
+      const platform = await inDrawer(page);
+      await decidedElsewhere(page, platform, others[1]);
+      await expect(closing(page)).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(row(page, "WV-TASK-LOST at send")).toBeFocused();
+    });
+
+    test("returns to its row when the address closes it", async ({ page }) => {
+      await inDrawer(page);
+      await page.evaluate(() => {
+        history.pushState(null, "", "/operate/incidents");
+        dispatchEvent(new PopStateEvent("popstate"));
+      });
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+    });
+
+    test("returns to its row after a press that doesn't move the focus, as in a desktop window", async ({
+      page,
+    }) => {
+      await inDrawer(page);
+      await closing(page).evaluate((button: HTMLElement) => {
+        button.blur();
+        button.click();
+      });
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(row(page, "WV-TASK-FAILED at fetch")).toBeFocused();
+    });
+
+    test("leaves the focus where the person has it", async ({ page }) => {
+      await inDrawer(page);
+      const workflow = page.getByLabel("Workflow", { exact: true });
+      await workflow.focus();
+      const close = () =>
+        page.evaluate(() => {
+          history.pushState(null, "", "/operate/incidents");
+          dispatchEvent(new PopStateEvent("popstate"));
+        });
+      await close();
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(workflow).toBeFocused();
+      // Nor does a focus nobody has go to a row as the address closes it.
+      await row(page, "WV-TASK-FAILED at fetch").click();
+      await row(page, "WV-TASK-FAILED at fetch").blur();
+      await close();
+      await expect(drawer(page)).toHaveCount(0);
+      await expect(page.locator("body")).toBeFocused();
+    });
+  });
+
+  test.describe("behind the drawer at 800x900", () => {
+    test.use({ viewport: { width: 800, height: 900 } });
+
+    for (const [name, before, added] of [
+      ["another incident in doubt opens", [unknown, ...others], newest(loop)],
+      ["the first incident in doubt opens", others, unknown],
+    ] as const)
+      test(`Escape returns to the row that opened it after ${name}`, async ({
+        page,
+      }) => {
+        const opener = row(
+          page,
+          before[0].priority
+            ? "WV-TXN-PIVOT-UNKNOWN at submit"
+            : "WV-TASK-FAILED at fetch",
+        );
+        const platform = await incidentPlatform(page, { items: [...before] });
+        await page.goto("/operate/incidents");
+        await opener.focus();
+        await page.keyboard.press("Enter");
+        const drawer = page.locator("weave-incident-drawer");
+        await expect(drawer.locator("#incident-detail-title")).toBeFocused();
+        platform.items = [added, ...before];
+        await refresh(page);
+        await expect(
+          page.locator(`.incident-band.high .row-open`).first(),
+        ).toHaveText(added.code);
+        // Reading the list never takes the focus out of the drawer.
+        await expect(drawer.locator("#incident-detail-title")).toBeFocused();
+        await page.keyboard.press("Escape");
+        await expect(drawer).toHaveCount(0);
+        await expect(opener).toBeFocused();
+      });
+
+    for (const [name, leave] of [
+      ["decided elsewhere", decidedElsewhere],
+      [
+        "decided in the sheet",
+        async (page: Page, platform: IncidentPlatform, gone: IncidentView) => {
+          await page.route(
+            `${environment}/incidents/${gone.id}/resolve`,
+            (route) => {
+              platform.items = platform.items.filter(
+                (item) => item.id !== gone.id,
+              );
+              return route.fulfill({
+                json: { ...gone, status: "resolved", revision: 2 },
+              });
+            },
+          );
+          await page
+            .locator("weave-incident-drawer")
+            .getByRole("button", { name: "Resolve incident", exact: true })
+            .click();
+          await endTheRun(page);
+          await expect(
+            page.getByRole("dialog", { name: "Resolve incident" }),
+          ).toHaveCount(0);
+          await expect(
+            page.locator(`.incident-list [data-incident="${gone.id}"]`),
+          ).toHaveCount(0);
+          await page.clock.runFor(100);
+        },
+      ],
+    ] as const)
+      test(`Escape returns to the next row once the incident is ${name}`, async ({
+        page,
+      }) => {
+        const platform = await incidentPlatform(page, { items: [...others] });
+        await page.goto("/operate/incidents");
+        await row(page, "WV-TASK-FAILED at fetch").focus();
+        await page.keyboard.press("Enter");
+        const title = page.locator("#incident-detail-title");
+        await expect(title).toBeFocused();
+        await leave(page, platform, others[1]);
+        await expect(title).toBeFocused();
+        // A later refresh, without it too.
+        await refresh(page);
+        await page.keyboard.press("Escape");
+        await expect(page.locator("weave-incident-drawer")).toHaveCount(0);
+        await expect(row(page, "WV-TASK-LOST at send")).toBeFocused();
+      });
+  });
+});
+
+test.describe("a platform of an earlier release", () => {
+  test.use({ viewport: { width: 1440, height: 900 }, timezoneId: "UTC" });
+
+  const problem = (page: Page) => page.locator(".operate-problem");
+  const asked = (platform: IncidentPlatform) =>
+    platform.queries.map(
+      (query) =>
+        `${query.get("priority") ?? "every"} ${query.get("cursor") ?? "from the start"}`,
+    );
+
+  test("that refuses the priority shows one list, and Studio doesn't ask for it again", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, {
+      items: [unknown, ...others].map(earlier),
+      pageSize: 3,
+      priority: "refuses",
+    });
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveCount(3);
+    await expect(problem(page)).toHaveCount(0);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+    expect(asked(platform)).toEqual([
+      "high from the start",
+      "every from the start",
+    ]);
+    await page.getByRole("button", { name: "Load more incidents" }).click();
+    await expect(rows(page)).toHaveCount(5);
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect.poll(() => platform.queries.length).toBe(5);
+    await expect(rows(page)).toHaveCount(5);
+    await page
+      .getByLabel("Workflow", { exact: true })
+      .fill("move-between-systems");
+    await page.getByLabel("Workflow", { exact: true }).press("Enter");
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page)).not.toContainText("In doubt");
+    expect(asked(platform)).toEqual([
+      "high from the start",
+      "every from the start",
+      "every every:3",
+      "every from the start",
+      "every every:3",
+      "every from the start",
+    ]);
+  });
+
+  test("that refuses the priority is asked for it again once another person signs in", async ({
+    page,
+  }) => {
+    let person = "jane";
+    const identity = (host: PlatformHost) => ({
+      ...host.identity(),
+      principal_id: `principal-${person}`,
+      grants: host.identity().grants.map((grant) => ({
+        ...grant,
+        capabilities: ["incident.read"],
+      })),
+    });
+    const host = await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: (current) => ({
+        json: {
+          session: current.session(),
+          identity: identity(current),
+          workspaces: current.current?.workspaces ?? [],
+          truncated: false,
+          workspace_revoked: false,
+        },
+      }),
+    });
+    await page.route("**/studio/api/api/v1/identity", (route) =>
+      route.fulfill({ json: identity(host) }),
+    );
+    const asked: string[] = [];
+    // The platform is upgraded before John signs in.
+    await page.route("**/environments/*/incidents?*", (route) => {
+      const priority = new URL(route.request().url()).searchParams.get(
+        "priority",
+      );
+      asked.push(`${person} ${priority ?? "every"}`);
+      if (person === "jane" && priority)
+        return route.fulfill({
+          status: 422,
+          json: { code: "WV-VALIDATION", message: "Unknown query parameter" },
+        });
+      return route.fulfill({
+        json: {
+          items: priority === "high" ? [unknown] : others,
+          next_cursor: null,
+        },
+      });
+    });
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveCount(4);
+    const finish = await signInWaiting(page, host, () =>
+      page.getByRole("button", { name: "Incidents", exact: true }).click(),
+    );
+    await expect(rows(page)).toHaveCount(4);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+    person = "john";
+    await finish();
+    await expect(codes(high(page))).toHaveText(["WV-TXN-PIVOT-UNKNOWN"]);
+    await expect(codes(other(page))).toHaveCount(4);
+    expect(asked.slice(-2)).toEqual(["john high", "john normal"]);
+  });
+
+  test("that ignores the priority shows one list: no incident but a transaction's reads as in doubt", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, {
+      items: [unknown, ...others].map(earlier),
+      pageSize: 4,
+      priority: "ignores",
+    });
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveCount(4);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+    await expect(page.locator(".band-note")).toHaveCount(0);
+    await expect(page.getByText("4 incidents loaded")).toBeVisible();
+    await page.getByRole("button", { name: "Load more incidents" }).click();
+    await expect(codes(page.locator(".incident-list"))).toHaveText([
+      "WV-TXN-PIVOT-UNKNOWN",
+      "WV-TASK-AMBIGUOUS",
+      "WV-TASK-FAILED",
+      "WV-TASK-LOST",
+      "WV-TASK-AMBIGUOUS",
+    ]);
+    await expect(page.getByText("5 incidents", { exact: true })).toBeVisible();
+    const before = platform.queries.length;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    // The band in doubt, then the list's own two pages.
+    await expect.poll(() => platform.queries.length).toBe(before + 3);
+    await expect(rows(page)).toHaveCount(5);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+  });
+
+  test("that ignores the priority and can't show an incident shows it once, in no band", async ({
+    page,
+  }) => {
+    await incidentPlatform(page, {
+      items: [
+        { id: "c1000000-0000-4000-8000-000000000001", unavailable: true },
+      ],
+      priority: "ignores",
+    });
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveText(/Unavailable incident/);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+    await expect(page.getByText("1 incident", { exact: true })).toBeVisible();
+  });
+
+  test("a filter the platform refuses is an error, and clearing it brings the bands back", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page);
+    const refused = {
+      status: 422,
+      json: { code: "WV-VALIDATION", message: "Invalid workflow" },
+    };
+    await page.route(`${environment}/incidents?*workflow=*`, (route) =>
+      route.fulfill(refused),
+    );
+    await page.goto("/operate/incidents?workflow=not%20a%20name");
+    await expect(page.getByText("Support code: WV-VALIDATION")).toBeVisible();
+    await page.unroute(`${environment}/incidents?*workflow=*`);
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(
+      page.getByRole("button", { name: /^Clear filters/ }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /^Clear filters/ }).click();
+    await expect(codes(high(page))).toHaveCount(4);
+    expect(asked(platform).slice(-2)).toEqual([
+      "high from the start",
+      "normal from the start",
+    ]);
+  });
+
+  test("a cursor the platform refuses is an error: the bands stay, and Studio keeps asking for them", async ({
+    page,
+  }) => {
+    const platform = await incidentPlatform(page, { pageSize: 3 });
+    await page.goto("/operate/incidents");
+    await high(page)
+      .getByRole("button", { name: "Load more incidents" })
+      .click();
+    await expect(codes(high(page))).toHaveCount(4);
+    let held = 0;
+    await page.route(`${environment}/incidents?*cursor=high*`, (route) => {
+      held++;
+      return route.fulfill({
+        status: 422,
+        json: { code: "WV-VALIDATION", message: "Invalid scope-bound cursor" },
+      });
+    });
+    const before = platform.queries.length;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(page.getByText("Support code: WV-VALIDATION")).toBeVisible();
+    expect(held).toBe(1);
+    await expect(codes(high(page))).toHaveCount(4);
+    await expect(codes(other(page))).toHaveCount(3);
+    // Neither one list nor the other band was read after it.
+    expect(asked(platform).slice(before)).toEqual(["high from the start"]);
+    await page.unroute(`${environment}/incidents?*cursor=high*`);
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(problem(page)).toHaveCount(0);
+    await expect(codes(high(page))).toHaveCount(4);
+    expect(asked(platform).slice(before + 1)).toEqual([
+      "high from the start",
+      "high high:3",
+      "normal from the start",
+    ]);
+  });
+});
+
+for (const size of [
+  { name: "a phone at 360x640", width: 360, height: 640 },
+  { name: "a window at 600x500", width: 600, height: 500 },
+])
+  test.describe(`transactions in doubt on ${size.name}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: size.width < 400,
+      timezoneId: "UTC",
+    });
+
+    test("one column of bands, the case and its missing member's Open within the screen", async ({
+      page,
+    }) => {
+      await incidentPlatform(page, { items: [unknown, called, ...others] });
+      await page.goto("/operate/incidents");
+      const group = caseOf(page);
+      await expect(group).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth - window.innerWidth,
+        ),
+      ).toBeLessThanOrEqual(0);
+      const open = group.getByRole("button", {
+        name: "Open incident WV-TXN-SETTLE-TIMEOUT, move in run 6d18b3f0",
+      });
+      await expect(open).toBeVisible();
+      const box = (await open.boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(43.5);
+      expect(box.x + box.width).toBeLessThanOrEqual(size.width);
+      // No code or key is cut: every cell's text fits its cell.
+      const cut = await high(page).evaluate((section) =>
+        [
+          ...section.querySelectorAll<HTMLElement>(
+            ".row-open, .row-text small, .business-key, .case-head strong, .tag, .status-pill",
+          ),
+        ]
+          .filter((node) => node.scrollWidth > node.clientWidth + 1)
+          .map((node) => node.textContent),
+      );
+      expect(cut).toEqual([]);
+      await page.screenshot({
+        path: `${captures}/inbox-bands-${size.width}.png`,
+      });
+      await open.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: `${captures}/inbox-case-missing-${size.width}.png`,
+      });
     });
   });

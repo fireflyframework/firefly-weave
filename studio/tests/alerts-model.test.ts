@@ -25,7 +25,9 @@ import {
   readAlert,
   readRule,
   type Alert,
+  type AlertPreview,
   type AlertRule,
+  type AlertRuleDraft,
 } from "../src/app/operate/alerts/alerts-api";
 import {
   SIGNAL_WORDS,
@@ -40,9 +42,11 @@ import {
   fromPercent,
   nameParts,
   notificationText,
+  previewWords,
   recipientProblem,
   resolvedText,
   ruleDraft,
+  ruleRefusal,
   spanText,
   startedText,
   stateLine,
@@ -93,6 +97,20 @@ describe("signal words", () => {
     });
     expect(SIGNAL_WORDS["targets.runner_offline"].selector).toBe("target_id");
     expect(SIGNAL_WORDS["health.degraded"].window).toBe(false);
+    expect(SIGNAL_WORDS["transactions.in_doubt"]).toMatchObject({
+      name: "Transactions in doubt",
+      hint: "Transactions waiting for a person to resolve them.",
+      unit: "count",
+      window: false,
+      selector: null,
+    });
+    expect(SIGNAL_WORDS["transactions.undo_age_seconds"]).toMatchObject({
+      name: "Oldest transaction undoing",
+      hint: "How long the oldest transaction still undoing has been open.",
+      unit: "seconds",
+      window: false,
+      selector: null,
+    });
   });
   it.skipIf(!pythonAvailable)(
     "every server signal has words, and the fixture keeps the contract",
@@ -258,6 +276,109 @@ describe("firing and resolved alerts", () => {
       "Failed: a member hasn't set an alert address",
     );
     expect(words("failed", "something_new")).toBe("Failed");
+  });
+});
+
+describe("a preview", () => {
+  const draft = (signal: string): AlertRuleDraft => ({
+    ...rules[0],
+    signal,
+    threshold: 60,
+  });
+  const noData: AlertPreview = {
+    value: null,
+    unit: "seconds",
+    condition_met: false,
+    samples: null,
+    evaluated_at: fixture.NOW,
+    no_data_reason: "no_data",
+  };
+
+  it("says what having no data means for a transaction undoing, and in general for any other signal", () => {
+    expect(
+      previewWords(noData, draft("transactions.undo_age_seconds")),
+    ).toEqual({
+      value: "—",
+      status: "No data: there is nothing to read for this signal yet.",
+      detail:
+        "With nothing undoing, the signal has no data: the rule doesn't fire, and a firing alert resolves.",
+    });
+    for (const signal of ["queue.oldest_ready_seconds", "runs.newer_ratio"])
+      expect(previewWords(noData, draft(signal)).detail, signal).toBe(
+        "With no data, the rule doesn't fire, and a firing alert resolves.",
+      );
+  });
+});
+
+describe("a rule refused for lack of access", () => {
+  const every = [
+    "alert.manage",
+    "status.read",
+    "incident.read",
+    "run.read",
+  ] as const;
+  const without =
+    (...missing: string[]) =>
+    (capability: string) =>
+      (every as readonly string[]).includes(capability) &&
+      !missing.includes(capability);
+  const refused = (
+    signal: string,
+    doing: "save" | "preview",
+    can: (capability: string) => boolean,
+  ) => ruleRefusal({ signal, doing, can, code: "WV-FORBIDDEN" });
+  const needs = (capability: string) =>
+    `You need \`${capability}\` in this environment for a rule on this signal. Ask an administrator in Settings › People and access. Support code: WV-FORBIDDEN.`;
+
+  it.each([
+    ["transactions.in_doubt", "run.read"],
+    ["transactions.undo_age_seconds", "run.read"],
+    ["incidents.active", "incident.read"],
+    ["run.failures", "status.read"],
+    ["run.failures", "alert.manage"],
+  ])("names what a rule on %s needs: %s", (signal, capability) => {
+    for (const doing of ["save", "preview"] as const)
+      expect(refused(signal, doing, without(capability))).toBe(
+        needs(capability),
+      );
+  });
+
+  it("names the first one missing, in the order the platform asks for them", () => {
+    const signal = "transactions.in_doubt";
+    expect(refused(signal, "save", without("run.read", "status.read"))).toBe(
+      needs("status.read"),
+    );
+    expect(refused(signal, "save", without(...every))).toBe(
+      needs("alert.manage"),
+    );
+  });
+
+  it("claims nothing missing that the signal doesn't need", () => {
+    const general = (doing: string) =>
+      `You can't ${doing} this rule. Ask an administrator in Settings › People and access. Support code: WV-FORBIDDEN.`;
+    expect(
+      refused("run.failures", "save", without("run.read", "incident.read")),
+    ).toBe(general("save"));
+    expect(refused("transactions.in_doubt", "preview", without())).toBe(
+      general("preview"),
+    );
+    // A signal of a newer platform has needs this Studio doesn't know.
+    expect(refused("runs.newer_ratio", "save", without())).toBe(
+      general("save"),
+    );
+  });
+
+  it("has no support code to give when the platform gave none", () => {
+    expect(
+      ruleRefusal({
+        signal: "run.failures",
+        doing: "save",
+        can: without("status.read"),
+        code: "",
+      }),
+    ).toBe(
+      "You need `status.read` in this environment for a rule on this signal. Ask an administrator in Settings › People and access.",
+    );
   });
 });
 

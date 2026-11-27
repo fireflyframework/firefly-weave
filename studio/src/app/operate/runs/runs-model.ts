@@ -22,8 +22,13 @@ SPDX-License-Identifier: Apache-2.0
 // once, so Load more continues exactly the list that was first read. Business
 // and correlation keys may carry business data: they reach the platform but
 // never the address. Pure: the page renders it, tests check it.
+import {
+  stateWord,
+  type TransactionState,
+} from "../../editor/transactions/transaction-words";
 import { durationText } from "../../format";
 import { statusLabel, statusTone, type Tone } from "../../status-labels";
+import { stateTone } from "../transactions/transaction-record";
 import {
   runOrigins,
   runStatuses,
@@ -44,6 +49,56 @@ export type RunsFilters = Omit<
   RunSummaryQuery,
   "limit" | "cursor" | "started_after" | "started_before"
 > & { timeWindow: RunTimeWindow };
+
+/** The Transaction filter's choices, in the order a transaction goes through them. */
+export const transactionStates: readonly TransactionState[] = [
+  "open",
+  "deciding",
+  "committing",
+  "completed",
+  "compensating",
+  "compensated",
+  "cancelled",
+  "in_doubt",
+  "reconciled",
+  "force_ended",
+];
+/** These states in the choices' order, each once; none leaves the filter out. */
+function withStates(
+  filters: RunsFilters,
+  states: readonly TransactionState[],
+): RunsFilters {
+  const next = { ...filters };
+  const chosen = transactionStates.filter((state) => states.includes(state));
+  if (chosen.length) next.transaction_state = chosen;
+  else delete next.transaction_state;
+  return next;
+}
+/** Needs attention is the Transaction filter set to In doubt alone. */
+export function needsAttention(filters: RunsFilters): boolean {
+  const states = filters.transaction_state ?? [];
+  return states.length === 1 && states[0] === "in_doubt";
+}
+/** Checking Needs attention sets In doubt alone; unchecking it clears the Transaction filter. */
+export function withNeedsAttention(
+  filters: RunsFilters,
+  on: boolean,
+): RunsFilters {
+  return withStates(filters, on ? ["in_doubt"] : []);
+}
+/** Presses one Transaction choice: on if it was off, off if it was on. */
+export function withTransactionState(
+  filters: RunsFilters,
+  state: TransactionState,
+): RunsFilters {
+  const states = filters.transaction_state ?? [];
+  return withStates(
+    filters,
+    states.includes(state)
+      ? states.filter((item) => item !== state)
+      : [...states, state],
+  );
+}
 
 /** Runs read per page. */
 export const RUNS_PAGE_SIZE = 50;
@@ -135,6 +190,30 @@ function rangeId(milliseconds: number): string {
       return `${milliseconds / units[unit]}${unit}`;
   return `${Math.max(1, Math.round(milliseconds / 60_000))}m`;
 }
+const unitNames: Record<string, string> = { m: "minute", h: "hour", d: "day" };
+/** "Last 7 days", an address's own length too; "Custom range" for exact bounds. */
+export function rangeLabel(window: RunTimeWindow): string {
+  if (window.kind === "absolute") return "Custom range";
+  const id = rangeId(window.milliseconds);
+  const preset = rangePresets.find((item) => item.id === id);
+  if (preset) return preset.label;
+  const count = id.slice(0, -1);
+  return `Last ${count} ${unitNames[id.slice(-1)]}${count === "1" ? "" : "s"}`;
+}
+/** The time range's choices: the presets, and the window's own length when it is none of them. */
+export function rangeChoices(
+  window: RunTimeWindow,
+): { id: string; label: string }[] {
+  if (window.kind === "absolute") return rangePresets;
+  const id = rangeId(window.milliseconds);
+  return rangePresets.some((preset) => preset.id === id)
+    ? rangePresets
+    : [...rangePresets, { id, label: rangeLabel(window) }];
+}
+/** The chosen range: a choice's ID, or "custom" for exact bounds. */
+export function chosenRange(window: RunTimeWindow): string {
+  return window.kind === "absolute" ? "custom" : rangeId(window.milliseconds);
+}
 const instant =
   /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -180,6 +259,9 @@ export function runsFiltersFromQuery(search: string): RunsFilters {
     (runStatuses as readonly string[]).includes(value),
   ) as RunStatus[];
   filters.status = statuses.slice(0, runStatuses.length);
+  const states = query.getAll("transaction_state");
+  const chosen = transactionStates.filter((state) => states.includes(state));
+  if (chosen.length) filters.transaction_state = chosen;
   const workflow = query.get("workflow");
   if (workflow && name.test(workflow)) {
     filters.workflow = workflow;
@@ -232,6 +314,9 @@ export function runsFiltersToQuery(filters: RunsFilters): string {
   } = filters;
   const query = new URLSearchParams();
   for (const status of shared.status ?? []) query.append("status", status);
+  for (const state of transactionStates)
+    if (shared.transaction_state?.includes(state))
+      query.append("transaction_state", state);
   if (shared.workflow) {
     query.set("workflow", shared.workflow);
     if (shared.version) query.set("version", shared.version);
@@ -270,6 +355,7 @@ export function runFilterCount(filters: RunsFilters): number {
   const window = filters.timeWindow;
   return [
     (filters.status ?? []).length > 0,
+    (filters.transaction_state ?? []).length > 0,
     !!filters.workflow,
     !!filters.origin,
     window.kind !== "relative" || window.milliseconds !== DEFAULT_RANGE_MS,
@@ -287,6 +373,24 @@ export function runFilterCount(filters: RunsFilters): number {
   ].filter(Boolean).length;
 }
 
+/**
+ * Why a list that needs attention is empty, by the range it read; null when
+ * another filter may have left runs out.
+ */
+export function nothingNeedsAttention(filters: RunsFilters): string | null {
+  const { timeWindow } = defaultRunsFilters();
+  if (
+    !needsAttention(filters) ||
+    runFilterCount({ ...filters, timeWindow }) !== 1
+  )
+    return null;
+  const range =
+    filters.timeWindow.kind === "absolute"
+      ? "this range"
+      : `the ${rangeLabel(filters.timeWindow).toLowerCase()}`;
+  return `No run started in ${range} has a transaction in doubt. A run whose transactions are held is in Incidents.`;
+}
+
 /** The run's status pill. A run that handled errors and succeeded says so. */
 export function runOutcome(run: RunSummary): { label: string; tone: Tone } {
   if (run.status === "succeeded" && (run.handled_errors ?? 0) > 0)
@@ -295,6 +399,14 @@ export function runOutcome(run: RunSummary): { label: string; tone: Tone } {
     label: statusLabel("run", run.status),
     tone: statusTone("run", run.status),
   };
+}
+
+/** The Transaction column's pill: the run's worst transaction, or nothing without one. */
+export function transactionPill(
+  run: RunSummary,
+): { label: string; tone: Tone } | null {
+  const state = run.transaction_state;
+  return state ? { label: stateWord(state), tone: stateTone(state) } : null;
 }
 
 export function isTerminalRun(run: RunSummary): boolean {

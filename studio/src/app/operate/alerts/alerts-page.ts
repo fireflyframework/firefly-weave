@@ -179,6 +179,7 @@ export type RuleTarget =
           [targets]="targetNames()"
           [environment]="environmentName()"
           [canPreview]="host.can('status.read')"
+          [can]="canFn"
           (done)="closeEditor($event)"
         />
       } @else {
@@ -872,6 +873,7 @@ export class AlertsPage implements DoCheck, OnDestroy {
   );
   readonly personNameFn = (id: string, sentenceStart: boolean) =>
     this.person(id, sentenceStart);
+  readonly canFn = (capability: string) => this.host.can(capability);
 
   /** With the person known, only with alert.read anywhere in the workspace. */
   readable() {

@@ -54,11 +54,13 @@ import {
   dayHeadline,
   dayQuery,
   healthTiles,
+  inDoubtRuns,
   isQuiet,
   keepsStatistics,
   loadFigures,
   loadSeriesQuery,
   loadSparklines,
+  oldestUndoing,
   readSummary,
   sectionOf,
   slotMeter,
@@ -376,7 +378,7 @@ const STATISTICS_DELAY_MS = 5_000;
 
         <section class="band" aria-labelledby="overview-capacity">
           <h2 id="overview-capacity" class="band-title">
-            Workers and clusters
+            Capacity and incidents
           </h2>
           <div class="panels">
             <article class="panel" aria-labelledby="overview-workers">
@@ -505,6 +507,60 @@ const STATISTICS_DELAY_MS = 5_000;
                 />
               }
             </article>
+            @if (s.transactions; as section) {
+              <article class="panel" aria-labelledby="overview-transactions">
+                <h3 id="overview-transactions">Transactions</h3>
+                @let transactions = sectionOf(section);
+                @if (transactions.kind === "ready") {
+                  @let t = transactions.value;
+                  @let oldest = oldestUndoing(t);
+                  <dl class="counts">
+                    <div class="count-row">
+                      <dt>
+                        Transactions in doubt
+                        <small>Waiting for a person to resolve them</small>
+                      </dt>
+                      <dd class="numeric" [class.needs-person]="t.in_doubt > 0">
+                        @if (t.in_doubt > 0) {
+                          <weave-icon name="critical" [size]="16" />
+                        }
+                        {{ count(t.in_doubt) }}
+                      </dd>
+                    </div>
+                    <div class="count-row">
+                      <dt>
+                        Undoing now
+                        @if (oldest) {
+                          <small>{{ oldest }}</small>
+                        }
+                      </dt>
+                      <dd class="numeric">{{ count(t.undoing) }}</dd>
+                    </div>
+                  </dl>
+                  @if (t.in_doubt > 0) {
+                    <a
+                      class="panel-link"
+                      [href]="inDoubtRuns"
+                      (click)="follow($event, inDoubtRuns)"
+                      >Show runs that need attention</a
+                    >
+                  }
+                } @else if (transactions.kind === "forbidden") {
+                  <ng-container
+                    *ngTemplateOutlet="
+                      access;
+                      context: { $implicit: 'run.read' }
+                    "
+                  />
+                } @else {
+                  <weave-operate-state
+                    kind="error"
+                    message="Studio couldn't read this section."
+                    (retry)="poller.refresh()"
+                  />
+                }
+              </article>
+            }
           </div>
         </section>
 
@@ -602,6 +658,8 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
   private dayFailed = false;
   readonly sectionOf = sectionOf;
   readonly count = countText;
+  readonly oldestUndoing = oldestUndoing;
+  readonly inDoubtRuns = inDoubtRuns;
   readonly iso = timeIso;
   readonly absolute = timeAbsolute;
   summary: OperationsSummary | null = null;

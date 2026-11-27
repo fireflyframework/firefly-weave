@@ -30,7 +30,7 @@ import {
   type Route,
 } from "@playwright/test";
 import type { OperationsSummary } from "../../src/app/operate/overview/overview-model";
-import { connected } from "./support";
+import { connected, runSummary } from "./support";
 import {
   acme,
   acmePlatform,
@@ -428,7 +428,7 @@ for (const viewport of [
           .first()
           .evaluate((node) => getComputedStyle(node).fontVariantNumeric),
       ).toBe("tabular-nums");
-      const capacity = band(page, "Workers and clusters");
+      const capacity = band(page, "Capacity and incidents");
       await expect(capacity.locator(".panel").nth(0)).toContainText(
         /Online\s*3/,
       );
@@ -618,7 +618,7 @@ for (const viewport of [
             exact: true,
           }),
         ).toBeVisible();
-      await expect(band(page, "Workers and clusters")).toContainText(
+      await expect(band(page, "Capacity and incidents")).toContainText(
         /Online\s*3/,
       );
       await expect(page.locator("li.health-tile")).toHaveCount(6);
@@ -672,7 +672,7 @@ for (const viewport of [
         ],
       );
       await open(page);
-      const capacity = band(page, "Workers and clusters");
+      const capacity = band(page, "Capacity and incidents");
       const clusters = capacity.locator(".panel").nth(1);
       const incidents = capacity.locator(".panel").nth(2);
       await expect(clusters).toContainText(
@@ -713,6 +713,255 @@ for (const viewport of [
       expect(reads).toEqual([]);
     });
   });
+
+test.describe("transactions", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const inDoubt = { in_doubt: 4, undoing: 1, oldest_undoing_seconds: 720 };
+  const panel = (page: Page) =>
+    page.getByRole("article", { name: "Transactions", exact: true });
+  const row = (page: Page, label: string) =>
+    panel(page).locator(".count-row", { hasText: label });
+  const link = (page: Page) =>
+    panel(page).getByRole("link", { name: "Show runs that need attention" });
+  const opened = async (
+    page: Page,
+    transactions: OperationsSummary["transactions"],
+  ) => {
+    const answers = [() => ({ json: summary({ transactions }) })];
+    await overview(page, every, answers);
+    await open(page);
+    await expect(page.locator("li.health-tile")).toHaveCount(6);
+    return answers;
+  };
+  /** The color a token paints in the page. */
+  const ink = (page: Page, token: string) =>
+    page.locator("weave-overview-page .overview").evaluate((node, name) => {
+      const probe = node.appendChild(document.createElement("i"));
+      probe.style.color = `var(${name})`;
+      const { color } = getComputedStyle(probe);
+      probe.remove();
+      return color;
+    }, token);
+
+  test("the last panel counts transactions in doubt and undoing, and opens the runs that need attention", async ({
+    page,
+  }) => {
+    await opened(page, inDoubt);
+    await expect(
+      band(page, "Capacity and incidents").getByRole("heading", { level: 3 }),
+    ).toHaveText(["Workers", "Clusters", "Incidents", "Transactions"]);
+    await expect(panel(page).locator("dt")).toHaveText([
+      "Transactions in doubt Waiting for a person to resolve them",
+      "Undoing now oldest 12 min",
+    ]);
+    const [doubt, undoing] = ["Transactions in doubt", "Undoing now"].map(
+      (label) => row(page, label).locator("dd"),
+    );
+    await expect(doubt).toHaveText("4");
+    await expect(doubt).toHaveCSS("color", await ink(page, "--danger-ink"));
+    await expect(doubt.locator("weave-icon[name=critical]")).toBeVisible();
+    await expect(undoing).toHaveText("1");
+    await expect(undoing).toHaveCSS("color", await ink(page, "--text"));
+    await expect(undoing.locator("weave-icon")).toHaveCount(0);
+    await panel(page).scrollIntoViewIfNeeded();
+    await shot(page, "overview-transactions-1440");
+    // One of the four is in doubt since a run started three days ago.
+    const started = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    const old = {
+      ...runSummary({
+        id: id(31),
+        workflow_name: "move-between-systems",
+        started_at: started,
+        state: { status: "suspended" },
+      }),
+      transaction_state: "in_doubt",
+    };
+    await page.route("**/run-summaries?**", (route) => {
+      const query = new URL(route.request().url()).searchParams;
+      return route.fulfill({
+        json: {
+          items:
+            query.getAll("transaction_state").join() === "in_doubt" &&
+            query.get("started_after")! <= started
+              ? [old]
+              : [],
+          next_cursor: null,
+        },
+      });
+    });
+    await expect(link(page)).toHaveAttribute(
+      "href",
+      "/operate/runs?transaction_state=in_doubt&range=400d",
+    );
+    // Studio opens it in place: what it holds in memory stays.
+    await page.evaluate(() => Object.assign(window, { sameDocument: true }));
+    await link(page).click();
+    await expect(page).toHaveURL(
+      /\/operate\/runs\?transaction_state=in_doubt&range=400d$/,
+    );
+    await expect(
+      page.getByRole("checkbox", { name: "Needs attention" }),
+    ).toBeChecked();
+    expect(await page.evaluate(() => "sameDocument" in window)).toBe(true);
+    const rows = page.getByRole("table", { name: "Runs" }).locator(".run-row");
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText("move-between-systems");
+    // The range it reads shows by its length, with no empty bounds to fill in.
+    await expect(
+      page.getByLabel("Time range").locator("option:checked"),
+    ).toHaveText("Last 400 days");
+    await expect(page.getByLabel("From", { exact: true })).toHaveCount(0);
+    await shot(page, "runs-needs-attention-from-overview-1440");
+  });
+
+  test("with nothing in doubt or undoing both read 0, in no danger and with no link", async ({
+    page,
+  }) => {
+    await opened(page, { in_doubt: 0, undoing: 0 });
+    const counts = panel(page).locator("dd");
+    await expect(counts).toHaveText(["0", "0"]);
+    for (const count of await counts.all())
+      await expect(count).toHaveCSS("color", await ink(page, "--text"));
+    await expect(panel(page).locator("weave-icon")).toHaveCount(0);
+    await expect(panel(page)).not.toContainText("oldest");
+    await expect(link(page)).toHaveCount(0);
+    await shot(page, "overview-transactions-zero-1440");
+  });
+
+  test("without run.read the panel says so, and shows no figure", async ({
+    page,
+  }) => {
+    await opened(page, { state: "forbidden" });
+    await expect(panel(page)).toContainText(
+      "You need run.read in this environment. Ask an administrator in Settings › People and access.",
+    );
+    await expect(panel(page).locator("dd")).toHaveCount(0);
+    await expect(link(page)).toHaveCount(0);
+  });
+
+  test("a section the server couldn't read says so of itself alone, and reads again", async ({
+    page,
+  }) => {
+    const answers = await opened(page, { state: "unavailable" });
+    const problem = panel(page).getByRole("alert");
+    await expect(problem).toContainText("Studio couldn't read this section.");
+    // Another section may have failed too.
+    await expect(problem).not.toContainText("current");
+    await expect(panel(page).locator("dd")).toHaveCount(0);
+    await expect(band(page, "Capacity and incidents")).toContainText(
+      /Online\s*3/,
+    );
+    await shot(page, "overview-transactions-unavailable-1440");
+    answers[0] = () => ({ json: summary({ transactions: inDoubt }) });
+    await problem.getByRole("button", { name: "Try again" }).click();
+    await expect(panel(page).locator("dd")).toHaveText(["4", "1"]);
+    await expect(problem).toHaveCount(0);
+  });
+
+  test("a server without transactions has no panel for them", async ({
+    page,
+  }) => {
+    await opened(page, undefined);
+    await expect(
+      band(page, "Capacity and incidents").locator(".panel"),
+    ).toHaveCount(3);
+    await expect(panel(page)).toHaveCount(0);
+  });
+
+  test("Needs attention keeps the platform's order and titles: in doubt first among incidents", async ({
+    page,
+  }) => {
+    const incident = (n: number, title: string) =>
+      ({ kind: "incident", id: id(n), title }) as const;
+    await overview(page, every, [
+      () => ({
+        json: summary({
+          attention: [
+            incident(21, "Transaction in doubt: WV-TXN-UNDO-STUCK at add"),
+            // A run whose metadata may not be shown.
+            incident(22, "Transaction in doubt"),
+            incident(23, "Active incident in reference-sync"),
+          ],
+        }),
+      }),
+    ]);
+    await open(page);
+    const items = band(page, "Needs attention").locator(".attention-item");
+    await expect(items.locator("a.attention-title")).toHaveText([
+      "Transaction in doubt: WV-TXN-UNDO-STUCK at add",
+      "Transaction in doubt",
+      "Active incident in reference-sync",
+    ]);
+    await items.nth(0).getByRole("link").click();
+    await expect(page).toHaveURL(
+      new RegExp(`/operate/incidents\\?incident=${id(21)}$`),
+    );
+  });
+
+  for (const [size, columns] of [
+    [{ width: 1440, height: 900 }, 4],
+    [{ width: 1100, height: 800 }, 2],
+    [{ width: 600, height: 500 }, 1],
+    [{ width: 360, height: 640 }, 1],
+  ] as const)
+    test(`the panel is the size of the others at ${size.width}x${size.height}, its counts level with their labels`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(size);
+      await opened(page, {
+        in_doubt: 1_204,
+        undoing: 12,
+        oldest_undoing_seconds: 8_040,
+      });
+      const panels = await boxes(page.locator(".panel"));
+      expect(panels).toHaveLength(4);
+      const rowOf = (top: number) =>
+        panels.filter((box) => Math.abs(box.top - top) <= 1);
+      expect(rowOf(panels[0].top)).toHaveLength(columns);
+      for (const box of panels) {
+        expect(Math.abs(box.width - panels[0].width)).toBeLessThanOrEqual(1);
+        for (const beside of rowOf(box.top))
+          expect(Math.abs(beside.height - box.height)).toBeLessThanOrEqual(1);
+      }
+      const rows = await panel(page)
+        .locator(".count-row")
+        .evaluateAll((nodes) =>
+          nodes.map((node) => {
+            const center = (selector: string) => {
+              const r = node.querySelector(selector)!.getBoundingClientRect();
+              return r.top + r.height / 2;
+            };
+            const dt = node.querySelector("dt")!.getBoundingClientRect();
+            const dd = node.querySelector("dd")!;
+            const box = node.getBoundingClientRect();
+            return {
+              apart: Math.abs(center("dt") - center("dd")),
+              // The label keeps clear of the lines between the rows.
+              clear: Math.min(dt.top - box.top, box.bottom - dt.bottom),
+              height: box.height,
+              // A count never breaks onto a second line.
+              lines:
+                dd.getBoundingClientRect().height /
+                parseFloat(getComputedStyle(dd).lineHeight),
+            };
+          }),
+        );
+      expect(rows).toHaveLength(2);
+      for (const { apart, clear, height, lines } of rows) {
+        expect(lines).toBeLessThan(1.5);
+        expect(apart).toBeLessThanOrEqual(1);
+        expect(clear).toBeGreaterThanOrEqual(3);
+        expect(height).toBeGreaterThanOrEqual(size.width >= 768 ? 31.5 : 43.5);
+      }
+      const target = (await link(page).boundingBox())!;
+      expect(target.height).toBeGreaterThanOrEqual(
+        size.width >= 768 ? 31.5 : 43.5,
+      );
+      await expectNoClipping(page);
+      await panel(page).scrollIntoViewIfNeeded();
+      await shot(page, `overview-transactions-${size.width}x${size.height}`);
+    });
+});
 
 test.describe("polling", () => {
   test.use({ viewport: { width: 1440, height: 900 } });

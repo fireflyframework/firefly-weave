@@ -294,7 +294,7 @@ weave-operate-state {
   min-height: var(--target);
 }
 
-/* Workers and clusters: three panels of counts. */
+/* Capacity and incidents: panels of counts, three or, with transactions, four. */
 .panels {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -344,6 +344,30 @@ weave-operate-state {
   margin: 0;
   font: var(--type-label);
   color: var(--text);
+}
+/* A count with a note under its label. */
+.count-row:has(small) {
+  padding-block: var(--space-1);
+}
+.count-row small {
+  display: block;
+  font: var(--type-caption);
+  color: var(--subtle);
+}
+.count-row .needs-person {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--inline-gap);
+  color: var(--danger-ink);
+}
+.panel-link {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--row);
+  font: var(--type-small);
+  color: var(--link);
 }
 .slots {
   display: grid;
@@ -440,6 +464,11 @@ a.attention-title {
   background: var(--skeleton);
 }
 
+@container overview (min-width: 1120px) {
+  .panels:has(> :nth-child(4)) {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
 /* Narrower panes: three health tiles a row, figures and panels in fewer
    columns. */
 @container overview (max-width: 1119px) {

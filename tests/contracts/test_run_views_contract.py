@@ -38,6 +38,7 @@ from firefly_weave.contracts.run_views import (
     RunSummaryPage,
     RunSummaryQuery,
     RunSummaryWorkflow,
+    RunTransactionResolution,
     StepFact,
     StepFactPage,
     StepFactWithOutput,
@@ -85,6 +86,12 @@ STEP = {
     "error_code": "SMTP_REJECTED",
     "child_run_id": None,
     "log_entries": 2,
+}
+RESOLUTION = {
+    "kind": "terminate",
+    "reason": "Both systems checked.",
+    "actor_id": "4e5f6a7b-8c9d-4e0f-a1b2-c3d4e5f60718",
+    "resolved_at": "2026-10-07T12:05:00Z",
 }
 LOG = {
     "id": "8c3f2e56-3f60-4e3d-8b2c-4d5e6f7a8b92",
@@ -201,6 +208,15 @@ def test_field_names_and_order_are_frozen():
         "cursor",
     ]
     assert list(RunStepQuery.model_fields) == ["step", "include", "limit", "cursor"]
+    assert list(RunTransactionResolution.model_fields) == [
+        "kind",
+        "reason",
+        "evidence_reference",
+        "actor_id",
+        "resolved_at",
+        "reconciled_as",
+        "workflow_run_id",
+    ]
     assert list(RunLogQuery.model_fields) == ["level", "source", "node_id", "limit", "cursor"]
 
 
@@ -523,6 +539,14 @@ def test_handled_field_requires_failed_status(handled):
         parse(StepFact, {**STEP, "status": "succeeded", "handled": handled})
     assert parse(StepFact, {**STEP, "handled": handled}).handled == handled
     assert "handled" not in parse(StepFact, STEP).model_dump(mode="json")
+
+
+def test_a_transaction_resolution_names_the_workflow_run_that_applied_it_and_leaves_it_out_when_unset():
+    by_run = {**RESOLUTION, "workflow_run_id": "5c90e1b7-6d2a-4f3b-9c8e-1a2b3c4d5e6f"}
+    assert parse(RunTransactionResolution, by_run).model_dump(mode="json") == by_run
+    assert parse(RunTransactionResolution, RESOLUTION).model_dump(mode="json") == RESOLUTION
+    with pytest.raises(ValidationError):
+        parse(RunTransactionResolution, {**RESOLUTION, "workflow_run_id": "5c90e1b7"})
 
 
 def test_handled_summary_default_is_omitted_and_nonzero_round_trips():

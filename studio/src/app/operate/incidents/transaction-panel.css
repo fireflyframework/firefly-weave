@@ -1,0 +1,163 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The drawer of an incident that holds a transaction: its parts 16 px apart,
+   laid out by the panel's own width. */
+:host {
+  display: block;
+  min-width: 0;
+}
+.txn-panel {
+  container: txn-panel / inline-size;
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  margin-bottom: var(--space-4);
+}
+.txn-panel h3 {
+  margin: 0;
+  font: var(--type-label);
+  line-height: 20px;
+}
+.txn-panel .status-pill {
+  margin-bottom: 0;
+}
+.txn-panel .notice {
+  margin: 0;
+  color: var(--text);
+}
+.txn-panel .notice > weave-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.txn-panel .notice[data-tone="danger"] > weave-icon {
+  color: var(--danger-ink);
+}
+.txn-panel .notice p {
+  margin: 0;
+}
+.txn-panel .notice .support-code {
+  margin-top: var(--space-1);
+}
+.txn-panel .notice button {
+  margin-top: var(--space-2);
+}
+.txn-panel .hint {
+  margin: 0;
+  font: var(--type-small);
+}
+
+/* Related incidents, between two rules: a line for each, then what to do. */
+.txn-links {
+  display: grid;
+  gap: var(--space-2);
+  padding-block: var(--space-3);
+  border-block: 1px solid var(--line);
+}
+.txn-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  font: var(--type-small);
+}
+.link-words {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--muted);
+}
+.link-words strong {
+  font: var(--type-label);
+  line-height: 20px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.link-open {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+/* A label beside its value; two pairs a row from 340 px, Run across. */
+.txn-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px var(--space-4);
+  align-items: baseline;
+  margin: 0;
+  font: var(--type-small);
+}
+.txn-facts dt {
+  color: var(--muted);
+}
+.txn-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.txn-facts .business-key {
+  font-weight: 600;
+}
+.txn-facts .run-fact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+@container txn-panel (min-width: 340px) {
+  .txn-facts {
+    grid-template-columns:
+      max-content minmax(0, 1fr) max-content
+      minmax(0, 1fr);
+  }
+  .txn-facts .run-fact {
+    grid-column: 2 / -1;
+  }
+}
+
+.txn-steps {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.record-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.record-title code {
+  font: var(--type-mono);
+  font-weight: 600;
+}
+
+@media (pointer: coarse), (max-width: 767px) {
+  .txn-panel button.sm {
+    min-height: var(--control-touch);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

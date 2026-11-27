@@ -142,6 +142,9 @@ class TransactionParticipantView(ContractModel):
     status: str = Field(min_length=1, max_length=32)
     effect: Literal["none", "unknown"]
     attempts: int | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
+    # A called step: the run of its latest call, its undo, release or confirm call when one ran, else its own. Read
+    # from the run's calls, never stored with the record.
+    child_run_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class RunTransactionCause(ContractModel):
@@ -153,7 +156,8 @@ class RunTransactionCause(ContractModel):
 
 
 class RunTransactionResolution(ContractModel):
-    """How a person resolved the transaction's in-doubt incident; never the reconciled values."""
+    """How a person, or a workflow run's resolve step, resolved the transaction's in-doubt incident; never the
+    reconciled values."""
 
     kind: Literal["retry_safe", "accept_reconciled_result", "accept_reconciled_failure", "terminate"]
     reason: str = Field(min_length=1, max_length=2000)
@@ -164,6 +168,8 @@ class RunTransactionResolution(ContractModel):
     reconciled_as: Literal["completed", "compensated"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # The workflow run whose resolve step applied the resolution, as the incident's resolution names it.
+    workflow_run_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class RunTransactionView(ContractModel):

@@ -159,6 +159,27 @@ ALERT_PRESETS: tuple[AlertPreset, ...] = (
         threshold=0,
         severity="info",
     ),
+    # A transaction in doubt waits for a person and holds other systems as they are: it alerts at once.
+    _preset(
+        "transactions-in-doubt",
+        "default",
+        "Transactions in doubt",
+        signal="transactions.in_doubt",
+        comparator="gt",
+        threshold=0,
+        for_seconds=0,
+        severity="critical",
+    ),
+    _preset(
+        "transactions-undoing-long",
+        "suggested",
+        "A transaction has been undoing over 1 hour",
+        signal="transactions.undo_age_seconds",
+        comparator="gt",
+        threshold=3600,
+        for_seconds=300,
+        severity="warning",
+    ),
 )
 
 
@@ -537,7 +558,13 @@ async def resolve_firing(
 SAVING = ("alert.manage", "status.read")
 # Signals whose figures the environment summary shows only with one more capability: a rule on one needs it to be
 # saved or previewed, and the evaluator reads it only while the person who last saved it still holds it.
-SIGNAL_CAPABILITIES: Mapping[str, str] = MappingProxyType({"incidents.active": "incident.read"})
+SIGNAL_CAPABILITIES: Mapping[str, str] = MappingProxyType(
+    {
+        "incidents.active": "incident.read",
+        "transactions.in_doubt": "run.read",
+        "transactions.undo_age_seconds": "run.read",
+    }
+)
 
 
 @service

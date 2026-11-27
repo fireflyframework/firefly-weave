@@ -1,0 +1,495 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+// Operate › Runs › a run with transactions: Cancel run says Weave undoes
+// first, and stops before sending while a transaction is in doubt; Cancel
+// without undoing lists what stays done in other systems and asks for the
+// run's short ID, and waits in the action row while a transaction is in
+// doubt. The platform is mocked with runs.transactions and runs.cancel.
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+import {
+  test,
+  expect,
+  type Locator,
+  type Page,
+  type Route,
+} from "@playwright/test";
+import type { RunTransactionView } from "../../src/app/operate/transactions/transaction-contracts";
+import {
+  completed,
+  inDoubt,
+  inDoubtIncident,
+  loopRunId,
+  loopSummary,
+} from "../run-transactions-fixture";
+import { connected } from "./support";
+
+const environment =
+  "**/studio/api/api/v1/tenants/tenant/projects/project/environments/development";
+const captures = resolve(
+  process.env["STUDIO_OPERATE_CAPTURES"]?.trim() || "test-results/operate",
+);
+mkdirSync(captures, { recursive: true });
+const operator = ["run.read", "catalog.read", "incident.read", "run.cancel"];
+const reconciler = [...operator, "transaction.reconcile"];
+const short = loopRunId.slice(0, 8);
+
+/** A transaction still going: hold reserved, add running, submit not started. */
+const running: RunTransactionView = {
+  ...completed,
+  instance_key: "move[6]",
+  state: "open",
+  ended_at: undefined,
+  decided_at: undefined,
+  participants: [
+    { ...completed.participants[0], instance_key: "hold[6]", status: "done" },
+    {
+      ...completed.participants[1],
+      instance_key: "add[6]",
+      status: "dispatched",
+    },
+    {
+      ...completed.participants[2],
+      instance_key: "submit[6]",
+      status: "pending",
+    },
+  ],
+};
+
+interface Platform {
+  transactions: RunTransactionView[];
+  posts: unknown[];
+  /** Answers runs.cancel; the default accepts it. */
+  cancel: (route: Route) => Promise<void>;
+}
+/** What the platform answers every read of the run with when it can't read it. */
+interface Unreadable {
+  status: number;
+  code: string;
+  message: string;
+}
+async function platform(
+  page: Page,
+  capabilities: string[],
+  transactions: RunTransactionView[],
+  unreadable?: Unreadable,
+): Promise<Platform> {
+  await connected(page, { capabilities });
+  const result: Platform = {
+    transactions,
+    posts: [],
+    cancel: (route) => route.fulfill({ json: { id: loopRunId } }),
+  };
+  const refuse = (route: Route) =>
+    route.fulfill({
+      status: unreadable!.status,
+      json: { code: unreadable!.code, message: unreadable!.message },
+    });
+  await page.route(`${environment}/runs/*`, (route) => {
+    if (unreadable) return refuse(route);
+    const id = new URL(route.request().url()).pathname.split("/").pop()!;
+    return route.fulfill({
+      json: {
+        id,
+        business_key: null,
+        correlation_key: null,
+        activation: { id: "act", name: "move-each", revision: 1 },
+        state: { status: "running", active: [], input: {} },
+      },
+    });
+  });
+  await page.route(`${environment}/runs/*/lifecycle`, (route) =>
+    route.fulfill({ json: { archived: false, purged: false, revision: 1 } }),
+  );
+  await page.route(`${environment}/runs/*/history?*`, (route) =>
+    route.fulfill({ json: { events: [], next_cursor: null } }),
+  );
+  // The Runs list beside the detail lists the run it shows.
+  await page.route("**/run-summaries?**", (route) =>
+    route.fulfill({
+      json: {
+        items: [loopSummary("running", result.transactions)],
+        next_cursor: null,
+      },
+    }),
+  );
+  // Pages of 50, as Studio asks for them; the cursor is where the next starts.
+  await page.route(`${environment}/runs/*/transactions?*`, (route) => {
+    if (unreadable) return refuse(route);
+    const url = new URL(route.request().url());
+    const at = Number(url.searchParams.get("cursor") ?? 0);
+    const end = at + 50;
+    return route.fulfill({
+      json: {
+        items: result.transactions.slice(at, end),
+        next_cursor: end < result.transactions.length ? String(end) : null,
+      },
+    });
+  });
+  await page.route(`${environment}/runs/*/cancel`, async (route) => {
+    result.posts.push(route.request().postDataJSON());
+    await result.cancel(route);
+  });
+  await page.goto(`/operate/runs/${loopRunId}`);
+  return result;
+}
+const dialog = (page: Page, name: string) => page.getByRole("dialog", { name });
+const actionRow = (page: Page) => page.locator(".run-controls");
+/** The inbox is on screen, asked for the incident of the transaction in doubt. */
+async function expectInbox(page: Page) {
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Incidents" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(
+    new RegExp(`/operate/incidents\\?incident=${inDoubtIncident}$`),
+  );
+}
+
+test.use({ viewport: { width: 1440, height: 900 } });
+
+test("Cancel run says Weave undoes an unfinished transaction first, then that it is undoing", async ({
+  page,
+}) => {
+  const runs = await platform(page, operator, [running]);
+  await expect(page.locator(".txn-summary")).toBeVisible();
+  runs.cancel = (route) =>
+    route.fulfill({ json: { id: loopRunId, pending_undo: true } });
+  await actionRow(page).getByRole("button", { name: "Cancel run" }).click();
+  const cancel = dialog(page, "Cancel this run?");
+  await expect(cancel).toContainText(
+    "This run has a transaction that isn't finished. Weave undoes what it did before the run ends. Give a reason for the audit log.",
+  );
+  await expect(
+    cancel.getByRole("button", { name: "Keep running" }),
+  ).toBeVisible();
+  await page.screenshot({ path: `${captures}/run-cancel-undo-first.png` });
+  await cancel.getByLabel("Reason").fill("The target system is down");
+  await cancel.getByRole("button", { name: "Cancel run" }).click();
+  await expect(page.locator(".toast")).toContainText(
+    "Canceling: undoing what this run's transactions did.",
+  );
+  expect(runs.posts).toEqual([{ reason: "The target system is down" }]);
+  // Without transaction.reconcile, Cancel without undoing isn't offered.
+  await expect(
+    actionRow(page).getByRole("button", { name: "Cancel without undoing" }),
+  ).toHaveCount(0);
+});
+
+test("Cancel run with a transaction in doubt says so before sending, and sends nothing", async ({
+  page,
+}) => {
+  const runs = await platform(page, operator, [running, inDoubt]);
+  await expect(page.locator(".txn-summary")).toBeVisible();
+  await actionRow(page).getByRole("button", { name: "Cancel run" }).click();
+  const cancel = dialog(page, "Cancel this run?");
+  const notice = cancel.locator(".notice");
+  await expect(notice).toHaveAttribute("data-tone", "danger");
+  await expect(notice).toContainText(
+    "A transaction is in doubt. Resolve the transaction first.",
+  );
+  await expect(
+    cancel.getByRole("button", { name: "Cancel run" }),
+  ).toBeDisabled();
+  await page.screenshot({ path: `${captures}/run-cancel-in-doubt.png` });
+  // Nothing can be sent, so it asks for no reason.
+  await expect(cancel.getByRole("textbox")).toHaveCount(0);
+  await cancel
+    .locator("form")
+    .evaluate((form: HTMLFormElement) => form.requestSubmit());
+  expect(runs.posts).toEqual([]);
+  await notice.getByRole("button", { name: "Open incident" }).click();
+  await expectInbox(page);
+  expect(runs.posts).toEqual([]);
+});
+
+test("a cancel refused because a transaction went in doubt names it and offers its incident", async ({
+  page,
+}) => {
+  const runs = await platform(page, operator, [running]);
+  await expect(page.locator(".txn-summary")).toBeVisible();
+  runs.cancel = async (route) => {
+    runs.transactions = [inDoubt];
+    await route.fulfill({
+      status: 409,
+      json: {
+        code: "WV-TXN-IN-DOUBT",
+        message: "Resolve the transaction first.",
+      },
+    });
+  };
+  await actionRow(page).getByRole("button", { name: "Cancel run" }).click();
+  const cancel = dialog(page, "Cancel this run?");
+  await cancel.getByLabel("Reason").fill("Stop it");
+  await cancel.getByRole("button", { name: "Cancel run" }).click();
+  const toast = page.locator(".toast").filter({ hasText: "WV-TXN-IN-DOUBT" });
+  await expect(toast).toContainText(
+    `Run ${short} was not canceled. Resolve the transaction first. Support code: WV-TXN-IN-DOUBT.`,
+  );
+  await page.screenshot({ path: `${captures}/run-cancel-refused.png` });
+  await toast.getByRole("button", { name: "Open incident" }).click();
+  await expectInbox(page);
+});
+
+for (const size of [
+  { width: 1440, height: 900 },
+  { width: 360, height: 640 },
+])
+  test.describe(`a refusal at ${size.width} px`, () => {
+    test.use({ viewport: size, hasTouch: size.width < 768 });
+
+    /** The sentence has room to read, and its answer is beside or under it, inside. */
+    const readable = async (
+      holder: Locator,
+      words: Locator,
+      answers: Locator[],
+    ) => {
+      const [around, text] = [
+        (await holder.boundingBox())!,
+        (await words.boundingBox())!,
+      ];
+      expect(around.x).toBeGreaterThanOrEqual(0);
+      expect(around.x + around.width).toBeLessThanOrEqual(size.width);
+      expect(text.width).toBeGreaterThanOrEqual(180);
+      for (const answer of answers) {
+        const box = (await answer.boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(around.x);
+        expect(box.x + box.width).toBeLessThanOrEqual(around.x + around.width);
+        const beside = box.x >= text.x + text.width;
+        if (size.width >= 1440) expect(beside).toBe(true);
+        if (!beside) expect(box.y).toBeGreaterThanOrEqual(text.y + text.height);
+      }
+    };
+
+    test("Cancel run in doubt has a sentence to read, and its answer", async ({
+      page,
+    }) => {
+      await platform(page, operator, [running, inDoubt]);
+      await expect(page.locator(".txn-summary")).toBeVisible();
+      await actionRow(page).getByRole("button", { name: "Cancel run" }).click();
+      const notice = dialog(page, "Cancel this run?").locator(".notice");
+      await readable(notice, notice.locator("p"), [
+        notice.getByRole("button", { name: "Open incident" }),
+      ]);
+      await page.screenshot({
+        path: `${captures}/run-cancel-in-doubt-${size.width}.png`,
+      });
+    });
+
+    test("a cancel refused in a race has a sentence to read, and its answers", async ({
+      page,
+    }) => {
+      const runs = await platform(page, operator, [running]);
+      await expect(page.locator(".txn-summary")).toBeVisible();
+      runs.cancel = async (route) => {
+        runs.transactions = [inDoubt];
+        await route.fulfill({
+          status: 409,
+          json: {
+            code: "WV-TXN-IN-DOUBT",
+            message: "Resolve the transaction first.",
+          },
+        });
+      };
+      await actionRow(page).getByRole("button", { name: "Cancel run" }).click();
+      const cancel = dialog(page, "Cancel this run?");
+      await cancel.getByLabel("Reason").fill("Stop it");
+      await cancel.getByRole("button", { name: "Cancel run" }).click();
+      const toast = page
+        .locator(".toast")
+        .filter({ hasText: "WV-TXN-IN-DOUBT" });
+      await expect
+        .poll(() => toast.evaluate((element) => element.getAnimations().length))
+        .toBe(0);
+      const text = toast.locator(".toast-text");
+      await readable(toast, text, [
+        toast.getByRole("button", { name: "Open incident" }),
+      ]);
+      // Ten lines of two words became a few.
+      const line = await text.evaluate((element) =>
+        parseFloat(getComputedStyle(element).lineHeight),
+      );
+      expect((await text.boundingBox())!.height).toBeLessThanOrEqual(
+        (size.width >= 1440 ? 5 : 6) * line + 1,
+      );
+      await page.screenshot({
+        path: `${captures}/run-cancel-refused-${size.width}.png`,
+      });
+    });
+  });
+
+test("Cancel without undoing waits in the action row while a transaction is in doubt", async ({
+  page,
+}) => {
+  await platform(page, reconciler, [running, inDoubt]);
+  const button = actionRow(page).getByRole("button", {
+    name: "Cancel without undoing",
+  });
+  await expect(button).toHaveAttribute("aria-disabled", "true");
+  await button.focus();
+  await expect(button).toBeFocused();
+  await expect(button).toHaveAccessibleDescription(
+    "Cancel without undoing: a transaction is in doubt. Resolve it from its incident first.",
+  );
+  await page.screenshot({
+    path: `${captures}/run-cancel-without-undoing-blocked.png`,
+  });
+  // Pressed from the keyboard, it opens nothing: a dialog's backdrop would stop the click below.
+  await page.keyboard.press("Enter");
+  await expect(dialog(page, "Cancel without undoing?")).toHaveCount(0);
+  await page
+    .locator(".cancel-blocked")
+    .getByRole("button", { name: "Open incident" })
+    .click();
+  await expectInbox(page);
+});
+
+test("Cancel without undoing lists what stays done and needs the run's short ID", async ({
+  page,
+}) => {
+  const runs = await platform(page, reconciler, [completed, running]);
+  const button = actionRow(page).getByRole("button", {
+    name: "Cancel without undoing",
+  });
+  await expect(button).not.toHaveAttribute("aria-disabled", "true");
+  await button.click();
+  const cancel = dialog(page, "Cancel without undoing?");
+  await expect(cancel).toContainText(
+    "Steps already done stay done in other systems: Weave won't undo them, and the run's transactions end Force ended.",
+  );
+  await expect(cancel.locator(".stays-done li")).toHaveText([
+    /hold\[6\]\s*· Reserved: Weave won't release it/,
+    /add\[6\]\s*· Reversible: still running and may finish; Weave won't undo it/,
+  ]);
+  const reason = cancel.getByLabel("Reason");
+  // The fields share the title's left edge.
+  const [title, field] = await Promise.all([
+    cancel
+      .getByRole("heading", { name: "Cancel without undoing?" })
+      .boundingBox(),
+    reason.boundingBox(),
+  ]);
+  expect(Math.abs(title!.x - field!.x)).toBeLessThanOrEqual(1);
+  await expect(cancel.locator(".reason-count")).toHaveText("0 / 2,000");
+  const typed = cancel.getByLabel(`Type ${short} to confirm`);
+  await expect(typed).toHaveValue("");
+  const confirm = cancel.getByRole("button", {
+    name: "Cancel without undoing",
+  });
+  // The run's short ID alone doesn't send: a blank reason keeps it disabled.
+  await typed.fill(short);
+  await reason.fill("   ");
+  await expect(confirm).toBeDisabled();
+  await typed.fill("");
+  await reason.fill("The target system is down until tomorrow");
+  await expect(cancel.locator(".reason-count")).toHaveText("40 / 2,000");
+  await expect(confirm).toBeDisabled();
+  for (const wrong of [short.slice(0, 7), loopRunId, "cancel"]) {
+    await typed.fill(wrong);
+    await expect(confirm).toBeDisabled();
+  }
+  await typed.press("Enter");
+  expect(runs.posts).toEqual([]);
+  await typed.fill(` ${short.toUpperCase().slice(0, 4)} ${short.slice(4)} `);
+  await expect(confirm).toBeEnabled();
+  await page.screenshot({ path: `${captures}/run-cancel-without-undoing.png` });
+  await confirm.dblclick();
+  await expect(page.locator(".toast")).toContainText(
+    "Run canceled without undoing. Steps already done stay done in other systems.",
+  );
+  expect(runs.posts).toEqual([
+    { reason: "The target system is down until tomorrow", skip_undo: true },
+  ]);
+});
+
+test("Cancel without undoing is offered past the first 50 transactions, and lists what stays done there", async ({
+  page,
+}) => {
+  const earlier = Array.from({ length: 50 }, (_, index) => ({
+    ...completed,
+    instance_key: `move[${index + 100}]`,
+  }));
+  await platform(page, reconciler, [...earlier, running]);
+  await expect(page.locator(".txn-summary")).toBeVisible();
+  const button = actionRow(page).getByRole("button", {
+    name: "Cancel without undoing",
+  });
+  await expect(button).not.toHaveAttribute("aria-disabled", "true");
+  await button.click();
+  await expect(
+    dialog(page, "Cancel without undoing?").locator(".stays-done li"),
+  ).toHaveText([
+    /hold\[6\]\s*· Reserved: Weave won't release it/,
+    /add\[6\]\s*· Reversible: still running and may finish; Weave won't undo it/,
+  ]);
+});
+
+for (const unreadable of [
+  {
+    status: 429,
+    code: "WV-RUNTIME-LIMIT",
+    message: "Retained run exceeds the bounded fetch budget",
+    says: [
+      "Steps already done stay done in other systems: Weave won't undo them, and the run's transactions end Force ended.",
+      "The platform can't read this run, so Studio can't list what stays done. Check the other systems after it ends.",
+    ],
+  },
+  {
+    status: 409,
+    code: "WV-LEGACY-UNAVAILABLE",
+    message: "Run state is unavailable",
+    says: [
+      "Steps already done stay done in other systems: Weave won't undo them.",
+      "Studio can't read this run's transactions, so it can't list what stays done. Check the other systems after it ends.",
+    ],
+  },
+])
+  test(`Cancel without undoing is the way out of a run whose reads answer ${unreadable.code}`, async ({
+    page,
+  }) => {
+    const runs = await platform(page, reconciler, [running], unreadable);
+    const button = actionRow(page).getByRole("button", {
+      name: "Cancel without undoing",
+    });
+    await expect(button).not.toHaveAttribute("aria-disabled", "true");
+    await button.click();
+    const cancel = dialog(page, "Cancel without undoing?");
+    await expect(cancel.locator(".dialog-message")).toHaveText(unreadable.says);
+    await expect(cancel).toHaveAccessibleDescription(unreadable.says[0]!);
+    await expect(cancel.locator(".stays-done")).toHaveCount(0);
+    await cancel.getByLabel("Reason").fill("Too large to decide");
+    await cancel.getByLabel(`Type ${short} to confirm`).fill(short);
+    await cancel
+      .getByRole("button", { name: "Cancel without undoing" })
+      .click();
+    await expect
+      .poll(() => runs.posts)
+      .toEqual([{ reason: "Too large to decide", skip_undo: true }]);
+  });
+
+test("Cancel without undoing isn't offered without an unfinished transaction", async ({
+  page,
+}) => {
+  await platform(page, reconciler, [completed]);
+  await expect(page.locator(".txn-summary")).toBeVisible();
+  await expect(
+    actionRow(page).getByRole("button", { name: "Cancel run" }),
+  ).toBeVisible();
+  await expect(
+    actionRow(page).getByRole("button", { name: "Cancel without undoing" }),
+  ).toHaveCount(0);
+});

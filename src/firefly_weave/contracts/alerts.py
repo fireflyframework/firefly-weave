@@ -50,6 +50,8 @@ AlertSignal = Literal[
     "targets.runner_offline",
     "deployments.reconciliation_required",
     "health.degraded",
+    "transactions.in_doubt",
+    "transactions.undo_age_seconds",
 ]
 # Any signal name, for records a newer or older server may have written.
 type SignalName = Annotated[str, Field(min_length=3, max_length=100, pattern=r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")]

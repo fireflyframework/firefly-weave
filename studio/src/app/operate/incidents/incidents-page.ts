@@ -18,19 +18,26 @@ SPDX-License-Identifier: Apache-2.0
 // Operate › Incidents: active incidents, newest opened first, filtered by the
 // platform; the address keeps the filters and the open incident
 // ("?incident=ID"), which opens from incidents.read even when no loaded page
-// lists it. A drawer says what happened, and the Resolve incident dialog
-// decides on the revision the person looked at. The server checks
-// incident.resolve, the revision and the receipt on every decision. Reloads
-// every 15 s while visible, except while a decision is being made.
+// lists it. Transactions in doubt come first, in their own band, each case of
+// them one group; a code or status filter shows one list. A drawer says what
+// happened; Resolve incident, or a decision on a transaction in doubt, is made
+// on the revision the person looked at. The server checks the capabilities,
+// the revision and the receipt on every decision. Reloads every 15 s while
+// visible, except while a decision is being made.
+import { NgTemplateOutlet } from "@angular/common";
 import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
   Component,
   DoCheck,
+  ElementRef,
   HostListener,
+  Injector,
   Input,
   OnDestroy,
   OnInit,
+  afterEveryRender,
+  afterNextRender,
   inject,
 } from "@angular/core";
 import { NavigationEnd, Router } from "@angular/router";
@@ -52,10 +59,27 @@ import { OperateState } from "../operate-state";
 import { viewFromPath, viewPath } from "../operate-routes";
 import { Poller, browserEnvironment } from "../operate-store";
 import { RefreshStatus } from "../refresh-status";
-import { IncidentDrawer, type RecentEvents } from "./incident-drawer";
-import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
 import {
+  IncidentDrawer,
+  type OfferRead,
+  type RecentEvents,
+} from "./incident-drawer";
+import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
+import { HELD_RUN } from "../transactions/transaction-contracts";
+import { retryDelay } from "../transactions/transaction-record";
+import {
+  caseLabel,
+  inboxRows,
+  linkPlace,
+  missingText,
+  rowGroups,
+  type RowGroup,
+} from "./incident-cases";
+import {
+  bandsView,
   defaultIncidentFilters,
+  ignoresPriority,
+  inDoubt,
   incidentFilterCount,
   incidentFiltersFromQuery,
   incidentFiltersToQuery,
@@ -66,17 +90,50 @@ import {
   incidentTone,
   isUnavailableIncident,
   lastEvents,
+  mayRefusePriority,
+  stepOfIncident,
   type IncidentFilters,
+  type IncidentLink,
   type IncidentRecord,
   type IncidentView,
   type ResolutionRequest,
 } from "./incidents-model";
 import { ResolveIncidentDialog } from "./resolve-incident-dialog";
+import type { PartnerRead } from "./transaction-panel";
+import { TransactionResolveDialog } from "./transaction-resolve-dialog";
+import {
+  checklistChanged,
+  explainDecision,
+  refusesRecord,
+  transactionActions,
+  type TransactionAction,
+} from "./transaction-resolutions";
 
 /** The longest opening range the platform accepts: 400 days. */
 const MAX_RANGE_MS = 400 * 86_400_000;
+/** What explains why the incident the address names couldn't be opened. */
+const UNOPENED = ".incident-unopened";
+/** Where the keyboard stops in the list as its rows change: each incident's control and the bands' headings. */
+const STOPS = "[data-incident], .band-heading h2";
 /** A run's events are read 100 at a time, at most 1,000. */
 const EVENT_PAGES = 10;
+/** Why an incident can't be read from the drawer. */
+const NOT_SHOWN =
+  "Studio can't show this incident: its run can't be shown here.";
+const READ_REFUSED =
+  "You need incident.read in this environment. Ask an administrator in Settings › People and access.";
+const NOT_FOUND =
+  "This incident can't be found. It may belong to another environment, or its run's data was deleted.";
+/** Why a record was refused isn't known until the incident it is of is read again. */
+const RECORD_UNREAD =
+  "The platform refused this record, and Studio couldn't read the incident again. Refresh it, check it again, then decide.";
+/** What never changes of an incident, which the platform's answer to a decision leaves out. */
+const unchanging = ({
+  opened_at,
+  opened_at_estimated,
+  workflow,
+  test,
+}: IncidentView) => ({ opened_at, opened_at_estimated, workflow, test });
 const noEvents: RecentEvents = {
   loading: false,
   lines: [],
@@ -84,23 +141,50 @@ const noEvents: RecentEvents = {
   problem: null,
 };
 
+/** What a list's pages answered, and the cursor after them. */
+interface ListAnswer {
+  items: IncidentRecord[];
+  next: string | null;
+}
+/** One list of incidents: what was read, the cursor after it and how many pages that is. */
+interface IncidentList extends ListAnswer {
+  pages: number;
+  appending: boolean;
+}
+const emptyList = (): IncidentList => ({
+  items: [],
+  next: null,
+  pages: 1,
+  appending: false,
+});
+/** A band on screen: its heading, its count and its rows. */
+interface Band {
+  id: "high" | "other";
+  title: string;
+  count: string;
+  groups: RowGroup[];
+  list: IncidentList;
+}
+
 @Component({
   selector: "weave-incidents-page",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [
+    NgTemplateOutlet,
     Icon,
     ModalSheet,
     OperateState,
     RefreshStatus,
     IncidentDrawer,
     ResolveIncidentDialog,
+    TransactionResolveDialog,
   ],
   styleUrls: ["../operate.css", "./incidents.css"],
   template: `
     <div class="operate-heading">
       <div>
-        <h1>Incidents</h1>
+        <h1 tabindex="-1">Incidents</h1>
         <p class="subtitle">
           Runs that stopped on an uncertain step and wait for your decision.
         </p>
@@ -295,22 +379,33 @@ const noEvents: RecentEvents = {
       @if (detailProblem; as failed) {
         @if (failed.status === 403) {
           <weave-operate-state
+            class="incident-unopened"
             kind="access"
             heading="You don't have access to this incident"
             capability="incident.read"
-          />
+          >
+            <button type="button" tryAgain (click)="openFromAddress(true)">
+              Try again
+            </button>
+          </weave-operate-state>
         } @else if (failed.status === 404) {
           <weave-operate-state
+            class="incident-unopened"
             kind="empty"
             heading="This incident can't be found"
             text="It may belong to another environment, or its run's data was deleted."
-          />
+          >
+            <button type="button" (click)="openFromAddress(true)">
+              Try again
+            </button>
+          </weave-operate-state>
         } @else {
           <weave-operate-state
+            class="incident-unopened"
             kind="error"
             [message]="failed.message"
             [code]="failed.code"
-            (retry)="openFromAddress()"
+            (retry)="openFromAddress(true)"
           />
         }
       }
@@ -334,138 +429,166 @@ const noEvents: RecentEvents = {
                 </button>
               </weave-operate-state>
             }
+          } @else if (bands(); as shown) {
+            @for (band of shown; track band.id) {
+              <section
+                class="incident-band"
+                [class.high]="band.id === 'high'"
+                [attr.aria-labelledby]="'incident-band-' + band.id"
+              >
+                <div class="band-heading">
+                  <h2 [id]="'incident-band-' + band.id" tabindex="-1">
+                    @if (band.id === "high") {
+                      <weave-icon name="critical" [size]="16" />
+                    }
+                    {{ band.title }}
+                  </h2>
+                  <span class="band-count">{{ band.count }}</span>
+                </div>
+                @if (band.id === "high") {
+                  <p class="band-note">
+                    Transactions that need a person. Other systems may not match
+                    Weave until someone resolves them.
+                  </p>
+                }
+                <div
+                  class="resource-table incident-table"
+                  role="table"
+                  [attr.aria-labelledby]="'incident-band-' + band.id"
+                >
+                  <ng-container [ngTemplateOutlet]="tableHead" />
+                  @for (group of band.groups; track group.key) {
+                    @if (group.case; as value) {
+                      <div
+                        class="case"
+                        role="rowgroup"
+                        [attr.aria-labelledby]="'incident-case-' + value.key"
+                      >
+                        <div class="case-head" role="row">
+                          <span role="cell" [attr.aria-colspan]="6"
+                            ><weave-icon name="callWorkflow" [size]="16" /><span
+                              class="case-words"
+                              ><strong [id]="'incident-case-' + value.key">{{
+                                caseLabel(value)
+                              }}</strong>
+                              @if (value.resolveFirst; as first) {
+                                <span
+                                  >Resolve first: <code>{{ first.code }}</code>
+                                  in run
+                                  <code>{{ short(first.run_id) }}</code></span
+                                >
+                              }
+                            </span></span
+                          >
+                        </div>
+                        @for (member of value.members; track member.id) {
+                          <ng-container
+                            [ngTemplateOutlet]="incidentRow"
+                            [ngTemplateOutletContext]="{
+                              $implicit: member,
+                              banded: true,
+                              first: value.resolveFirst?.id === member.id,
+                            }"
+                          />
+                        }
+                        @for (link of value.missing; track link.id) {
+                          <div class="resource-row not-listed" role="row">
+                            <span role="cell" class="row-text"
+                              ><strong>{{ link.code }}</strong
+                              ><small>{{ missingText(link) }}</small></span
+                            ><span role="cell" class="badges"
+                              ><span
+                                class="status-pill"
+                                [attr.data-tone]="tone(link)"
+                                >{{ label(link) }}</span
+                              >
+                              @if (value.resolveFirst?.id === link.id) {
+                                <span class="tag">Resolve first</span>
+                              }</span
+                            ><span role="cell" data-wide class="row-text"
+                              ><span
+                                class="cell-line"
+                                [attr.title]="link.workflow?.name ?? null"
+                                >{{ link.workflow?.name ?? "Unknown" }}</span
+                              ></span
+                            ><span
+                              role="cell"
+                              data-wide
+                              class="cell-line"
+                              [attr.title]="linkStep(link)"
+                              >{{ linkStep(link) }}</span
+                            ><span role="cell" class="open-cell"
+                              ><button
+                                type="button"
+                                class="sm"
+                                [attr.data-incident]="link.id"
+                                [attr.aria-label]="
+                                  'Open incident ' +
+                                  link.code +
+                                  ', ' +
+                                  linkPlace(link)
+                                "
+                                (click)="openedFrom = link.id; openLink(link)"
+                              >
+                                Open
+                              </button></span
+                            ><span role="cell" data-wider
+                              ><code [attr.title]="link.run_id">{{
+                                short(link.run_id)
+                              }}</code></span
+                            >
+                          </div>
+                        }
+                      </div>
+                    } @else {
+                      <div role="rowgroup">
+                        @for (item of group.items; track item.id) {
+                          <ng-container
+                            [ngTemplateOutlet]="incidentRow"
+                            [ngTemplateOutletContext]="{
+                              $implicit: item,
+                              banded: true,
+                              first: false,
+                            }"
+                          />
+                        }
+                      </div>
+                    }
+                  }
+                </div>
+                <ng-container
+                  [ngTemplateOutlet]="more"
+                  [ngTemplateOutletContext]="{
+                    $implicit: band.list,
+                    of: 'incident-band-' + band.id,
+                  }"
+                />
+              </section>
+            }
           } @else {
             <div
               class="resource-table incident-table"
               role="table"
               aria-label="Incidents"
             >
+              <ng-container [ngTemplateOutlet]="tableHead" />
               <div role="rowgroup">
-                <div class="table-head" role="row">
-                  <span role="columnheader">Incident</span
-                  ><span role="columnheader">Status</span
-                  ><span role="columnheader" data-wide>Workflow</span
-                  ><span role="columnheader" data-wide>Step</span
-                  ><span role="columnheader" data-wide>Opened</span
-                  ><span role="columnheader" data-wider>Run</span>
-                </div>
-              </div>
-              <div role="rowgroup">
-                @for (item of incidents; track item.id) {
-                  @if (unavailable(item)) {
-                    <div class="resource-row" role="row">
-                      <span role="cell" class="row-text"
-                        ><strong>Unavailable incident</strong
-                        ><small>Studio can't show this incident.</small></span
-                      ><span role="cell"></span
-                      ><span role="cell" data-wide></span
-                      ><span role="cell" data-wide></span
-                      ><span role="cell" data-wide></span
-                      ><span role="cell" data-wider
-                        ><code [attr.title]="item.id">{{
-                          short(item.id)
-                        }}</code></span
-                      >
-                    </div>
-                  } @else {
-                    @let i = view(item);
-                    <div
-                      class="resource-row"
-                      role="row"
-                      [class.selected]="selected?.id === i.id"
-                    >
-                      <span role="cell" class="row-text"
-                        ><button
-                          type="button"
-                          class="row-open"
-                          [attr.aria-current]="
-                            selected?.id === i.id ? 'true' : null
-                          "
-                          [attr.aria-label]="
-                            'Open incident ' + i.code + ' at ' + stepOf(i)
-                          "
-                          (click)="open(i)"
-                        >
-                          {{ i.code }}</button
-                        ><small>
-                          @if (i.origin_code !== i.code) {
-                            First reported as {{ i.origin_code }}
-                          } @else {
-                            {{ stepOf(i) }}
-                          }
-                        </small></span
-                      ><span role="cell" class="badges"
-                        ><span class="status-pill" [attr.data-tone]="tone(i)">{{
-                          label(i)
-                        }}</span>
-                        @if (i.test) {
-                          <span class="tag">Test</span>
-                        }
-                        @if (i.external_effects_may_continue) {
-                          <span class="effects" title="Effects may continue"
-                            ><weave-icon name="warning" [size]="16" /><span
-                              class="sr-only"
-                              >Effects may continue</span
-                            ></span
-                          >
-                        }</span
-                      ><span
-                        role="cell"
-                        data-wide
-                        class="row-text"
-                        [attr.title]="workflowText(i)"
-                        ><span
-                          class="cell-line"
-                          [attr.title]="i.workflow?.name ?? null"
-                          >{{ i.workflow?.name ?? "Unknown" }}</span
-                        >
-                        @if (i.workflow) {
-                          <small>{{ i.workflow.version }}</small>
-                        }</span
-                      ><span
-                        role="cell"
-                        data-wide
-                        class="cell-line"
-                        [attr.title]="stepOf(i)"
-                        >{{ stepOf(i) }}</span
-                      ><span role="cell" data-wide>
-                        @if (i.opened_at) {
-                          <time
-                            [attr.datetime]="iso(i.opened_at)"
-                            [attr.title]="absolute(i.opened_at)"
-                            >{{ relative(i.opened_at) }}</time
-                          >
-                          @if (i.opened_at_estimated) {
-                            <small class="estimated">estimated</small>
-                          }
-                        } @else {
-                          Unknown
-                        }</span
-                      ><span role="cell" data-wider
-                        ><code [attr.title]="i.run_id">{{
-                          short(i.run_id)
-                        }}</code></span
-                      >
-                    </div>
-                  }
+                @for (item of rest.items; track item.id) {
+                  <ng-container
+                    [ngTemplateOutlet]="incidentRow"
+                    [ngTemplateOutletContext]="{
+                      $implicit: item,
+                      banded: false,
+                      first: false,
+                    }"
+                  />
                 }
               </div>
             </div>
-          }
-          @if (canLoadMore) {
-            <button
-              type="button"
-              class="load-more"
-              [disabled]="appending"
-              (click)="loadMore()"
-            >
-              Load more incidents
-            </button>
-          } @else if (nextCursor) {
-            <p class="list-limit" role="status">
-              Showing the first {{ incidents.length }} incidents. Narrow the
-              filters to see others.
-            </p>
+            <ng-container
+              [ngTemplateOutlet]="more"
+              [ngTemplateOutletContext]="{ $implicit: rest, of: null }"
+            />
           }
         </div>
         @if (selected) {
@@ -476,6 +599,7 @@ const noEvents: RecentEvents = {
             [weaveModalSheet]="true"
             [sheetWhen]="sheetWhen.detail"
             sheetInitialFocus="#incident-detail-title"
+            [sheetReturnFocus]="drawerOpener"
             (sheetDismiss)="close()"
           >
             <weave-incident-drawer
@@ -483,7 +607,12 @@ const noEvents: RecentEvents = {
               [incident]="selected"
               [events]="events"
               (resolve)="startResolving()"
-              (openRun)="openRun(selected)"
+              [offerRead]="offerRead"
+              (decide)="startDeciding($event)"
+              [partner]="partner"
+              (openLink)="openPartner($event)"
+              (tryPartner)="readPartner()"
+              (openRun)="openRun($event)"
               (reloadEvents)="loadEvents(selected)"
               (closed)="close()"
             />
@@ -492,20 +621,167 @@ const noEvents: RecentEvents = {
       </div>
     }
     @if (resolving && selected) {
-      <weave-resolve-incident-dialog
-        [incident]="selected"
-        [busy]="sending.has(selected.id)"
-        [failure]="failure"
-        (decide)="resolve($event)"
-        (cancel)="resolving = false"
-        (reload)="reloadIncident()"
-      />
+      @if (deciding; as action) {
+        <weave-transaction-resolve-dialog
+          [incident]="selected"
+          [action]="action"
+          [busy]="sending.has(selected.id) || rereading"
+          [failure]="failure"
+          [refreshing]="refreshing"
+          [unread]="refusedRecord"
+          [rereading]="rereading"
+          (decide)="resolve($event)"
+          (dismiss)="stopDeciding(action)"
+          (refresh)="reloadIncident()"
+        />
+      } @else {
+        <weave-resolve-incident-dialog
+          [incident]="selected"
+          [busy]="sending.has(selected.id)"
+          [failure]="failure"
+          (decide)="resolve($event)"
+          (cancel)="resolving = false"
+          (reload)="reloadIncident()"
+        />
+      }
     }
+    <ng-template #tableHead>
+      <div role="rowgroup">
+        <div class="table-head" role="row">
+          <span role="columnheader">Incident</span
+          ><span role="columnheader">Status</span
+          ><span role="columnheader" data-wide>Workflow</span
+          ><span role="columnheader" data-wide>Step</span
+          ><span role="columnheader" data-wide>Opened</span
+          ><span role="columnheader" data-wider>Run</span>
+        </div>
+      </div>
+    </ng-template>
+    <ng-template #incidentRow let-item let-banded="banded" let-first="first">
+      @if (unavailable(item)) {
+        <div class="resource-row" role="row">
+          <span role="cell" class="row-text"
+            ><strong>Unavailable incident</strong
+            ><small>Studio can't show this incident.</small></span
+          ><span role="cell"></span><span role="cell" data-wide></span
+          ><span role="cell" data-wide></span><span role="cell" data-wide></span
+          ><span role="cell" data-wider
+            ><code [attr.title]="item.id">{{ short(item.id) }}</code></span
+          >
+        </div>
+      } @else {
+        @let i = view(item);
+        @let key = i.transaction?.business_key;
+        <div
+          class="resource-row"
+          role="row"
+          [class.selected]="selected?.id === i.id"
+        >
+          <span role="cell" class="row-text"
+            ><button
+              type="button"
+              class="row-open"
+              [attr.data-incident]="i.id"
+              [attr.aria-current]="selected?.id === i.id ? 'true' : null"
+              [attr.aria-label]="'Open incident ' + i.code + ' at ' + stepOf(i)"
+              (click)="openedFrom = i.id; open(i)"
+            >
+              {{ i.code }}</button
+            ><small>
+              @if (inDoubt(i) && i.code === heldRun) {
+                All its transactions are held
+              } @else if (inDoubt(i) && (key || !banded)) {
+                {{ doubtText(banded, !!key) }}
+                @if (key) {
+                  <span class="business-key">{{ key }}</span>
+                }
+              } @else if (i.origin_code !== i.code && !inDoubt(i)) {
+                First reported as {{ i.origin_code }}
+              } @else {
+                {{ stepText(i) }}
+              }
+            </small></span
+          ><span role="cell" class="badges"
+            ><span class="status-pill" [attr.data-tone]="tone(i)">{{
+              label(i)
+            }}</span>
+            @if (inDoubt(i) && !banded) {
+              <span class="status-pill" data-tone="danger">High priority</span>
+            }
+            @if (first) {
+              <span class="tag">Resolve first</span>
+            }
+            @if (i.test) {
+              <span class="tag">Test</span>
+            }
+            @if (i.external_effects_may_continue) {
+              <span class="effects" title="Effects may continue"
+                ><weave-icon name="warning" [size]="16" /><span class="sr-only"
+                  >Effects may continue</span
+                ></span
+              >
+            }</span
+          ><span
+            role="cell"
+            data-wide
+            class="row-text"
+            [attr.title]="workflowText(i)"
+            ><span class="cell-line" [attr.title]="i.workflow?.name ?? null">{{
+              i.workflow?.name ?? "Unknown"
+            }}</span>
+            @if (i.workflow) {
+              <small>{{ i.workflow.version }}</small>
+            }</span
+          ><span
+            role="cell"
+            data-wide
+            class="cell-line"
+            [attr.title]="stepText(i)"
+            >{{ stepText(i) }}</span
+          ><span role="cell" data-wide>
+            @if (i.opened_at) {
+              <time
+                [attr.datetime]="iso(i.opened_at)"
+                [attr.title]="absolute(i.opened_at)"
+                >{{ relative(i.opened_at) }}</time
+              >
+              @if (i.opened_at_estimated) {
+                <small class="estimated">estimated</small>
+              }
+            } @else {
+              Unknown
+            }</span
+          ><span role="cell" data-wider
+            ><code [attr.title]="i.run_id">{{ short(i.run_id) }}</code></span
+          >
+        </div>
+      }
+    </ng-template>
+    <ng-template #more let-list let-of="of">
+      @if (canLoadMore(list)) {
+        <button
+          type="button"
+          class="load-more"
+          [attr.aria-describedby]="of"
+          [disabled]="list.appending"
+          (click)="loadMore(list)"
+        >
+          Load more incidents
+        </button>
+      } @else if (list.next) {
+        <p class="list-limit" role="status">
+          Showing the first {{ list.items.length }} incidents. Narrow the
+          filters to see others.
+        </p>
+      }
+    </ng-template>
   `,
 })
 export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   @Input({ required: true }) host!: App;
   private cdr = inject(ChangeDetectorRef);
+  private element = inject<ElementRef<HTMLElement>>(ElementRef);
+  private injector = inject(Injector);
   private router = inject(Router);
   private navigated = this.router.events.subscribe((event) => {
     if (event instanceof NavigationEnd) this.addressChanged();
@@ -528,8 +804,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     ["closed", "Closed"],
     ["all", "Any status"],
   ];
-  // A reload never changes the incident under an open Resolve incident, not
-  // even one already on its way when the dialog opened: the revision the
+  // A reload never changes the incident under an open decision, not even one
+  // already on its way when its dialog opened: the revision the
   // decision is sent with is the one the person looked at. Only Refresh
   // incident, in the dialog, reads it again.
   readonly poller = new Poller(
@@ -538,8 +814,14 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     browserEnvironment,
     () => this.resolving,
   );
-  incidents: IncidentRecord[] = [];
-  nextCursor: string | null = null;
+  /** The default view's transactions in doubt; empty while one list shows. */
+  high = emptyList();
+  /** Every other incident, or the one list a code or status filter shows. */
+  rest = emptyList();
+  /** What was read is the two bands, not one list. */
+  private banded = false;
+  /** False once the platform refused to list by priority: one list, until the scope changes. */
+  private knowsPriority = true;
   loaded = false;
   forbidden = false;
   error: PlainError | null = null;
@@ -550,22 +832,47 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   rangeProblem = "";
   events: RecentEvents = noEvents;
   resolving = false;
+  /** The decision being made on a transaction in doubt; null in Resolve incident, or with no dialog. */
+  deciding: TransactionAction | null = null;
+  /** The decision whose incident is read before its dialog opens, or why it couldn't be. */
+  offerRead: OfferRead | null = null;
+  /** The incident under a decision on a transaction in doubt is being read again. */
+  refreshing = false;
+  /** Bumped as a dialog opens or closes: an answer for an older one isn't its own. */
+  private dialogs = 0;
   /** The incidents whose decision is on its way; one never blocks another. */
   readonly sending = new Set<string>();
   /** The last refusal, shown in the dialog of the incident it was for. */
   failure: PlainError | null = null;
+  /** Why a record of how a transaction ended was refused, until its incident is read again. */
+  refusedRecord: PlainError | null = null;
+  /** The receipt each incident's last decision was sent with. */
+  private readonly lastSent = new Map<string, string>();
   /**
    * Per incident, the receipt of a decision whose answer was lost, with what
    * it was sent with (revision and decision). Sending the same again reuses
    * it, so the platform replays the first answer; anything else gets a new one.
    */
   private pending = new Map<string, { key: string; receipt: string }>();
-  private pages = 1;
   private readonly listReads = new ListReads();
-  appending = false;
+  /** The related incident being read for the drawer, or why it isn't open. */
+  partner: PartnerRead | null = null;
+  /** What that read is for: the incident asked for, and the one it was asked in. */
+  private asked: {
+    id: string;
+    from: string;
+    failures: number;
+    timer: ReturnType<typeof setTimeout> | null;
+  } | null = null;
 
-  get canLoadMore() {
-    return !!this.nextCursor && this.pages < MAX_PAGES;
+  /** Every incident loaded, transactions in doubt first. */
+  get incidents(): IncidentRecord[] {
+    return this.high.items.length
+      ? [...this.high.items, ...this.rest.items]
+      : this.rest.items;
+  }
+  canLoadMore(list: IncidentList) {
+    return !!list.next && list.pages < MAX_PAGES;
   }
   private scopeKey = "";
   /** Bumped when the platform, environment or person changes. */
@@ -574,6 +881,12 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   private listGeneration = 0;
   /** The incident the latest direct read is for. */
   private opening = "";
+  /** The listed incident whose control opened the drawer last. */
+  openedFrom = "";
+  /** Where that control is, or was while the list drew it. */
+  private opener: string[] = [];
+  /** Where the control of the list that holds the focus is, as the page is drawn again. */
+  private focused: string[] = [];
   private alive = true;
 
   get readable() {
@@ -582,35 +895,40 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   private get scope() {
     return environmentOf(this.host);
   }
+  constructor() {
+    afterEveryRender({ write: () => this.restoreFocus() });
+  }
   ngOnInit() {
     this.poller.start(false);
   }
   ngOnDestroy() {
     this.alive = false;
+    this.forgetPartner();
     this.navigated.unsubscribe();
     this.poller.stop();
     this.generation++;
   }
   ngDoCheck() {
+    this.holdFocus();
     const key = scopeKeyOf(this.host);
     if (key === this.scopeKey) return;
     this.scopeKey = key;
     this.generation++;
     this.listGeneration++;
-    this.incidents = [];
-    this.nextCursor = null;
+    this.high = emptyList();
+    this.rest = emptyList();
+    this.banded = false;
+    this.knowsPriority = true;
     this.loaded = false;
     this.forbidden = false;
     this.error = null;
+    this.forgetPartner();
     this.selected = null;
     this.detailProblem = null;
     this.opening = "";
     this.events = noEvents;
-    this.resolving = false;
-    this.failure = null;
+    this.leaveDialog();
     this.pending.clear();
-    this.pages = 1;
-    this.appending = false;
     this.rangeProblem = "";
     this.filters = incidentFiltersFromQuery(location.search);
     if (this.scope && this.host.identity && this.readable) {
@@ -632,11 +950,20 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       this.changed();
     }
     const id = incidentFromQuery(location.search);
+    // It no longer names the incident that couldn't be opened, or is on its way.
+    if (!id || this.selected?.id === id) {
+      this.detailProblem = null;
+      this.opening = "";
+    }
     if (!id) {
       if (this.selected && !this.resolving) this.close(false);
     } else if (this.selected?.id !== id) void this.openFromAddress();
   }
-  /** Reads as many pages as are on screen, with the filters' query. */
+  /**
+   * Reads as many pages as are on screen, with the filters' query: the band in
+   * doubt and then the rest, or one list. A platform of an earlier release
+   * refuses the priority, or ignores it: one list too.
+   */
   private async load() {
     const scope = this.scope;
     if (!scope || !this.host.identity || !this.readable) return false;
@@ -645,27 +972,60 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     const filters = this.filters;
     const current = () =>
       generation === this.generation && listGeneration === this.listGeneration;
+    /** The cursor of the page being read; null for a first page. */
+    let cursor: string | null = null;
+    /** A list's pages again; null once the answer is no longer wanted. */
+    const read = async (list: IncidentList, priority?: "high" | "normal") => {
+      const items: IncidentRecord[] = [];
+      let pages = 0;
+      cursor = null;
+      do {
+        const page: Page<IncidentRecord> = await this.host.api.request(
+          `${scope}/incidents?${incidentQuery(filters, cursor, priority)}`,
+        );
+        if (!current()) return null;
+        items.push(...page.items);
+        cursor = page.next_cursor;
+      } while (cursor && ++pages < list.pages);
+      return { items, next: cursor };
+    };
     return this.listReads.run(async () => {
       if (!current()) return false;
       try {
-        const items: IncidentRecord[] = [];
-        let cursor: string | null = null;
-        let read = 0;
-        do {
-          const page: Page<IncidentRecord> = await this.host.api.request(
-            `${scope}/incidents?${incidentQuery(filters, cursor)}`,
-          );
-          if (!current()) return false;
-          items.push(...page.items);
-          cursor = page.next_cursor;
-        } while (cursor && ++read < this.pages);
-        this.incidents = items;
-        this.nextCursor = cursor;
+        const none: ListAnswer = { items: [], next: null };
+        let banded = this.knowsPriority && bandsView(filters);
+        let high: ListAnswer | null = none;
+        if (banded)
+          try {
+            high = await read(this.high, "high");
+          } catch (error) {
+            // A cursor it refuses is one it gave: only a first page says it
+            // may not know the priority.
+            if (
+              cursor ||
+              !current() ||
+              !mayRefusePriority(describeError(error))
+            )
+              throw error;
+            banded = false;
+          }
+        if (!high) return false;
+        const rest = await read(this.rest, banded ? "normal" : undefined);
+        if (!rest) return false;
+        // Answered without it: the platform refused the priority, not a filter.
+        if (!banded && bandsView(filters)) this.knowsPriority = false;
+        if (ignoresPriority(high.items, rest.items)) {
+          banded = false;
+          high = none;
+        }
+        Object.assign(this.high, high);
+        Object.assign(this.rest, rest);
+        this.banded = banded;
         this.loaded = true;
         this.forbidden = false;
         this.error = null;
         const fresh = this.selected
-          ? items.find((item) => item.id === this.selected!.id)
+          ? this.incidents.find((item) => item.id === this.selected!.id)
           : undefined;
         if (fresh && !isUnavailableIncident(fresh) && !this.resolving)
           this.selected = fresh;
@@ -679,37 +1039,42 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       }
     });
   }
-  /** Continues the list with the same filters. */
-  async loadMore() {
+  /** Continues one list with the same filters; the other's cursor stays. */
+  async loadMore(list: IncidentList) {
     const scope = this.scope;
     if (
       !scope ||
       !this.host.identity ||
       !this.readable ||
-      !this.canLoadMore ||
-      this.appending
+      !this.canLoadMore(list) ||
+      list.appending
     )
       return;
     const generation = this.generation;
     const listGeneration = this.listGeneration;
     const filters = this.filters;
+    const priority = !this.banded
+      ? undefined
+      : list === this.high
+        ? "high"
+        : "normal";
     const current = () =>
       generation === this.generation && listGeneration === this.listGeneration;
-    this.appending = true;
+    list.appending = true;
     try {
       await this.listReads.run(async () => {
-        if (!current() || !this.canLoadMore) return;
+        if (!current() || !this.canLoadMore(list)) return;
         const page: Page<IncidentRecord> = await this.host.api.request(
-          `${scope}/incidents?${incidentQuery(filters, this.nextCursor)}`,
+          `${scope}/incidents?${incidentQuery(filters, list.next, priority)}`,
         );
         if (!current()) return;
-        const seen = new Set(this.incidents.map((item) => item.id));
-        this.incidents = [
-          ...this.incidents,
+        const seen = new Set(list.items.map((item) => item.id));
+        list.items = [
+          ...list.items,
           ...page.items.filter((item) => !seen.has(item.id)),
         ];
-        this.nextCursor = page.next_cursor;
-        this.pages++;
+        list.next = page.next_cursor;
+        list.pages++;
         this.forbidden = false;
         this.error = null;
       });
@@ -717,9 +1082,61 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       if (current())
         ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
     } finally {
-      if (current()) this.appending = false;
+      if (current()) list.appending = false;
       if (this.alive) this.cdr.markForCheck();
     }
+  }
+  /** The rows last drawn, kept while the incidents they come from are the same. */
+  private drawn: {
+    high: IncidentRecord[];
+    rest: IncidentRecord[];
+    groups: { high: RowGroup[]; rest: RowGroup[] };
+  } | null = null;
+  private groups() {
+    const high = this.high.items;
+    const rest = this.rest.items;
+    if (this.drawn?.high !== high || this.drawn.rest !== rest) {
+      const rows = inboxRows(high, rest);
+      this.drawn = {
+        high,
+        rest,
+        groups: { high: rowGroups(rows.high), rest: rowGroups(rows.normal) },
+      };
+    }
+    return this.drawn.groups;
+  }
+  /** The bands on screen; null while nothing is in doubt, or one list shows. */
+  bands(): Band[] | null {
+    const groups = this.groups();
+    if (!groups.high.length) return null;
+    const band = (
+      id: Band["id"],
+      title: string,
+      list: IncidentList,
+      rows: RowGroup[],
+    ): Band => ({
+      id,
+      title,
+      count: this.bandCount(rows, list),
+      groups: rows,
+      list,
+    });
+    return [
+      band("high", "High priority", this.high, groups.high),
+      ...(groups.rest.length || this.rest.next
+        ? [band("other", "Other incidents", this.rest, groups.rest)]
+        : []),
+    ];
+  }
+  /** "4 incidents", or "50 shown" while more follow. */
+  private bandCount(groups: RowGroup[], list: IncidentList) {
+    const count = groups.reduce(
+      (total, group) =>
+        total + (group.case ? group.case.members : group.items).length,
+      0,
+    );
+    if (list.next) return `${count} shown`;
+    return `${count} ${count === 1 ? "incident" : "incidents"}`;
   }
   suggestions() {
     return incidentSuggestions(this.incidents);
@@ -731,7 +1148,9 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   countText() {
     const count = this.incidents.length;
     const noun = count === 1 ? "incident" : "incidents";
-    return this.nextCursor ? `${count} ${noun} loaded` : `${count} ${noun}`;
+    return this.high.next || this.rest.next
+      ? `${count} ${noun} loaded`
+      : `${count} ${noun}`;
   }
   setFilters(change: Partial<IncidentFilters>) {
     const next = { ...this.filters, ...change } as IncidentFilters;
@@ -774,9 +1193,8 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   /** New filters: the first page again; Load more pages and older answers go. */
   private changed() {
     this.listGeneration++;
-    this.pages = 1;
-    this.nextCursor = null;
-    this.appending = false;
+    for (const list of [this.high, this.rest])
+      Object.assign(list, { next: null, pages: 1, appending: false });
     if (this.scope && this.host.identity && this.readable)
       void this.poller.refresh();
   }
@@ -789,33 +1207,69 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       void this.router.navigateByUrl(path, { replaceUrl: true });
   }
   open(incident: IncidentView) {
+    this.forgetPartner();
     this.selected = incident;
     this.detailProblem = null;
     this.opening = "";
-    this.resolving = false;
-    this.failure = null;
+    this.leaveDialog();
     this.syncAddress();
     void this.loadEvents(incident);
   }
+  /** Opens another incident of a case: the one loaded, or through the address when no page lists it. */
+  openLink(link: IncidentLink) {
+    this.forgetPartner();
+    const loaded = this.incidents.find((item) => item.id === link.id);
+    if (loaded && !isUnavailableIncident(loaded)) this.open(loaded);
+    // The address names it already, so nothing would move.
+    else if (incidentFromQuery(location.search) === link.id)
+      void this.openFromAddress(true);
+    else
+      void this.router.navigateByUrl(
+        viewPath("incidents") + incidentFiltersToQuery(this.filters, link.id),
+        { replaceUrl: true },
+      );
+  }
   close(sync = true) {
+    this.leaveDrawer(sync);
+    this.forgetPartner();
     this.selected = null;
     this.opening = "";
-    this.resolving = false;
-    this.failure = null;
+    this.leaveDialog();
     if (sync) this.syncAddress();
   }
   /**
-   * Opens the incident the address names from incidents.read, whether or not
-   * a loaded page lists it. A refusal or a missing incident is explained
-   * above the list.
+   * The drawer is closing, and the focus it holds goes to the list, beside it
+   * as under it. A press of its Close may leave the focus nowhere.
    */
-  async openFromAddress() {
+  private leaveDrawer(pressed: boolean) {
+    const active = document.activeElement ?? document.body;
+    const held =
+      !!active.closest(".record-detail") ||
+      (pressed && active === document.body);
+    if (held)
+      afterNextRender(
+        () => {
+          if (document.activeElement === document.body)
+            this.drawerOpener()?.focus({ preventScroll: true });
+        },
+        { injector: this.injector },
+      );
+  }
+  /**
+   * Opens the incident the address names from incidents.read, whether or not
+   * a loaded page lists it; one on its way isn't read twice. A refusal or a
+   * missing incident is explained above the list, where it stays while it is
+   * read `again`.
+   */
+  async openFromAddress(again = false) {
     const scope = this.scope;
     const id = incidentFromQuery(location.search);
     if (!scope || !id || !this.host.identity || !this.readable) return;
+    this.forgetPartner();
+    if (this.opening === id) return;
     const generation = this.generation;
     this.opening = id;
-    this.detailProblem = null;
+    if (!again) this.detailProblem = null;
     try {
       const incident = await this.host.api.request<IncidentRecord>(
         `${scope}/incidents/${encodeURIComponent(id)}`,
@@ -823,28 +1277,207 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       if (generation !== this.generation || this.opening !== id) return;
       this.opening = "";
       if (isUnavailableIncident(incident)) {
-        this.detailProblem = {
-          message:
-            "Studio can't show this incident: its run can't be shown here.",
-          code: "",
-          status: 0,
-        };
+        this.explainUnopened({ message: NOT_SHOWN, code: "", status: 0 });
         return;
       }
+      this.forgetPartner();
       this.selected = incident;
-      this.resolving = false;
-      this.failure = null;
+      this.leaveDialog();
+      // The Try again it was asked from goes.
+      if (document.activeElement?.closest(UNOPENED))
+        afterNextRender(() => this.focusTitle(), { injector: this.injector });
+      this.detailProblem = null;
       void this.loadEvents(incident);
     } catch (error) {
       if (generation !== this.generation || this.opening !== id) return;
       this.opening = "";
-      this.detailProblem = describeError(error);
+      this.explainUnopened(describeError(error));
     } finally {
       if (this.alive) this.cdr.markForCheck();
     }
   }
-  openRun(incident: IncidentView) {
-    void this.host.viewRun({ id: incident.run_id });
+  /** Why the incident couldn't be opened; another kind of failure draws another Try again. */
+  private explainUnopened(problem: PlainError) {
+    if (document.activeElement?.closest(UNOPENED)) {
+      const page = this.element.nativeElement;
+      const again = `${UNOPENED} button`;
+      afterNextRender(() => page.querySelector<HTMLElement>(again)?.focus(), {
+        injector: this.injector,
+      });
+    }
+    this.detailProblem = problem;
+  }
+  openRun(id: string) {
+    void this.host.viewRun({ id });
+  }
+  /**
+   * Opens a related incident from the drawer: the one loaded, or the one
+   * incidents.read answers when no page lists it. A second press while it is
+   * on its way reads nothing.
+   */
+  openPartner(link: IncidentLink) {
+    const from = this.selected;
+    if (!from || (this.partner?.id === link.id && this.partner.reading)) return;
+    const loaded = this.incidents.find((item) => item.id === link.id);
+    if (loaded && !isUnavailableIncident(loaded)) {
+      this.open(loaded);
+      this.focusTitle();
+      return;
+    }
+    this.offerRead = null;
+    // Asked again after a failure, it keeps how long the next wait is.
+    if (this.asked?.id !== link.id) {
+      this.forgetPartner();
+      this.asked = { id: link.id, from: from.id, failures: 0, timer: null };
+    }
+    void this.readPartner();
+  }
+  /**
+   * Reads the related incident asked for, for the incident it was asked in
+   * only. A failed read waits 5 s, doubling to 60 s; a refusal or an incident
+   * that can't be found is final. A retry nobody pressed (`waited`) moves the
+   * focus only within the drawer.
+   */
+  async readPartner(waited = false) {
+    const scope = this.scope;
+    const asked = this.asked;
+    if (!scope || !asked || this.partner?.reading) return;
+    if (asked.timer !== null) clearTimeout(asked.timer);
+    asked.timer = null;
+    const generation = this.generation;
+    const current = () =>
+      this.alive &&
+      generation === this.generation &&
+      this.asked === asked &&
+      this.selected?.id === asked.from;
+    const say = (message: string, code = "", again = false) => {
+      this.partner = {
+        id: asked.id,
+        reading: false,
+        problem: { message, code, again },
+      };
+      if (!again) this.leaveTryNow(asked.id);
+    };
+    // What went wrong stays while it is read again, and Try now its focus.
+    const problem = this.partner?.problem ?? null;
+    this.partner = { id: asked.id, reading: true, problem };
+    try {
+      const incident = await this.host.api.request<IncidentRecord>(
+        `${scope}/incidents/${encodeURIComponent(asked.id)}`,
+      );
+      if (!current()) return;
+      if (isUnavailableIncident(incident)) say(NOT_SHOWN);
+      else {
+        const takesFocus =
+          !waited || !!document.activeElement?.closest(".record-detail");
+        this.open(incident);
+        if (takesFocus) this.focusTitle();
+      }
+    } catch (error) {
+      if (!current()) return;
+      const plain = describeError(error);
+      if (plain.status === 403) say(READ_REFUSED, plain.code);
+      else if (plain.status === 404) say(NOT_FOUND, plain.code);
+      else {
+        const wait = retryDelay(++asked.failures);
+        say(
+          `Studio couldn't read this incident. It tries again in ${wait / 1000} s.`,
+          plain.code,
+          true,
+        );
+        asked.timer = setTimeout(() => {
+          asked.timer = null;
+          if (current()) void this.readPartner(true);
+        }, wait);
+      }
+    } finally {
+      if (this.alive) this.cdr.markForCheck();
+    }
+  }
+  /** Another incident, a decision or no drawer: what was asked for in this one is no longer wanted. */
+  private forgetPartner() {
+    if (this.asked?.timer) clearTimeout(this.asked.timer);
+    this.asked = null;
+    this.partner = null;
+    this.offerRead = null;
+  }
+  /** Try now goes once an answer is final: its link's Open takes the focus. */
+  private leaveTryNow(id: string) {
+    if (!document.activeElement?.closest(".record-detail .txn-links .notice"))
+      return;
+    const open = `.record-detail [data-incident="${CSS.escape(id)}"]`;
+    const page = this.element.nativeElement;
+    afterNextRender(() => page.querySelector<HTMLElement>(open)?.focus(), {
+      injector: this.injector,
+    });
+  }
+  /** An incident's control in the list: its row, or its Open while no page lists it. */
+  private control(id: string): HTMLElement | null {
+    const control = `.incident-list [data-incident="${CSS.escape(id)}"]`;
+    const page = this.element.nativeElement;
+    return (
+      page.querySelector<HTMLElement>(`${control}.row-open`) ??
+      page.querySelector<HTMLElement>(control)
+    );
+  }
+  /**
+   * Where a control of the list is, as the stops to look for once it is gone:
+   * itself, what follows it in its band, the band's heading, then the rest of
+   * the list, the nearest row first. A row is named by its incident, a heading
+   * by its ID.
+   */
+  private placeOf(control: HTMLElement): string[] {
+    const list = control.closest(".incident-list");
+    const band = control.closest(".incident-band");
+    const stops = [...(list?.querySelectorAll<HTMLElement>(STOPS) ?? [])];
+    const at = stops.indexOf(control);
+    const before = stops.slice(0, at).reverse();
+    const after = stops.slice(at + 1);
+    return [
+      control,
+      ...after.filter((stop) => band?.contains(stop)),
+      ...stops.filter((stop) => band?.contains(stop) && stop.id),
+      ...after,
+      ...before,
+    ].map((stop) => stop.dataset["incident"] ?? stop.id);
+  }
+  /** The first of these stops the list still draws, or the page's title. */
+  private land(place: string[]): HTMLElement | null {
+    const page = this.element.nativeElement;
+    for (const stop of place) {
+      const drawn =
+        this.control(stop) ??
+        page.querySelector<HTMLElement>(`.incident-band #${CSS.escape(stop)}`);
+      if (drawn) return drawn;
+    }
+    return place.length ? page.querySelector("h1") : null;
+  }
+  /** Closing the drawer over the list returns to the control that opened it, or to the next one once it is gone. */
+  readonly drawerOpener = () => this.land(this.opener);
+  private holdFocus() {
+    const focused = document.activeElement?.closest<HTMLElement>(
+      `.incident-list :is(${STOPS})`,
+    );
+    if (focused) this.focused = this.placeOf(focused);
+    const opener =
+      this.selected && this.openedFrom ? this.control(this.openedFrom) : null;
+    if (opener) this.opener = this.placeOf(opener);
+  }
+  /**
+   * A row can be drawn elsewhere (one list turns into bands, a case forms
+   * around it) or leave the list. The focus it took along goes to its
+   * incident's control there, or to the next stop.
+   */
+  private restoreFocus() {
+    if (this.focused.length && document.activeElement === document.body)
+      this.land(this.focused)?.focus({ preventScroll: true });
+    this.focused = [];
+  }
+  /** The control that opened the incident is gone: its title takes the focus. */
+  private focusTitle() {
+    setTimeout(() =>
+      document.querySelector<HTMLElement>("#incident-detail-title")?.focus(),
+    );
   }
   /** The run's last 20 engine events: types and sequence numbers only. */
   async loadEvents(incident: IncidentView) {
@@ -884,8 +1517,126 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     }
   }
   startResolving() {
+    this.dropAsked();
+    this.leaveDialog();
     this.resolving = true;
+  }
+  /**
+   * Opens a decision on the transaction in doubt. A retry decides on the
+   * drawer's record; any other reads the incident first, so the checklist,
+   * what stays done and the revision it is sent with are the platform's now.
+   * The last one pressed opens, for the incident it was pressed in only.
+   */
+  async startDeciding(action: TransactionAction) {
+    const incident = this.selected;
+    const scope = this.scope;
+    if (!incident || !scope || this.resolving) return;
+    if (this.offerRead?.reading && this.offerRead.action === action) return;
+    this.dropAsked();
+    if (action === "retry") return this.openDecision(action);
+    const read: OfferRead = { action, reading: true, problem: null };
+    this.offerRead = read;
+    const generation = this.generation;
+    const current = () =>
+      this.alive &&
+      generation === this.generation &&
+      this.offerRead === read &&
+      this.selected?.id === incident.id;
+    const say = (message: string, code = "") => {
+      this.offerRead = { action, reading: false, problem: { message, code } };
+    };
+    try {
+      const fresh = await this.host.api.request<IncidentRecord>(
+        `${scope}/incidents/${encodeURIComponent(incident.id)}`,
+      );
+      if (!current()) return;
+      this.offerRead = null;
+      if (isUnavailableIncident(fresh)) say(NOT_SHOWN);
+      else if (this.readAgain(fresh, action)) this.openDecision(action);
+    } catch (error) {
+      if (!current()) return;
+      const plain = describeError(error);
+      say(
+        plain.status === 403
+          ? READ_REFUSED
+          : plain.status === 404
+            ? NOT_FOUND
+            : "Studio couldn't read this incident. Choose again to read it.",
+        plain.code,
+      );
+    } finally {
+      if (this.alive) this.cdr.markForCheck();
+    }
+  }
+  private openDecision(action: TransactionAction) {
+    this.leaveDialog();
+    this.resolving = true;
+    this.deciding = action;
+  }
+  /** An incident on its way never opens under a decision. */
+  private dropAsked() {
+    this.forgetPartner();
+    if (!this.opening) return;
+    this.opening = "";
+    this.syncAddress();
+  }
+  /** Closing a decision returns to its offer. */
+  stopDeciding(action: TransactionAction) {
+    this.leaveDialog();
+    setTimeout(() =>
+      this.element.nativeElement
+        .querySelector<HTMLElement>(`[data-offer="${action}"]`)
+        ?.focus(),
+    );
+  }
+  /** No dialog is open any more, or another one opens. */
+  private leaveDialog() {
+    this.resolving = false;
+    this.deciding = null;
     this.failure = null;
+    this.refusedRecord = null;
+    this.refreshing = false;
+    this.dialogs++;
+  }
+  /**
+   * The incident under a decision as just read: whether the decision still
+   * fits it. Otherwise the drawer says how it stands now, and no dialog does.
+   */
+  private readAgain(fresh: IncidentView, action: TransactionAction): boolean {
+    this.selected = fresh;
+    this.relist(fresh);
+    const offer = transactionActions(fresh, (capability) =>
+      this.host.can(capability),
+    ).find((item) => item.action === action);
+    if (offer && !offer.missing) return true;
+    this.leaveDialog();
+    if (!inDoubt(fresh)) {
+      const gone = `Incident ${this.whereOf(fresh)} is no longer active.`;
+      this.host.notify(
+        fresh.resolution
+          ? `${gone} The drawer shows how it was resolved.`
+          : gone,
+      );
+    }
+    void this.loadEvents(fresh);
+    this.focusTitle();
+    return false;
+  }
+  /**
+   * An incident as just read or decided, in the lists that hold it. One the
+   * status filter no longer matches leaves them at once, as the platform's
+   * next page would leave it out.
+   */
+  private relist(fresh: IncidentView) {
+    const listed =
+      this.filters.status === "all" || fresh.status === this.filters.status;
+    for (const list of [this.high, this.rest])
+      list.items = list.items.flatMap((item) =>
+        item.id !== fresh.id ? [item] : listed ? [fresh] : [],
+      );
+  }
+  private whereOf(incident: IncidentView) {
+    return `${incident.code} at ${this.stepOf(incident)}`;
   }
   /**
    * Sends a decision with the incident's revision as If-Match and a receipt.
@@ -903,51 +1654,56 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     const receipt = lost?.key === key ? lost.receipt : crypto.randomUUID();
     this.pending.set(incident.id, { key, receipt });
     this.sending.add(incident.id);
+    this.lastSent.set(incident.id, receipt);
     this.failure = null;
-    const where = `${incident.code} at ${this.stepOf(incident)}`;
+    const where = this.whereOf(incident);
+    const offer = this.deciding
+      ? transactionActions(incident, () => true).find(
+          (item) => item.action === this.deciding,
+        )
+      : null;
+    const dialog = this.dialogs;
     // Still this page, environment and person; and this incident still open.
     const samePage = () => this.alive && generation === this.generation;
     const stillOpen = () => samePage() && this.selected?.id === incident.id;
+    // A decision on a transaction in doubt is refused in its own dialog only.
+    const stillAsked = () =>
+      stillOpen() && this.resolving && (!offer || dialog === this.dialogs);
     try {
-      const resolved = await this.host.api.request<IncidentView>(
-        `${scope}/incidents/${encodeURIComponent(incident.id)}/resolve`,
-        "POST",
-        { receipt_id: receipt, ...request },
-        { "If-Match": `"${incident.revision}"` },
-      );
+      // Once answered, another decision can be sent, whatever is still read for this one.
+      const row = await this.host.api
+        .request<IncidentView>(
+          `${scope}/incidents/${encodeURIComponent(incident.id)}/resolve`,
+          "POST",
+          { receipt_id: receipt, ...request },
+          { "If-Match": `"${incident.revision}"` },
+        )
+        .finally(() => this.sending.delete(incident.id));
       if (this.pending.get(incident.id)?.receipt === receipt)
         this.pending.delete(incident.id);
+      const resolved = { ...unchanging(incident), ...row };
       if (stillOpen()) {
         const dialogOpen = this.resolving;
-        this.resolving = false;
+        this.leaveDialog();
         this.selected = resolved;
         this.host.notify("Incident resolved.");
         void this.loadEvents(resolved);
-        // The dialog's button is gone: the incident's title takes the focus.
-        if (dialogOpen)
-          setTimeout(() =>
-            document
-              .querySelector<HTMLElement>("#incident-detail-title")
-              ?.focus(),
-          );
+        void this.readDecided(resolved);
+        // The dialog's button is gone.
+        if (dialogOpen) this.focusTitle();
       } else {
         // The person has moved on: nothing on screen changes but the list.
         this.host.notify(`Incident ${where} is resolved.`);
         if (!samePage()) return;
       }
-      // A decided incident the status filter no longer matches leaves the
-      // list at once, as the platform's next page would leave it out.
-      const listed =
-        this.filters.status === "all" ||
-        resolved.status === this.filters.status;
-      this.incidents = this.incidents.flatMap((item) =>
-        item.id !== resolved.id ? [item] : listed ? [resolved] : [],
-      );
+      this.relist(resolved);
       // Not while the person decides on another incident: reading the list
       // would change the revision that decision is sent with.
       if (!this.resolving) void this.poller.refresh();
     } catch (error) {
-      const plain = describeError(error);
+      const plain = offer
+        ? explainDecision(describeError(error), offer)
+        : describeError(error);
       const unknown =
         plain.status === 0 || plain.status === 408 || plain.status >= 500;
       // A refusal is final for that receipt; a lost answer keeps it.
@@ -966,7 +1722,21 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
                 "Someone changed this incident since you opened it. Refresh it, check it again, then decide.",
             }
           : plain;
-      if (stillOpen() && this.resolving) this.failure = explained;
+      // A record may have been refused for steps that changed since it was
+      // read: it is read again before anything typed is blamed.
+      if (
+        offer?.action === "mark_reconciled" &&
+        refusesRecord(plain) &&
+        stillAsked()
+      ) {
+        this.refusedRecord = explained;
+        // The dialog learns what was refused before anything in it changes.
+        this.cdr.markForCheck();
+        if (await this.reloadIncident()) return;
+        // A later decision says how it went itself.
+        if (this.lastSent.get(incident.id) !== receipt) return;
+      }
+      if (stillAsked()) this.failure = explained;
       else
         this.host.notify(
           unknown
@@ -974,33 +1744,43 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
             : `Incident ${where} was not resolved. ${plain.message}`,
         );
     } finally {
-      this.sending.delete(incident.id);
       if (this.alive) this.cdr.markForCheck();
     }
+  }
+  /** A refused record's incident is being read again, before its refusal shows. */
+  get rereading() {
+    return this.refreshing && !!this.refusedRecord && !this.failure;
   }
   /**
    * Refresh incident: reads the incident again (incidents.read) so the dialog
    * decides on its current revision, whether or not a loaded page lists it.
    * A read that fails, or finds it gone, says so in the dialog instead of
-   * leaving the old revision to fail again.
+   * leaving the old revision to fail again. A decision on a transaction in
+   * doubt keeps why it was refused while it is read, and closes when it no
+   * longer fits. A refused record is read again without asking: only what is
+   * still the same then was refused for what was typed. Answers false once the
+   * dialog it was read for is gone.
    */
-  async reloadIncident() {
+  async reloadIncident(): Promise<boolean> {
     const incident = this.selected;
     const scope = this.scope;
-    if (!incident || !scope) return;
+    const action = this.deciding;
+    if (!incident || !scope || this.refreshing) return false;
     const generation = this.generation;
-    this.failure = null;
+    const dialog = this.dialogs;
+    if (action) this.refreshing = true;
+    else this.failure = null;
+    const current = () =>
+      this.alive &&
+      generation === this.generation &&
+      this.selected?.id === incident.id &&
+      this.resolving &&
+      (!action || dialog === this.dialogs);
     try {
       const fresh = await this.host.api.request<IncidentRecord>(
         `${scope}/incidents/${encodeURIComponent(incident.id)}`,
       );
-      if (
-        !this.alive ||
-        generation !== this.generation ||
-        this.selected?.id !== incident.id ||
-        !this.resolving
-      )
-        return;
+      if (!current()) return false;
       if (isUnavailableIncident(fresh))
         this.failure = {
           message:
@@ -1008,20 +1788,21 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
           code: "",
           status: 0,
         };
-      else {
+      else if (action) {
+        this.failure = checklistChanged(incident, fresh)
+          ? null
+          : this.refusedRecord;
+        this.refusedRecord = null;
+        this.readAgain(fresh, action);
+      } else {
         this.selected = fresh;
-        this.incidents = this.incidents.map((item) =>
-          item.id === fresh.id ? fresh : item,
-        );
+        for (const list of [this.high, this.rest])
+          list.items = list.items.map((item) =>
+            item.id === fresh.id ? fresh : item,
+          );
       }
     } catch (error) {
-      if (
-        !this.alive ||
-        generation !== this.generation ||
-        this.selected?.id !== incident.id ||
-        !this.resolving
-      )
-        return;
+      if (!current()) return false;
       const plain = describeError(error);
       this.failure =
         plain.status === 404
@@ -1030,9 +1811,44 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
               message:
                 "Studio couldn't find this incident when it read it again. Close this dialog and look for it in the list.",
             }
-          : plain;
+          : this.refusedRecord
+            ? { ...plain, message: RECORD_UNREAD }
+            : plain;
     } finally {
-      this.cdr.markForCheck();
+      if (dialog === this.dialogs) this.refreshing = false;
+      if (this.alive) this.cdr.markForCheck();
+    }
+    return true;
+  }
+  /**
+   * The platform's answer to a decision is the incident's own row: when it
+   * opened, its workflow and its run come from reading it again. The decision
+   * is recorded, so a read that fails leaves what the answer said.
+   */
+  private async readDecided(decided: IncidentView) {
+    const scope = this.scope;
+    if (!scope) return;
+    const generation = this.generation;
+    try {
+      const fresh = await this.host.api.request<IncidentRecord>(
+        `${scope}/incidents/${encodeURIComponent(decided.id)}`,
+      );
+      if (
+        !this.alive ||
+        generation !== this.generation ||
+        this.selected?.id !== decided.id ||
+        // The next decision is made on the incident its dialog opened on.
+        this.resolving ||
+        isUnavailableIncident(fresh) ||
+        fresh.revision < this.selected.revision
+      )
+        return;
+      this.selected = fresh;
+      this.relist(fresh);
+    } catch {
+      // What the answer said stays.
+    } finally {
+      if (this.alive) this.cdr.markForCheck();
     }
   }
   unavailable(item: IncidentRecord) {
@@ -1041,13 +1857,39 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   view(item: IncidentRecord) {
     return item as IncidentView;
   }
+  readonly inDoubt = inDoubt;
+  readonly heldRun = HELD_RUN;
+  readonly caseLabel = caseLabel;
+  readonly linkPlace = linkPlace;
+  readonly missingText = missingText;
   stepOf(incident: IncidentView) {
-    return incident.node_id || "the run";
+    return stepOfIncident(incident) ?? "the run";
   }
-  label(incident: IncidentView) {
+  /** A row's step: a run held whole names one that is no step of the workflow. */
+  stepText(
+    incident: Pick<IncidentView, "node_id" | "instance_key" | "priority">,
+  ) {
+    return (
+      stepOfIncident(incident) ??
+      (incident.node_id ? "Not tied to a step" : "the run")
+    );
+  }
+  /** The step of a linked incident, which is in doubt whatever its status. */
+  linkStep(link: IncidentLink) {
+    return this.stepText({ ...link, priority: "high" });
+  }
+  /** What a row in doubt says under its code: a band already says it is in doubt. */
+  doubtText(banded: boolean, key: boolean) {
+    const said = [
+      ...(banded ? [] : ["In doubt"]),
+      ...(key ? ["Business key"] : []),
+    ];
+    return said.join(" · ");
+  }
+  label(incident: Pick<IncidentView, "status">) {
     return incidentStatusLabel(incident.status);
   }
-  tone(incident: IncidentView) {
+  tone(incident: Pick<IncidentView, "status">) {
     return toneAttribute(incidentTone(incident.status));
   }
   workflowText(incident: IncidentView) {

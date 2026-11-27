@@ -47,6 +47,12 @@ export interface SignalWords {
   sampled: boolean;
   /** The one series a rule may narrow it to, if any. */
   selector: SelectorKey | null;
+  /** It counts every workflow together, which people may expect to choose. */
+  wholeEnvironment?: boolean;
+  /** What having no data means for it; left out where the general words do. */
+  noData?: string;
+  /** What a rule on it needs beside managing alerts and reading the status. */
+  needs?: string;
 }
 const gauge = (
   name: string,
@@ -108,7 +114,10 @@ export const SIGNAL_WORDS: Record<AlertSignal, SignalWords> = {
     "Provider messages waiting",
     "Messages from providers not yet taken in.",
   ),
-  "incidents.active": gauge("Open incidents", "Incidents not yet resolved."),
+  "incidents.active": {
+    ...gauge("Open incidents", "Incidents not yet resolved."),
+    needs: "incident.read",
+  },
   "workers.online": gauge(
     "Workers online",
     "Workers in touch with the platform.",
@@ -133,6 +142,25 @@ export const SIGNAL_WORDS: Record<AlertSignal, SignalWords> = {
     "Platform components degraded",
     "Platform components that are degraded or down, apart from the alert checker.",
   ),
+  "transactions.in_doubt": {
+    ...gauge(
+      "Transactions in doubt",
+      "Transactions waiting for a person to resolve them.",
+    ),
+    wholeEnvironment: true,
+    needs: "run.read",
+  },
+  "transactions.undo_age_seconds": {
+    ...gauge(
+      "Oldest transaction undoing",
+      "How long the oldest transaction still undoing has been open.",
+      "seconds",
+    ),
+    wholeEnvironment: true,
+    needs: "run.read",
+    noData:
+      "With nothing undoing, the signal has no data: the rule doesn't fire, and a firing alert resolves.",
+  },
 };
 const isKnown = (signal: string): signal is AlertSignal =>
   (alertSignals as readonly string[]).includes(signal);
@@ -142,6 +170,28 @@ export const signalWords = (signal: string): SignalWords | null =>
 /** "Run failure rate"; a signal this Studio doesn't know keeps its name. */
 export const signalName = (signal: string) =>
   signalWords(signal)?.name ?? signal;
+
+/**
+ * A rule refused for lack of access: the first capability the person lacks of
+ * those the platform asks for, between backticks, and its code. Nothing is
+ * named when they lack none of them here, as for a target they may not read.
+ */
+export function ruleRefusal(refused: {
+  signal: string;
+  doing: "save" | "preview";
+  can: (capability: string) => boolean;
+  code: string;
+}): string {
+  const own = signalWords(refused.signal)?.needs;
+  const missing = ["alert.manage", "status.read", ...(own ? [own] : [])].find(
+    (capability) => !refused.can(capability),
+  );
+  const why = missing
+    ? `You need \`${missing}\` in this environment for a rule on this signal.`
+    : `You can't ${refused.doing} this rule.`;
+  const support = refused.code ? ` Support code: ${refused.code}.` : "";
+  return `${why} Ask an administrator in Settings › People and access.${support}`;
+}
 
 // ------------------------------------------------------------------ numbers
 
@@ -421,7 +471,8 @@ export function previewWords(
       value: "—",
       status,
       detail:
-        "With no data, the rule stays as it is: it doesn't fire and doesn't resolve.",
+        signalWords(rule.signal)?.noData ??
+        "With no data, the rule doesn't fire, and a firing alert resolves.",
     };
   }
   const value = valueText(preview.value, preview.unit);

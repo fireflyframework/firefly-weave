@@ -121,6 +121,16 @@ class IncidentsSection(ContractModel):
     opened_24h: Count
 
 
+class TransactionsSection(ContractModel):
+    """Transactions waiting for a person and transactions being undone, from their records; test runs left out."""
+
+    in_doubt: Count
+    undoing: Count
+    # How long the oldest transaction still undoing has been open, counted from when it opened; nothing undoing has
+    # no age.
+    oldest_undoing_seconds: Seconds | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
 class AttentionItem(ContractModel):
     kind: AttentionKind
     id: UUID | Literal["compatibility"]
@@ -141,6 +151,10 @@ class OperationsSummary(ContractModel):
     runs_24h: RunsDaySection | UnavailableSection | None = Field(default=None, exclude_if=lambda value: value is None)
     # Firing alerts, for readers with alert.read; servers without alerts leave it out.
     alerts: AlertsSection | ForbiddenSection | UnavailableSection | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # Read from transaction records, for readers with run.read; servers without transactions leave it out.
+    transactions: TransactionsSection | ForbiddenSection | UnavailableSection | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 

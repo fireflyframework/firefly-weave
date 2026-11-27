@@ -1,0 +1,117 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The cancels of a run with transactions: the panel scrolls inside, its
+   footer stays on the panel's bottom edge, fields 16 px apart. */
+.cancel-form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* The panel already holds the side padding: the fields line up with the title. */
+.cancel-body {
+  display: grid;
+  gap: var(--space-4);
+  padding-top: var(--space-1);
+}
+.dialog-message {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+/* Its answer goes under the sentence where they don't fit side by side. */
+.notice {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.notice p {
+  flex: 1 1 180px;
+  margin: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .notice button.sm {
+    min-height: var(--control-touch);
+  }
+}
+.stays-done {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+}
+.stays-done h3 {
+  margin: 0 0 var(--space-2);
+  font: var(--type-label);
+  color: var(--text);
+}
+.stays-done ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: var(--type-small);
+}
+.stays-done li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+.stays-done li weave-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.stays-done strong {
+  font: var(--type-mono);
+  font-weight: 600;
+  color: var(--text);
+}
+.field {
+  display: grid;
+  gap: var(--space-1);
+}
+.label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.label-row label,
+.field > label {
+  font: var(--type-label);
+  color: var(--text);
+}
+.reason-count {
+  font: var(--type-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+textarea {
+  width: 100%;
+  min-height: 72px;
+}
+.typed-id {
+  width: 100%;
+  font: var(--type-mono);
+}
+.error {
+  margin: 0;
+  font: var(--type-caption);
+  color: var(--danger-ink);
+}

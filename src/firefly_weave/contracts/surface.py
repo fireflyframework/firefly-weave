@@ -301,7 +301,8 @@ PROJECT = "/tenants/{tenant}/projects/{project}"
 ENVIRONMENT = PROJECT + "/environments/{environment}"
 # What saving or previewing an alert rule needs beyond the capability, for some signals.
 RULE_SIGNAL_READS = (
-    "A rule on incidents.active also needs incident.read, and a rule on a target signal without a target_id needs at "
+    "A rule on incidents.active also needs incident.read, a rule on transactions.in_doubt or "
+    "transactions.undo_age_seconds needs run.read, and a rule on a target signal without a target_id needs at "
     "least one deployment target the caller may read (422 WV-ALERT-SIGNAL otherwise)."
 )
 type RevisionTag = Annotated[str, Field(pattern=r'^(?:"[1-9][0-9]{0,9}"|[1-9][0-9]{0,9})$')]

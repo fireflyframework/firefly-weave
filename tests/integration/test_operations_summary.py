@@ -849,9 +849,12 @@ async def test_native_routes_serve_the_summary_and_telemetry_hosts(operations_ca
         "attention",
         "runs_24h",
         "alerts",
+        "transactions",
     }
     assert body["runs_24h"] == {"started": 0, "succeeded": 0, "failed": 0, "failure_rate": None}
     assert body["incidents"] == body["targets"] == body["alerts"] == {"state": "forbidden"}
+    # A viewer reads runs, so it reads their transactions.
+    assert body["transactions"] == {"in_doubt": 0, "undoing": 0}
     components = [item["component"] for item in body["health"]]
     assert components[0] == "database" and components[-2:] == ["native_executors", "telemetry"]
     # Scheduler loops are disabled on this API-only process; the instance is fixed for its lifetime.

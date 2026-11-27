@@ -62,6 +62,11 @@ import {
 import { DesignerPage, StepKind, stepLabels } from "./designer-po";
 import { administrator, alertsPlatform } from "./alerts-po";
 import {
+  ids as transactionIncidents,
+  runs as transactionRuns,
+} from "../transaction-incidents-fixture";
+import { reconciler, transactionsPlatform } from "./operate-transactions-po";
+import {
   openCallRun,
   openCallRunLog,
   openCalledBy,
@@ -5115,8 +5120,14 @@ spec:
       workflow: { name: "order-fulfillment", version: "2.4.0" },
       run_status: "blocked",
     }));
+    // None of them is a transaction in doubt: the High priority read is empty.
     await page.route(`${environment}/incidents?*`, (r) =>
-      r.fulfill({ json: { items: incidents, next_cursor: null } }),
+      r.fulfill({
+        json: {
+          items: r.request().url().includes("priority=high") ? [] : incidents,
+          next_cursor: null,
+        },
+      }),
     );
     await page.route(`${environment}/runs/${run}/history?*`, (r) =>
       r.fulfill({
@@ -6084,6 +6095,48 @@ spec:
     await shot("261-container-logs-restarted-and-unread", {
       end: ".page-content",
     });
+  },
+  // Transactions in Operate: the runs that need attention, what a run's
+  // transactions did, the inbox's band with a case, a transaction in doubt with
+  // its decisions, one of them filled in, and the Overview's counts.
+  async "operate-transactions"({ page, shot }) {
+    await transactionsPlatform(page, { capabilities: reconciler });
+    await page.goto("/operate/runs?transaction_state=in_doubt");
+    await expect(
+      page.getByRole("table", { name: "Runs" }).locator(".run-row"),
+    ).toHaveCount(4);
+    await shot("270-runs-needs-attention", { end: ".page-content" });
+    await page.goto(`/operate/runs/${transactionRuns.loop}`);
+    const section = page.getByRole("region", { name: "Transactions" });
+    await expect(section.locator(".txn-summary")).toBeVisible();
+    await section.scrollIntoViewIfNeeded();
+    await shot("271-run-transactions", {
+      end: ".record-detail, .page-content",
+    });
+    await page.goto("/operate/incidents");
+    await expect(
+      page.getByRole("region", { name: "High priority" }).locator(".case-head"),
+    ).toBeVisible();
+    await shot("272-incidents-in-doubt", { end: ".page-content" });
+    await page.goto(
+      `/operate/incidents?incident=${transactionIncidents.called}`,
+    );
+    const offers = page.getByRole("region", { name: "Resolve this incident" });
+    await expect(offers.getByRole("button")).toHaveCount(3);
+    await shot("273-incident-in-doubt", {
+      end: ".record-detail, .page-content",
+    });
+    await offers.getByRole("button", { name: "Mark as reconciled" }).click();
+    const dialog = page.getByRole("dialog", { name: "Mark as reconciled" });
+    await dialog.getByRole("radio", { name: /^Undone/ }).check();
+    await dialog.getByRole("checkbox").first().check();
+    await shot("274-mark-as-reconciled", { end: ".modal-panel" });
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await page.goto("/operate/overview");
+    const panel = page.getByRole("article", { name: "Transactions" });
+    await expect(panel.locator("dd")).toHaveText(["4", "1"]);
+    await panel.scrollIntoViewIfNeeded();
+    await shot("275-overview-transactions", { end: ".page-content" });
   },
   // A run's Logs section, after its Steps: every level, newest at the bottom.
   async "run-logs"({ page, shot }) {

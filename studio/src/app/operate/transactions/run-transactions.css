@@ -1,0 +1,215 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* A run's Transactions section: one block per transaction. The record's own
+   styles are its component's (transaction-record-table.css). */
+:host {
+  display: block;
+}
+.run-transactions {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  container: run-transactions / inline-size;
+}
+.txn-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+}
+.txn-heading h3 {
+  margin: 0;
+}
+.txn-summary {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.txn-summary .text-link {
+  font: inherit;
+}
+.txn-access {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.txn-problem .support-code {
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+/* A transaction: its title line, then meta, cause, record, timeline and
+   resolution, 12 px apart. In doubt, its border is the danger one. */
+.txn-block {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.txn-block.in-doubt {
+  border-color: var(--danger-bd);
+}
+.txn-block.folded {
+  padding: var(--space-2) var(--space-3);
+}
+.txn-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+/* Scrolled to, it leaves room above for its focus ring and its block's edge. */
+.txn-title h4 {
+  margin: 0;
+  scroll-margin-top: var(--space-8);
+  font: var(--type-label);
+  color: var(--text);
+}
+/* The state sits on its transaction's line, without the space a detail panel
+   leaves under a pill. A long one ("Waiting for submit, which can't be undone")
+   wraps in a narrow block instead of running out of it. */
+.txn-title .status-pill {
+  height: auto;
+  min-height: 22px;
+  margin: 0;
+  white-space: normal;
+}
+.txn-title h4 code,
+.txn-resolution code {
+  font: var(--type-mono);
+}
+.txn-chevron .disclosure {
+  transition: transform 120ms ease;
+}
+.txn-chevron .disclosure.open {
+  transform: rotate(90deg);
+}
+.txn-open-incident {
+  margin-inline-start: auto;
+}
+.txn-folded {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.txn-body {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.txn-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.txn-meta strong {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.txn-cause {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text);
+}
+.txn-cause weave-icon[data-tone="warning"] {
+  color: var(--warning-ink);
+}
+.txn-cause weave-icon[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+
+.txn-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.txn-timeline time {
+  margin-inline-end: var(--space-1);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.txn-resolution {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+  font: var(--type-small);
+}
+.txn-resolution dt {
+  color: var(--muted);
+}
+.txn-resolution dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.txn-resolution time {
+  white-space: nowrap;
+}
+
+@container run-transactions (max-width: 559px) {
+  .txn-block {
+    padding: var(--space-3);
+  }
+}
+/* On a phone each fact stands over its value, so who resolved it and when share
+   a line. */
+@container run-transactions (max-width: 359px) {
+  .txn-resolution {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .txn-resolution dd + dt {
+    margin-top: var(--space-1);
+  }
+}
+@media (pointer: coarse), (max-width: 767px) {
+  .txn-chevron {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+  .txn-open-incident,
+  .notice button.sm {
+    min-height: var(--control-touch);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .txn-chevron .disclosure {
+    transition: none;
+  }
+}

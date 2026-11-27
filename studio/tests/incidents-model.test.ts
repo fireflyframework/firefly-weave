@@ -15,21 +15,29 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  bandsView,
   checkResolution,
   defaultIncidentFilters,
+  ignoresPriority,
+  inDoubt,
   incidentFilterCount,
   incidentFiltersFromQuery,
   incidentFiltersToQuery,
   incidentFromQuery,
   incidentQuery,
+  incidentStep,
   incidentSuggestions,
   incidentStatusLabel,
   incidentTone,
   lastEvents,
+  mayRefusePriority,
   openedText,
   resolutionLabel,
+  stepOfIncident,
   type IncidentRecord,
   type IncidentView,
 } from "../src/app/operate/incidents/incidents-model";
@@ -66,6 +74,22 @@ describe("incident words", () => {
       "Accept a verified result",
     );
     expect(resolutionLabel("terminate")).toBe("End the run");
+  });
+
+  it("names a recorded It didn't happen as the transaction offers it", () => {
+    const corpus = JSON.parse(
+      readFileSync(
+        resolve(import.meta.dirname, "fixtures/transaction-corpus.json"),
+        "utf8",
+      ),
+    ) as { resolutions: Record<string, { kind: string; label: string }> };
+    expect(resolutionLabel("accept_reconciled_failure")).toBe(
+      "It didn't happen",
+    );
+    expect(corpus.resolutions["it_didnt_happen"]).toMatchObject({
+      kind: "accept_reconciled_failure",
+      label: resolutionLabel("accept_reconciled_failure"),
+    });
   });
 });
 
@@ -115,6 +139,19 @@ describe("Resolve incident checks", () => {
         reason: draft.reason,
         evidence_reference: "provider:receipt:123",
         output: { rows: [1] },
+      },
+    });
+    // Nor is another result sent than the one typed.
+    expect(
+      checkResolution({
+        ...accept,
+        evidence: "ticket-9",
+        output: '{"order": 12345678901234567890}',
+      }),
+    ).toEqual({
+      problems: {
+        output:
+          "A number in the result can't be sent exactly as typed. Use a shorter or smaller one, or text in quotes if the result takes text.",
       },
     });
     // JSON null is a result too.
@@ -180,6 +217,103 @@ describe("incident filters", () => {
         "order",
       ),
     ).toBe("opened_desc");
+  });
+
+  it("reads one priority band with the same filters, and both bands without one", () => {
+    const filters = { ...defaultIncidentFilters, workflow: "parent-move" };
+    for (const [cursor, priority] of [
+      [null, "high"],
+      ["next-page", "normal"],
+    ] as const) {
+      const banded = new URLSearchParams(
+        incidentQuery(filters, cursor, priority),
+      );
+      expect(banded.get("priority")).toBe(priority);
+      banded.delete("priority");
+      expect(Object.fromEntries(banded)).toEqual(
+        Object.fromEntries(new URLSearchParams(incidentQuery(filters, cursor))),
+      );
+    }
+    expect(
+      new URLSearchParams(incidentQuery(filters, null)).has("priority"),
+    ).toBe(false);
+  });
+
+  it("shows bands for active incidents of any code, whatever the other filters; a code or another status shows one list", () => {
+    const banded = {
+      ...defaultIncidentFilters,
+      workflow: "parent-move",
+      nodeId: "move",
+      openedAfter: "2026-11-22T10:00:00.000Z",
+      openedBefore: "2026-11-23T10:00:00.000Z",
+      includeTest: true,
+      order: "opened_asc" as const,
+    };
+    expect(bandsView(defaultIncidentFilters)).toBe(true);
+    expect(bandsView(banded)).toBe(true);
+    expect(bandsView({ ...banded, code: "WV-TXN-UNDO-STUCK" })).toBe(false);
+    for (const status of ["resolved", "closed", "all"] as const)
+      expect(bandsView({ ...banded, status }), status).toBe(false);
+  });
+
+  it("only a refused value says the platform may not know the priority", () => {
+    const refusal = (status: number, code: string) =>
+      mayRefusePriority({ message: "Unknown query parameter", code, status });
+    expect(refusal(422, "WV-VALIDATION")).toBe(true);
+    expect(refusal(422, "WV-FILTER")).toBe(false);
+    expect(refusal(400, "WV-VALIDATION")).toBe(false);
+    expect(refusal(503, "WV-UNAVAILABLE")).toBe(false);
+  });
+
+  it("a platform that ignores the priority lists other incidents as in doubt, or one it can't show in both bands", () => {
+    const high = incident({ id: "high", priority: "high" });
+    const hidden: IncidentRecord = { id: "hidden", unavailable: true };
+    const rest = [incident({ id: "other" })];
+    expect(ignoresPriority([high], rest)).toBe(false);
+    expect(ignoresPriority([], rest)).toBe(false);
+    expect(ignoresPriority([high, hidden], rest)).toBe(false);
+    expect(ignoresPriority([hidden], rest)).toBe(false);
+    expect(ignoresPriority(rest, rest)).toBe(true);
+    expect(ignoresPriority([high, ...rest], [])).toBe(true);
+    expect(ignoresPriority([hidden], [hidden])).toBe(true);
+  });
+
+  it("names an incident's step without its undo, and none for a run held whole", () => {
+    expect(incidentStep("add#undo")).toBe("add");
+    expect(incidentStep("charge")).toBe("charge");
+    expect(incidentStep("@join")).toBe("@join");
+    expect(incidentStep("@transactions")).toBeNull();
+    expect(incidentStep(null)).toBeNull();
+  });
+
+  it("names the iteration of a loop's step only where a transaction is in doubt", () => {
+    const at = {
+      node_id: "hold",
+      instance_key: "hold[3]#cancel",
+    };
+    expect(stepOfIncident(incident({ ...at, priority: "high" }))).toBe(
+      "hold[3]",
+    );
+    expect(
+      stepOfIncident(incident({ ...at, priority: "high", status: "resolved" })),
+    ).toBe("hold[3]");
+    expect(stepOfIncident(incident(at))).toBe("hold");
+    // The platform leaves the instance out where it is the step itself.
+    expect(
+      stepOfIncident(incident({ node_id: "submit", priority: "high" })),
+    ).toBe("submit");
+    expect(
+      stepOfIncident(incident({ node_id: "@transactions", priority: "high" })),
+    ).toBeNull();
+    expect(stepOfIncident(incident({ node_id: null }))).toBeNull();
+  });
+
+  it("calls an incident in doubt while it is active and high priority", () => {
+    expect(inDoubt(incident({ priority: "high" }))).toBe(true);
+    expect(inDoubt(incident())).toBe(false);
+    expect(inDoubt(incident({ priority: "high", status: "resolved" }))).toBe(
+      false,
+    );
   });
 
   it("counts the filters that differ from active, newest first", () => {

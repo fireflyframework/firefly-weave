@@ -342,7 +342,8 @@ each one needs.
 - **Operations figures.** A rule's values and its alerts are operations
   figures, so saving or previewing a rule also needs `status.read`. A rule on
   open incidents (`incidents.active`) also needs `incident.read`, because the
-  environment summary shows incidents only to people who may read them. A rule
+  environment summary shows incidents only to people who may read them, and a
+  rule on either signal about transactions also needs `run.read`. A rule
   on every target needs at least one target its author may read; otherwise
   saving it fails with `WV-ALERT-SIGNAL`, since it would always read zero.
   Switching a rule off needs neither, so anyone who manages alerts can silence
@@ -357,11 +358,21 @@ each one needs.
   the five-minute run statistics beyond that. Test runs never count. Queue,
   worker, outbox, incident, target, and platform health signals read the
   current value, as the environment summary shows it.
+- **Transactions.** `transactions.in_doubt` counts the transactions that wait
+  for a person, and `transactions.undo_age_seconds` reads how long ago the
+  oldest transaction still being undone opened; it has no data while nothing is
+  being undone. Both count the whole environment, with no
+  workflow to choose. They leave out test runs, and the records that an
+  earlier version left unsettled in ended runs
+  ([Records of transactions in loops](upgrades.md#records-of-transactions-in-loops)).
+  [See and resolve transactions in Operations](../guides/transactions.md#see-and-resolve-transactions-in-operations)
+  says what to do about them.
 - **For and resolving.** A rule fires once its condition has held for its For
   time (at once when it is 0) and resolves only after it has been clear for
-  its For time or a minute, whichever is longer. A failed read changes nothing,
-  and the first reading after a gap of more than five minutes starts both
-  waits again.
+  its For time or a minute, whichever is longer. With no data, the condition
+  isn't met: the rule doesn't fire, and a firing alert resolves. A failed read
+  changes nothing, and the first reading after a gap of more than five minutes
+  starts both waits again.
 - **Scale.** At the 30-second cadence, the scheduler comes back to every
   environment within five minutes for about 160 tenants, or about 80 when
   tenants have nine or more environments. Beyond that, revisits come more than
@@ -390,9 +401,10 @@ each one needs.
   message over a budget is skipped and shows `skipped_limit`. A message whose
   outcome is unclear is never sent again, and a retry goes only to the
   recipients the earlier attempts didn't reach.
-- **Presets.** Every environment gets the rule "A platform component is
-  degraded" once; deleting it doesn't bring it back. Five suggested rules are
-  offered to start from.
+- **Presets.** Every environment gets two rules once: "A platform component is
+  degraded" (warning, after 5 minutes) and "Transactions in doubt" (critical, at
+  once). Deleting one doesn't bring it back. Six suggested rules are offered to
+  start from, "A transaction has been undoing over 1 hour" among them.
 - **Webhooks.** Signed subscriptions to `alert.transition` receive each firing
   and resolve; see [integration events](../reference/integration-events.md).
 - **Retention.** Alert history and resolved alerts are kept 30 days, and at

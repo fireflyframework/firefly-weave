@@ -168,6 +168,26 @@ weave-operate-state {
   min-height: var(--target);
   font: var(--type-small);
 }
+/* The Transaction choices take More filters' last line, under its label. */
+.transaction-filter {
+  display: grid;
+  flex-basis: 100%;
+  gap: var(--inline-gap);
+  min-width: 0;
+}
+.transaction-filter-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--inline-gap) var(--space-3);
+  margin: 0;
+  font: var(--type-label);
+  color: var(--text);
+}
+.transaction-filter-label .hint {
+  font: var(--type-caption);
+  color: var(--muted);
+}
 .filter-chip {
   display: flex;
   flex-wrap: wrap;
@@ -267,13 +287,13 @@ weave-operate-state {
    the row, and numbers use tabular figures. */
 .runs-table {
   --cols: var(--target) minmax(0, 1.2fr) minmax(0, 1.6fr) minmax(0, 1fr)
-    minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(0, 0.6fr) minmax(0, 1fr)
+    minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(0, 0.6fr) 104px minmax(0, 1fr)
     minmax(0, 0.9fr);
 }
 .runs-table .table-head,
 .runs-table .resource-row {
   grid-template-columns: var(--cols);
-  grid-template-areas: "select status workflow origin started duration incidents key run";
+  grid-template-areas: "select status workflow origin started duration incidents transaction key run";
   gap: var(--group-gap);
   min-height: var(--row);
   padding: 0 var(--group-gap);
@@ -314,6 +334,12 @@ weave-operate-state {
 }
 .cell-incidents {
   grid-area: incidents;
+}
+/* The run's worst transaction: one pill, an empty cell without one. */
+.cell-transaction {
+  grid-area: transaction;
+  display: flex;
+  align-items: center;
 }
 .cell-key {
   grid-area: key;
@@ -377,8 +403,10 @@ weave-operate-state {
   font: var(--type-label);
   color: var(--text);
 }
-/* The workflow name opens the run; its target covers the whole row. */
+/* The workflow name opens the run; its target covers the whole row. A block:
+   an ellipsis doesn't show in a button's own flex box, which centers it. */
 .runs-table .row-open {
+  display: block;
   min-height: 0;
   padding: 0;
   border: 0;
@@ -458,6 +486,7 @@ weave-operate-state {
       .cell-started,
       .cell-duration,
       .cell-incidents,
+      .cell-transaction,
       .cell-key,
       .cell-run
     ),

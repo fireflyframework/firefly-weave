@@ -198,6 +198,7 @@ for (const viewport of [
           "Started",
           "Duration",
           "Incidents",
+          "Transaction",
           "Business key",
           "Run",
         ]);

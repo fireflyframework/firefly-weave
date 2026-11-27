@@ -18,14 +18,49 @@ SPDX-License-Identifier: Apache-2.0
 // What the Incidents inbox says about each incident, its filters, the three
 // decisions the Resolve incident dialog offers and how it checks them before
 // sending. Pure: the page renders it, tests check it.
+import type { TransactionState } from "../../editor/transactions/transaction-words";
+import type { PlainError } from "../../errors";
 import type { Tone } from "../../status-labels";
 import { REASON_LIMIT, tooLongMessage } from "../operate-limits";
+import {
+  stepName,
+  type TransactionParticipantView,
+} from "../transactions/transaction-contracts";
+import { typedJson } from "./typed-json";
 
 export type IncidentStatus = "active" | "closed" | "resolved";
+/** `accept_reconciled_failure` is a transaction's "It didn't happen"; the dialog offers the other three. */
 export type ResolutionKind =
   | "retry_safe"
   | "accept_reconciled_result"
+  | "accept_reconciled_failure"
   | "terminate";
+/** Another incident of the same case: its keys, code and status; never a business key, reason or value. */
+export interface IncidentLink {
+  id: string;
+  run_id: string;
+  code: string;
+  status: IncidentStatus;
+  /** As the linked incident's own view shows it: "add" for its undo stuck at "add#undo". */
+  node_id: string | null;
+  instance_key?: string;
+  workflow?: { name: string; version: string };
+}
+/** The transaction an in-doubt incident holds, without values. */
+export interface IncidentTransaction {
+  instance_key: string;
+  state: TransactionState;
+  business_key?: string;
+  participants: TransactionParticipantView[];
+  /** Instance keys of the steps whose results haven't arrived. */
+  pending: string[];
+  /**
+   * Instance keys of the steps after the point of no return with an open
+   * incident: a record that says the transaction finished names each one.
+   * Left out when there are none.
+   */
+  stuck_steps?: string[];
+}
 
 /** An incident as the platform reports it (`incidents.list`). */
 export interface IncidentView {
@@ -46,6 +81,13 @@ export interface IncidentView {
     reason: string;
     output?: unknown;
     evidence_reference?: string | null;
+    /** The workflow run whose resolve step applied it. */
+    workflow_run_id?: string;
+    /**
+     * It closed an incident that an earlier decision left with nothing to
+     * decide; only the platform says so. Left out otherwise.
+     */
+    leftover?: boolean;
   } | null;
   external_effects_may_continue: boolean;
   /** The full step instance; left out for an incident not tied to one. */
@@ -61,6 +103,18 @@ export interface IncidentView {
   workflow?: { name: string; version: string };
   run_status?: string;
   test?: boolean;
+  /** An in-doubt incident: high priority, and the transaction it holds. */
+  priority?: "high";
+  transaction?: IncidentTransaction;
+  /**
+   * A parent's settle timeout: the in-doubt incidents of the called runs it
+   * waits for, to resolve first (at most 20; `waits_on_more` says there are
+   * others, also when none of them may be shown).
+   */
+  waits_on?: IncidentLink[];
+  waits_on_more?: boolean;
+  /** A called run's in-doubt incident: its caller's settle timeout that waits for it. */
+  held_by?: IncidentLink;
 }
 export interface UnavailableIncident {
   id: string;
@@ -71,6 +125,31 @@ export const isUnavailableIncident = (
   incident: IncidentRecord,
 ): incident is UnavailableIncident =>
   "unavailable" in incident && !!incident.unavailable;
+/** The step the platform names for a run held whole: it is no step of the workflow. */
+const HELD_STEP = "@transactions";
+/** An incident's step as people read it, without its undo, release or confirm; null when it isn't tied to one. */
+export function incidentStep(nodeId: string | null): string | null {
+  return nodeId && nodeId !== HELD_STEP ? stepName(nodeId) : null;
+}
+/** The step of an incident in doubt or of a link to one, with its iteration in a loop: "hold[3]". */
+export function transactionStep(
+  at: Pick<IncidentLink, "node_id" | "instance_key">,
+): string | null {
+  const step = incidentStep(at.node_id);
+  return step && at.instance_key ? incidentStep(at.instance_key) : step;
+}
+/** Any incident's step: only one that holds a transaction names its iteration. */
+export function stepOfIncident(
+  incident: Pick<IncidentView, "node_id" | "instance_key" | "priority">,
+): string | null {
+  return incident.priority === "high"
+    ? transactionStep(incident)
+    : incidentStep(incident.node_id);
+}
+/** Whether an incident holds a transaction that waits for a person: a decided one no longer does. */
+export const inDoubt = (
+  incident: Pick<IncidentView, "priority" | "status">,
+): boolean => incident.priority === "high" && incident.status === "active";
 
 const statuses: Record<IncidentStatus, [string, Tone]> = {
   active: ["Active", "danger"],
@@ -107,6 +186,7 @@ export const resolutions: {
   },
 ];
 export function resolutionLabel(kind: ResolutionKind) {
+  if (kind === "accept_reconciled_failure") return "It didn't happen";
   return resolutions.find((item) => item.kind === kind)?.label ?? kind;
 }
 
@@ -145,12 +225,12 @@ export function checkResolution(
   if (draft.kind === "accept_reconciled_result") {
     if (!evidence)
       problems.evidence = "Enter where the verified result can be checked.";
-    try {
-      output = JSON.parse(draft.output);
-    } catch {
-      problems.output =
-        'Enter the verified result as JSON, for example {"approved": true}.';
-    }
+    const typed = typedJson(
+      draft.output,
+      'Enter the verified result as JSON, for example {"approved": true}.',
+    );
+    if ("problem" in typed) problems.output = typed.problem;
+    else output = typed.value;
   }
   if (Object.keys(problems).length) return { problems };
   return {
@@ -189,10 +269,15 @@ export const defaultIncidentFilters: IncidentFilters = {
   includeTest: false,
   order: "opened_desc",
 };
-/** The `incidents.list` query for the filters, from the start or after `cursor`. */
+/**
+ * The `incidents.list` query for the filters, from the start or after
+ * `cursor`; with a priority, one band: in-doubt incidents ("high") or the
+ * others ("normal"). Bands are Studio's, never an address filter.
+ */
 export function incidentQuery(
   filters: IncidentFilters,
   cursor: string | null,
+  priority?: "high" | "normal",
 ): string {
   const query = new URLSearchParams({
     limit: "50",
@@ -208,8 +293,42 @@ export function incidentQuery(
     ["opened_before", filters.openedBefore],
   ])
     if (value) query.set(key, value);
+  if (priority) query.set("priority", priority);
   if (cursor) query.set("cursor", cursor);
   return query.toString();
+}
+/**
+ * Whether the inbox shows its two bands: active incidents of any code,
+ * whatever the other filters. A code or another status shows one list.
+ */
+export function bandsView(
+  filters: Pick<IncidentFilters, "status" | "code">,
+): boolean {
+  return filters.status === "active" && !filters.code;
+}
+/**
+ * Whether a refused read in doubt may mean the platform doesn't know
+ * `priority`: releases 0.1.0a16 to 0.1.0a19 refuse a parameter they don't know
+ * as they do a value they can't take.
+ */
+export function mayRefusePriority(refused: PlainError): boolean {
+  return refused.status === 422 && refused.code === "WV-VALIDATION";
+}
+/**
+ * Whether the platform ignored `priority`, as releases before 0.1.0a16 do:
+ * both bands answer every incident, so the one in doubt holds others, or an
+ * incident Studio can't show that the other band lists too.
+ */
+export function ignoresPriority(
+  high: readonly IncidentRecord[],
+  normal: readonly IncidentRecord[],
+): boolean {
+  const listed = new Set(normal.map((item) => item.id));
+  return high.some((item) =>
+    isUnavailableIncident(item)
+      ? listed.has(item.id)
+      : item.priority !== "high",
+  );
 }
 /** How many filters differ from the defaults ("Clear filters" shows from one). */
 export function incidentFilterCount(filters: IncidentFilters): number {

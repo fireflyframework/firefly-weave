@@ -67,7 +67,7 @@ describe("typed readers", () => {
     const read = fixture.rules().map(readRule);
     expect(read.every(Boolean)).toBe(true);
     expect(read[7]).toMatchObject({
-      signal: "transactions.in_doubt",
+      signal: "queue.retrying_tasks",
       state: { state: "unsupported", unit: null, value: null },
     });
     expect(read[1]).toMatchObject({

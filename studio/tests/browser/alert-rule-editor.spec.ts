@@ -73,7 +73,7 @@ for (const size of [
         "No data: fewer than 10 runs ended in the last 15 minutes.",
       );
       await expect(result).toContainText(
-        "With no data, the rule stays as it is: it doesn't fire and doesn't resolve.",
+        "With no data, the rule doesn't fire, and a firing alert resolves.",
       );
       await expect(result).toContainText("Run failure rate, invoice-approval");
       await expect(result).toContainText("1 (test runs don't count)");
@@ -185,6 +185,183 @@ test.describe("The rule editor's states", () => {
     expect(
       sentTo(platform, `/alert-rules/${fixture.ids.inDoubt}`, "PUT"),
     ).toHaveLength(0);
+  });
+
+  for (const [signal, name] of [
+    ["transactions.in_doubt", "Transactions in doubt"],
+    ["transactions.undo_age_seconds", "Oldest transaction undoing"],
+  ])
+    test(`${name} counts the whole environment: no field narrows it`, async ({
+      page,
+    }) => {
+      const platform = await alertsPlatform(page, {
+        path: "/operate/alerts?tab=rules",
+      });
+      await page.getByRole("button", { name: "Add rule" }).click();
+      await page.getByLabel("Workflow").selectOption("invoice-approval");
+      const choice = page.getByLabel("Signal");
+      await choice.selectOption({ label: name });
+      await expect(choice).toHaveValue(signal);
+      const whole = page.getByText(
+        "Every workflow: this signal covers the whole environment.",
+        { exact: true },
+      );
+      await expect(whole).toBeVisible();
+      await expect(page.locator("#rule-selector")).toHaveCount(0);
+      await expect(page.getByLabel("Workflow")).toHaveCount(0);
+      // A screen reader hears it with the signal.
+      await expect(choice).toHaveAccessibleDescription(
+        /Test runs never count\. Every workflow: this signal covers the whole environment\.$/,
+      );
+      await shot(page, `alerts-editor-${signal}`);
+      // A signal nobody would narrow says nothing.
+      await choice.selectOption("outbox.pending");
+      await expect(whole).toHaveCount(0);
+      await choice.selectOption(signal);
+      await page.getByLabel("Name").fill(name);
+      await page.getByLabel("Threshold").fill("0");
+      await page.getByRole("button", { name: "Save rule" }).click();
+      await expect
+        .poll(() => sentTo(platform, "/alert-rules", "POST").length)
+        .toBe(1);
+      expect(sentTo(platform, "/alert-rules", "POST")[0].body).toMatchObject({
+        signal,
+        selector: {},
+        window_seconds: null,
+      });
+    });
+
+  test("Preview of a transaction undoing with nothing to read says what a rule with no data does", async ({
+    page,
+  }) => {
+    await alertsPlatform(page, {
+      path: "/operate/alerts?tab=rules",
+      answers: {
+        preview: {
+          value: null,
+          unit: "seconds",
+          condition_met: false,
+          evaluated_at: fixture.NOW,
+          no_data_reason: "no_data",
+        },
+      },
+    });
+    await page.getByRole("button", { name: "Add rule" }).click();
+    await page
+      .getByLabel("Signal")
+      .selectOption("transactions.undo_age_seconds");
+    await page.getByLabel("Name").fill("Undoing over 1 hour");
+    await page.getByLabel("Threshold").fill("3600");
+    await page.getByRole("button", { name: "Preview", exact: true }).click();
+    const result = page.locator(".preview-result");
+    await expect(result).toContainText(
+      "With nothing undoing, the signal has no data: the rule doesn't fire, and a firing alert resolves.",
+    );
+    // Its own words, not the general ones.
+    await expect(result).not.toContainText(
+      "With no data, the rule doesn't fire",
+    );
+    await shot(page, "alerts-preview-nothing-undoing-1440");
+  });
+
+  for (const [what, capabilities, sentence, named] of [
+    [
+      "without run.read names it",
+      ["alert.read", "alert.manage", "status.read"],
+      "You need run.read in this environment for a rule on this signal. Ask an administrator in Settings › People and access. Support code: WV-FORBIDDEN.",
+      ["run.read"],
+    ],
+    [
+      "for a reason of the platform's own claims nothing missing",
+      ["alert.read", "alert.manage", "status.read", "run.read"],
+      "You can't SAVE this rule. Ask an administrator in Settings › People and access. Support code: WV-FORBIDDEN.",
+      [],
+    ],
+  ] as const)
+    test(`a rule on transactions refused ${what}, and keeps the form`, async ({
+      page,
+    }) => {
+      const refused = {
+        status: 403,
+        json: { code: "WV-FORBIDDEN", message: "Access denied" },
+      };
+      await alertsPlatform(page, {
+        path: "/operate/alerts?tab=rules",
+        capabilities: [...capabilities],
+        answers: { createRule: refused },
+      });
+      await page.route("**/alert-rules/preview", (route) =>
+        route.fulfill(refused),
+      );
+      await page.getByRole("button", { name: "Add rule" }).click();
+      await page.getByLabel("Signal").selectOption("transactions.in_doubt");
+      await page.getByLabel("Name").fill("Transactions in doubt here");
+      await page.getByLabel("Threshold").fill("0");
+      await page.getByRole("button", { name: "Preview", exact: true }).click();
+      const preview = page.locator(".preview-result .problem");
+      await expect(preview).toHaveText(sentence.replace("SAVE", "preview"));
+      await expect(preview.locator("code")).toHaveText([...named]);
+      await page.getByRole("button", { name: "Save rule" }).click();
+      const saving = page.getByRole("alert");
+      await expect(saving).toHaveText(sentence.replace("SAVE", "save"));
+      await expect(saving.locator("code")).toHaveText([...named]);
+      await shot(page, `alerts-rule-refused-${named.length}`);
+      await expect(page.getByLabel("Name")).toHaveValue(
+        "Transactions in doubt here",
+      );
+      await expect(
+        page.getByRole("heading", { name: "Add a rule" }),
+      ).toBeVisible();
+    });
+
+  test("the rule Weave suggests for transactions in doubt is critical and fires at once", async ({
+    page,
+  }) => {
+    const [degraded, ...rest] = fixture.rules();
+    await alertsPlatform(page, {
+      path: "/operate/alerts?tab=rules",
+      answers: {
+        rules: {
+          items: [
+            degraded,
+            // As the platform installs it, with 4 in doubt for 21 minutes.
+            {
+              ...degraded,
+              id: "d1000000-0000-4000-8000-000000000021",
+              name: "Transactions in doubt",
+              signal: "transactions.in_doubt",
+              for_seconds: 0,
+              severity: "critical",
+              preset_id: "transactions-in-doubt",
+              state: {
+                ...degraded.state,
+                state: "firing",
+                since: "2026-11-18T10:33:00Z",
+                value: 4,
+                unit: "count",
+              },
+            },
+            ...rest.filter((item) => item.id !== fixture.ids.inDoubt),
+          ],
+          next_cursor: null,
+        },
+      },
+    });
+    const rule = page
+      .getByRole("table", { name: "Alert rules" })
+      .locator(".rec:not(.head)")
+      .nth(1);
+    for (const said of [
+      "Transactions in doubt",
+      "Suggested by Weave",
+      "Above 0",
+      "Critical",
+      "In-app only",
+      "Firing for 21 min · 4",
+    ])
+      await expect(rule).toContainText(said);
+    await expect(rule).not.toContainText("· for");
+    await shot(page, "alerts-rules-in-doubt-1440");
   });
 
   test("a save someone else overtook says so and keeps the form", async ({

@@ -237,6 +237,8 @@ export interface RunSummaryQuery {
   has_handled_errors?: boolean;
   include_archived?: boolean;
   activation_id?: string;
+  /** Runs whose worst transaction is in one of these states (up to ten). */
+  transaction_state?: TransactionState[];
   order?: RunSummaryOrder;
   /** 1 to 100; 50 by default. */
   limit?: number;

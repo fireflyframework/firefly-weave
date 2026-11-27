@@ -115,6 +115,25 @@ class IncidentTransaction(ContractModel):
     )
 
 
+class IncidentLink(ContractModel):
+    """Another incident of the same case: its keys, code, status and workflow; never a business key, reason or value.
+
+    `node_id` and `instance_key` are what the linked incident's own view shows.
+    """
+
+    id: UUID
+    run_id: UUID
+    code: str
+    status: Literal["active", "closed", "resolved"]
+    node_id: str | None
+    instance_key: InstanceKeyTextOrEmpty = Field(default="", exclude_if=lambda value: not value)
+    workflow: IncidentWorkflow | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+# The most incidents a parent's settle timeout names in `waits_on`; `waits_on_more` says there are others.
+MAX_WAITS_ON = 20
+
+
 class IncidentView(ContractModel):
     """An incident. Read from operational facts, `node_id` is the static step ID and `instance_key` the full key.
 
@@ -149,6 +168,14 @@ class IncidentView(ContractModel):
     # An in-doubt incident: high priority, and the transaction it holds.
     priority: Literal["high"] | None = Field(default=None, exclude_if=lambda value: value is None)
     transaction: IncidentTransaction | None = Field(default=None, exclude_if=lambda value: value is None)
+    # One case, for readers of every incident in the environment. An active WV-TXN-SETTLE-TIMEOUT names the active
+    # in-doubt incidents of the called runs it waits for, oldest first: resolve those first.
+    waits_on: list[IncidentLink] = Field(
+        default_factory=list, max_length=MAX_WAITS_ON, exclude_if=lambda value: not value
+    )
+    waits_on_more: bool = Field(default=False, exclude_if=lambda value: not value)
+    # An active in-doubt incident of a called run: the caller's active WV-TXN-SETTLE-TIMEOUT that waits for this run.
+    held_by: IncidentLink | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
@@ -163,7 +190,8 @@ class IncidentView(ContractModel):
 
 class CancelRunRequest(ContractModel):
     reason: str = Field(min_length=1, max_length=2000)
-    # Stop without undoing the run's open transactions: they end force-ended. Needs `transaction.reconcile`.
+    # Stop without undoing the run's open transactions: they end force-ended. Needs `transaction.reconcile`, and is
+    # refused (409 WV-TXN-IN-DOUBT) while the run holds an active in-doubt incident: that incident's Force end decides.
     skip_undo: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("reason")

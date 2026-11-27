@@ -198,7 +198,8 @@ export const rules = () => [
     ids.inDoubt,
     {
       name: "Transactions in doubt",
-      signal: "transactions.in_doubt",
+      // A signal this Studio doesn't know, as a newer server may store.
+      signal: "queue.retrying_tasks",
       comparator: "gt",
       threshold: 0,
       window_seconds: null,

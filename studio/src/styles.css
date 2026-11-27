@@ -2701,6 +2701,13 @@ input[type="file"][hidden] {
     bottom: var(--space-4);
     max-width: none;
   }
+  /* On a phone an action that leaves its text no room goes under it. */
+  .toast {
+    flex-wrap: wrap;
+  }
+  .toast-text {
+    flex: 1 1 180px;
+  }
 }
 /* Step details cover the navigation and the diagnostics strip: a toast's
    corner is their panes' bottom-left corner (24 px from the window, 16 px

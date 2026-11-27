@@ -55,6 +55,16 @@ h3 {
   color: var(--text);
   font-weight: 600;
 }
+/* The line's own space, not the space a detail panel leaves under a pill. */
+.run-meta .status-pill {
+  margin: 0;
+}
+/* The ID and its Copy stay one line, and go to the next one whole. */
+.run-id,
+.run-id button {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
 .run-id .tag {
   color: var(--text);
 }
@@ -98,14 +108,55 @@ h3 {
   font: var(--type-body);
   overflow-wrap: anywhere;
 }
+/* Where it leads: the row is there, empty, until the transactions are read. */
+.incident-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-height: var(--control-md);
+  margin-top: var(--space-3);
+}
+.incident-steps .text-link {
+  text-align: start;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .incident-steps,
+  .incident-steps .text-link {
+    min-height: var(--control-touch);
+  }
+}
 .run-controls:empty {
   display: none;
+}
+/* Why a cancel waits, on the line under the action row: its icon stands beside
+   the first line at every width, and what it offers under its words. */
+.cancel-blocked {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-2);
+  margin: var(--space-2) 0 0;
+  font: var(--type-small);
+  color: var(--text);
+}
+.cancel-blocked weave-icon {
+  margin-top: 2px;
+  color: var(--warning-ink);
+}
+.cancel-blocked button {
+  grid-column: 2;
+  justify-self: start;
 }
 
 /* The workflow at 100%, with the live thread: gold where the run is now,
    gold edges for the path taken, a jade check on finished steps. */
 .run-workflow {
   margin-top: var(--space-6);
+}
+.run-undrawn {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
 }
 .run-graph {
   max-height: 460px;

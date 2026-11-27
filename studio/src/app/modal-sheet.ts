@@ -73,6 +73,7 @@ export const keepUsable = [
   "weave-start-run-dialog",
   "weave-activation-dialog",
   "weave-resolve-incident-dialog",
+  "weave-transaction-resolve-dialog",
   "script",
   "style",
   "link",

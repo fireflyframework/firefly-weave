@@ -75,6 +75,8 @@ ALERT_SIGNAL_NAMES: Mapping[str, str] = {
     "targets.runner_offline": "Targets whose runner is offline",
     "deployments.reconciliation_required": "Deployments that need reconciling",
     "health.degraded": "Degraded platform components",
+    "transactions.in_doubt": "Transactions in doubt",
+    "transactions.undo_age_seconds": "Oldest transaction undoing",
 }
 _SEVERITY = {"info": "Info", "warning": "Warning", "critical": "Critical"}
 _COMPARATOR = {"gt": "above", "gte": "at or above", "lt": "below", "lte": "at or below"}

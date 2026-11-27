@@ -141,6 +141,11 @@ IDS = {
     "incident actor_id": uid(13),
     "incident receipt_id": uid(14),
     "incident workflow_run_id": uid(15),
+    "incident transaction participant child_run_id": uid(16),
+    "incident waits_on id": uid(17),
+    "incident waits_on run_id": uid(18),
+    "incident held_by id": uid(19),
+    "incident held_by run_id": uid(20),
     "summary api instance": uid(21),
     "attention item id": uid(22),
     "approval item id": uid(23),
@@ -240,9 +245,30 @@ def canaried(variant: str = "token") -> dict[str, BaseModel]:
                     "mode": "reserve",
                     "status": "done",
                     "effect": "none",
+                    # The run a called step started.
+                    "child_run_id": str(IDS["incident transaction participant child_run_id"]),
                 }
             ],
             "pending": [TEXT["incident transaction pending"]],
+        },
+        # The incidents of the same case: another run's in-doubt incident it waits on, and the timeout holding it.
+        waits_on=[
+            {
+                "id": str(IDS["incident waits_on id"]),
+                "run_id": str(IDS["incident waits_on run_id"]),
+                "code": "WV-TXN-UNDO-STUCK",
+                "status": "active",
+                "node_id": "add",
+                "instance_key": "add#undo",
+                "workflow": {"name": "child-move", "version": "1.0.0"},
+            }
+        ],
+        held_by={
+            "id": str(IDS["incident held_by id"]),
+            "run_id": str(IDS["incident held_by run_id"]),
+            "code": "WV-TXN-SETTLE-TIMEOUT",
+            "status": "active",
+            "node_id": "move",
         },
     )
     summary = summary_of(
@@ -402,15 +428,39 @@ def contents(value: Any) -> Iterator[Any]:
         yield value
 
 
+def record_kinds(annotation: Any, seen: frozenset[Any] = frozenset()) -> set[type[BaseModel]]:
+    """The record types a field's annotation can hold, through unions, lists, dicts, Annotated and aliases."""
+    if isinstance(annotation, type) and not get_args(annotation) and issubclass(annotation, BaseModel):
+        return {annotation}
+    if isinstance(annotation, TypeAliasType):
+        return set() if annotation in seen else record_kinds(annotation.__value__, seen | {annotation})
+    return set().union(*(record_kinds(argument, seen) for argument in get_args(annotation)))
+
+
+def holds_identifiers(kind: type[BaseModel], seen: frozenset[type[BaseModel]] = frozenset()) -> bool:
+    """Whether a record type has an identifier field, in itself or in a record it holds."""
+    return kind not in seen and any(
+        identifier_kinds(field.annotation)
+        or any(holds_identifiers(child, seen | {kind}) for child in record_kinds(field.annotation))
+        for field in kind.model_fields.values()
+    )
+
+
 def identifier_fields(model: BaseModel, path: str = "") -> Iterator[tuple[str, Any]]:
-    """Every field typed as a UUID, a digest or an external identity, in the record and every model it holds."""
+    """Every field typed as a UUID, a digest or an external identity, in the record and every model it holds.
+
+    A field that holds no record although its records carry identifiers (an empty list of links, an unset link) is
+    yielded unset too: its identifiers would otherwise go unchecked.
+    """
     for name, field in type(model).model_fields.items():
         value = getattr(model, name)
+        records = [child for child in contents(value) if isinstance(child, BaseModel)]
         if identifier_kinds(field.annotation):
             yield f"{path}/{name}", value
-        for child in contents(value):
-            if isinstance(child, BaseModel):
-                yield from identifier_fields(child, f"{path}/{name}")
+        elif not records and any(holds_identifiers(kind) for kind in record_kinds(field.annotation)):
+            yield f"{path}/{name}", None
+        for child in records:
+            yield from identifier_fields(child, f"{path}/{name}")
 
 
 def dumped_strings(value: Any) -> Iterator[str]:
@@ -456,6 +506,11 @@ def test_an_identifier_field_added_to_a_contract_needs_its_own_canary():
         f"/new_id holds {uid(999)}",
         f"{uid(999)} is not a canary",
     ]
+
+
+def test_an_empty_field_whose_records_carry_identifiers_needs_its_canaries():
+    record = canaried()["incident"].model_copy(update={"waits_on": [], "held_by": None})
+    assert uncanaried(record) == ["/waits_on is unset", "/held_by is unset"]
 
 
 @pytest.mark.parametrize("record", sorted(PLANTED))

@@ -31,6 +31,16 @@ import type { Node } from "../../model";
 import type { StartRunRequest } from "../../run/start-run-dialog";
 import { MAX_PAGES, REASON_LIMIT, tooLongMessage } from "../operate-limits";
 import { terminalRunStatuses, type RunStatus } from "../run-contracts";
+import {
+  HELD_RUN,
+  UNSETTLED,
+  readRunTransactions,
+  type RunTransactionView,
+} from "../transactions/transaction-contracts";
+import {
+  staysDone,
+  type StaysDoneLine,
+} from "../transactions/transaction-record";
 
 type Json = Record<string, unknown>;
 const isRecord = (value: unknown): value is Json =>
@@ -48,6 +58,20 @@ export function runState(run: Json): string {
 }
 export function isTerminal(run: Json) {
   return terminalRunStatuses.includes(runState(run) as RunStatus);
+}
+
+/**
+ * Whether the run is held whole, as too large to undo its transactions: the
+ * platform refuses to cancel it, with or without undoing.
+ */
+function isHeld(run: Json): boolean {
+  const state = isRecord(run["state"]) ? run["state"] : {};
+  return (
+    isRecord(state["incidents"]) &&
+    Object.values(state["incidents"]).some(
+      (incident) => isRecord(incident) && incident["code"] === HELD_RUN,
+    )
+  );
 }
 
 /** The signal name a waiting run expects, from its active signal step. */
@@ -171,6 +195,55 @@ export interface RunTarget {
   identity: string;
 }
 
+/** What Cancel run says when a transaction of the run hasn't settled. */
+export const UNDO_FIRST =
+  "This run has a transaction that isn't finished. Weave undoes what it did before the run ends. Give a reason for the audit log.";
+/** Why Cancel without undoing waits while a transaction is in doubt. */
+export const IN_DOUBT_LINE =
+  "Cancel without undoing: a transaction is in doubt. Resolve it from its incident first.";
+/** Why neither cancel can be sent for a run held whole. */
+export const HELD_LINE =
+  "This run is held, so it can't be canceled. Force end it from its incident.";
+/** Why the platform can't read a run: too large to read, or withheld. */
+export type CantRead = "too_large" | "withheld";
+/**
+ * Why a read of the run answers that the platform can't read it: too large
+ * to read (HTTP 429 WV-RUNTIME-LIMIT), or withheld (HTTP 409
+ * WV-LEGACY-UNAVAILABLE). Its incidents then take no decision, so the
+ * platform lets Cancel without undoing end it. Null for any other answer.
+ */
+export function platformCantRead(
+  problem: Pick<PlainError, "status" | "code">,
+): CantRead | null {
+  if (problem.status === 429 && problem.code === "WV-RUNTIME-LIMIT")
+    return "too_large";
+  if (problem.status === 409 && problem.code === "WV-LEGACY-UNAVAILABLE")
+    return "withheld";
+  return null;
+}
+/** Why a cancel waits, and the incident to resolve first when one is known. */
+export interface CancelWait {
+  text: string;
+  incidentId: string | null;
+}
+const STAYS = "Steps already done stay done in other systems.";
+
+/**
+ * The cancel dialog the shell's form can't hold: Cancel run while a
+ * transaction is in doubt, or Cancel without undoing with what stays done.
+ */
+export interface CancelDialog {
+  mode: "in_doubt" | "without_undo";
+  target: RunTarget;
+  /** The incident of the transaction in doubt. */
+  incidentId: string | null;
+  /** What stays done in other systems, from the transactions just read. */
+  lines: StaysDoneLine[];
+  /** Why the platform can't read the run, so nothing can be listed; null when it can. */
+  unlisted: CantRead | null;
+  sending: boolean;
+}
+
 /** The Retry run dialog while it is open. */
 export interface RetryDialog extends RetryChoices {
   notice: string;
@@ -182,14 +255,34 @@ export interface RetryDialog extends RetryChoices {
 
 export class RunActions {
   retry: RetryDialog | null = null;
+  cancelDialog: CancelDialog | null = null;
   exporting = false;
   /** The run the detail shows, which the Retry run dialog belongs to. */
   private shown = "";
   private alive = true;
+  /**
+   * The transactions last read for a run, and whether they are all of them:
+   * what the action row offers.
+   */
+  private known: {
+    runId: string;
+    views: RunTransactionView[];
+    complete: boolean;
+    /**
+     * A command's read is in `views`, or every page is: the detail's first
+     * page, read again, updates it. More may have opened since, or lie past
+     * the pages a command reads.
+     */
+    base: boolean;
+  } | null = null;
+  /** The run whose last read answered that the platform can't read it, and why. */
+  private unreadRun: { runId: string; why: CantRead } | null = null;
 
   constructor(
     private readonly host: () => App,
     private readonly onChange: () => void,
+    /** Opens the inbox on an incident. */
+    readonly openIncident: (id: string) => void = () => undefined,
   ) {}
 
   /** The detail shows this run now: another run's dialog does not stay. */
@@ -197,6 +290,55 @@ export class RunActions {
     if (id === this.shown) return;
     this.shown = id;
     this.retry = null;
+    this.cancelDialog = null;
+  }
+  /**
+   * The run's transactions as the detail or a command just read them, whether
+   * that was every page, and whether it is a `base`: a command's read, which
+   * may stop at MAX_PAGES, or every page. The detail reads its first page
+   * again every 2 s: that page doesn't replace a base, it updates the records
+   * they share, each time. It can't say the list is still whole: the run lists
+   * its oldest transactions first, so a new one lands on a later page.
+   */
+  know(
+    runId: string,
+    views: RunTransactionView[] | null,
+    complete: boolean,
+    base = complete,
+  ) {
+    const held = this.known;
+    if (!views) {
+      this.known = null;
+      return;
+    }
+    // Read now, it says what is offered.
+    if (this.unreadRun?.runId === runId) this.unreadRun = null;
+    if (base || !held?.base || held.runId !== runId) {
+      this.known = { runId, views, complete, base };
+      return;
+    }
+    const newer = new Map(views.map((view) => [view.instance_key, view]));
+    const keys = new Set(held.views.map((view) => view.instance_key));
+    const added = views.filter((view) => !keys.has(view.instance_key));
+    this.known = {
+      runId,
+      views: [
+        ...held.views.map((view) => newer.get(view.instance_key) ?? view),
+        ...added,
+      ],
+      complete: false,
+      base: true,
+    };
+  }
+  /**
+   * A read of the run's transactions failed with `problem`: when the platform
+   * can't read the run, Cancel without undoing is its way out, though nothing
+   * can be listed. Any other failure says nothing of what is offered.
+   */
+  unreadable(runId: string, problem: PlainError) {
+    const why = platformCantRead(problem);
+    if (why) this.unreadRun = { runId, why };
+    else if (this.unreadRun?.runId === runId) this.unreadRun = null;
   }
   /** The detail is gone; answers still say what happened, but draw nothing. */
   destroy() {
@@ -280,13 +422,43 @@ export class RunActions {
   async cancel() {
     const host = this.host();
     const target = this.target();
-    if (!target || isTerminal(this.run()) || !host.can("run.cancel", target.id))
+    if (
+      !target ||
+      host.busy ||
+      isTerminal(this.run()) ||
+      this.held() ||
+      !host.can("run.cancel", target.id)
+    )
       return;
     const named = `Run ${shortId(target.id)}`;
+    // What its transactions are now: a transaction in doubt stops the cancel
+    // before sending, and one that hasn't settled is undone first. When
+    // pages remain unread, one there may not have settled either.
+    const read = await this.readWhileBusy(target, "Cancel run");
+    if (!this.current(target)) return;
+    if (read) this.know(target.id, read.views, read.complete, true);
+    const doubt = read?.views.find((view) => view.state === "in_doubt");
+    if (doubt) {
+      this.cancelDialog = {
+        mode: "in_doubt",
+        target,
+        incidentId: doubt.incident_id ?? null,
+        lines: [],
+        unlisted: null,
+        sending: false,
+      };
+      this.changed();
+      return;
+    }
+    const undoFirst =
+      !!read &&
+      (!read.complete ||
+        read.views.some((view) => UNSETTLED.includes(view.state)));
     const values = await host.dialogs.form({
       title: "Cancel this run?",
-      message:
-        "Steps that already started may still finish outside Weave. Give a reason for the audit log.",
+      message: undoFirst
+        ? UNDO_FIRST
+        : "Steps that already started may still finish outside Weave. Give a reason for the audit log.",
       confirmLabel: "Cancel run",
       cancelLabel: "Keep running",
       danger: true,
@@ -307,21 +479,36 @@ export class RunActions {
       return;
     }
     try {
-      await host.safeMutation(
+      const answer: unknown = await host.safeMutation(
         `${target.base}/cancel`,
         "POST",
         { reason: values["reason"] },
         undefined,
         "Cancel run",
       );
+      // A run with transactions to undo ends once they are undone.
+      const draining = isRecord(answer) && answer["pending_undo"] === true;
       const effects =
         "Steps that already started may still finish outside Weave.";
       if (this.current(target)) {
-        host.notify(`Run canceled. ${effects}`);
+        host.notify(
+          draining
+            ? "Canceling: undoing what this run's transactions did."
+            : `Run canceled. ${effects}`,
+        );
         await host.readDetail();
-      } else host.notify(`${named} canceled. ${effects}`);
+      } else
+        host.notify(
+          draining
+            ? `Canceling run ${shortId(target.id)}: undoing what its transactions did.`
+            : `${named} canceled. ${effects}`,
+        );
       void host.refreshRuns();
     } catch (error) {
+      if (
+        await this.inDoubtRefusal(error, target, `${named} was not canceled.`)
+      )
+        return;
       this.refuse(
         error,
         "run.cancel",
@@ -332,6 +519,241 @@ export class RunActions {
     } finally {
       this.changed();
     }
+  }
+
+  /** Whether the open run is held whole: neither cancel is sent for it. */
+  held(): boolean {
+    const run = this.run();
+    return !isTerminal(run) && isHeld(run);
+  }
+  /** Why a cancel of the open run waits, for the line under the action row. */
+  waits(): CancelWait | null {
+    if (!this.held()) return this.withoutUndoing()?.blocked ?? null;
+    return this.host().can("run.cancel", text(this.run()["id"]))
+      ? { text: HELD_LINE, incidentId: null }
+      : null;
+  }
+
+  /**
+   * Cancel without undoing, offered with run.cancel and transaction.reconcile
+   * while a transaction of the run hasn't settled, or while some of its
+   * transactions are unread, where one may not have: pressing it reads every
+   * page, which decides. `blocked` says why it waits while one is in doubt, or
+   * while the run is held whole. A run the platform can't read is offered it
+   * as its way out. Null when it isn't offered.
+   */
+  withoutUndoing(): { blocked: CancelWait | null } | null {
+    const host = this.host();
+    const run = this.run();
+    const id = text(run["id"]);
+    const known = this.known;
+    if (!id || isTerminal(run)) return null;
+    if (!host.can("run.cancel", id) || !host.can("transaction.reconcile", id))
+      return null;
+    if (this.unreadRun?.runId === id) return { blocked: null };
+    if (known?.runId !== id) return null;
+    if (
+      known.complete &&
+      !known.views.some((view) => UNSETTLED.includes(view.state))
+    )
+      return null;
+    if (this.held()) return { blocked: { text: HELD_LINE, incidentId: null } };
+    const doubt = known.views.find((view) => view.state === "in_doubt");
+    return {
+      blocked: doubt
+        ? { text: IN_DOUBT_LINE, incidentId: doubt.incident_id ?? null }
+        : null,
+    };
+  }
+
+  /**
+   * Opens Cancel without undoing on the transactions read just now, so its
+   * Stays done list is current. A transaction that went in doubt meanwhile
+   * refuses it here, and so do pages left unread, since the list would miss
+   * what they hold; when every one settled, Cancel run takes over.
+   */
+  async cancelWithoutUndoing() {
+    const host = this.host();
+    const target = this.target();
+    if (
+      !target ||
+      host.busy ||
+      isTerminal(this.run()) ||
+      this.held() ||
+      !host.can("run.cancel", target.id) ||
+      !host.can("transaction.reconcile", target.id)
+    )
+      return;
+    const read = await this.readWhileBusy(target, "Cancel without undoing");
+    if (!this.current(target)) return;
+    const unread = (what: string) =>
+      host.notify(
+        `Run ${shortId(target.id)} was not canceled. Studio couldn't read ${what}, so it can't list what stays done.`,
+        undefined,
+        "danger",
+      );
+    if (!read && this.unreadRun?.runId === target.id) {
+      // The platform can't read the run: this cancel is its way out.
+      this.cancelDialog = {
+        mode: "without_undo",
+        target,
+        incidentId: null,
+        lines: [],
+        unlisted: this.unreadRun.why,
+        sending: false,
+      };
+      this.changed();
+      return;
+    }
+    if (!read) return unread("its transactions");
+    this.know(target.id, read.views, read.complete, true);
+    const doubt = read.views.find((view) => view.state === "in_doubt");
+    if (doubt) {
+      host.notify(IN_DOUBT_LINE, this.incidentAction(doubt), "danger");
+      this.changed();
+      return;
+    }
+    if (!read.complete) return unread("all of its transactions");
+    const unsettled = read.views.filter((view) =>
+      UNSETTLED.includes(view.state),
+    );
+    if (!unsettled.length) return this.cancel();
+    this.cancelDialog = {
+      mode: "without_undo",
+      target,
+      incidentId: null,
+      lines: staysDone(unsettled),
+      unlisted: null,
+      sending: false,
+    };
+    this.changed();
+  }
+
+  /** Sends Cancel without undoing once: `skip_undo`, through the shell's guarded command. */
+  async confirmWithoutUndoing(reason: string) {
+    const dialog = this.cancelDialog;
+    if (!dialog || dialog.mode !== "without_undo" || dialog.sending) return;
+    const host = this.host();
+    const target = dialog.target;
+    const named = `Run ${shortId(target.id)}`;
+    if (!this.current(target)) {
+      this.cancelDialog = null;
+      host.notify(`${named} was not canceled: it is no longer open.`);
+      return;
+    }
+    dialog.sending = true;
+    this.changed();
+    try {
+      await host.safeMutation(
+        `${target.base}/cancel`,
+        "POST",
+        { reason, skip_undo: true },
+        undefined,
+        "Cancel without undoing",
+      );
+      if (this.cancelDialog === dialog) this.cancelDialog = null;
+      if (this.current(target)) {
+        host.notify(`Run canceled without undoing. ${STAYS}`);
+        await host.readDetail();
+      } else host.notify(`${named} canceled without undoing. ${STAYS}`);
+      void host.refreshRuns();
+    } catch (error) {
+      if (this.cancelDialog === dialog) this.cancelDialog = null;
+      if (
+        await this.inDoubtRefusal(error, target, `${named} was not canceled.`)
+      )
+        return;
+      // The platform checks run.cancel first, then transaction.reconcile.
+      this.refuse(
+        error,
+        "run.cancel and transaction.reconcile",
+        target,
+        `${named} was not canceled.`,
+        host.unknownCommand,
+      );
+    } finally {
+      dialog.sending = false;
+      this.changed();
+    }
+  }
+
+  closeCancelDialog() {
+    this.cancelDialog = null;
+    this.changed();
+  }
+  private incidentAction(view: RunTransactionView | undefined) {
+    const id = view?.incident_id;
+    return id
+      ? { label: "Open incident", run: () => this.openIncident(id) }
+      : undefined;
+  }
+  /**
+   * The run's transactions, page after page up to MAX_PAGES (500), and
+   * whether that was all of them; null when they couldn't be read, and then
+   * whether the platform can't read the run is kept. Its newest
+   * transactions, the likeliest unsettled, come last.
+   */
+  private async readTransactions(
+    target: RunTarget,
+  ): Promise<{ views: RunTransactionView[]; complete: boolean } | null> {
+    try {
+      const views: RunTransactionView[] = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const read = await readRunTransactions(
+          this.host().api,
+          target.environment,
+          target.id,
+          cursor,
+        );
+        views.push(...read.views);
+        cursor = read.next;
+        if (!cursor) break;
+      }
+      return { views, complete: !cursor };
+    } catch (error) {
+      this.unreadable(target.id, describeError(error));
+      return null;
+    }
+  }
+  /**
+   * The run's transactions read as `label`: the action row is busy while up
+   * to 10 pages are read, so the press shows, and a second one waits.
+   */
+  private async readWhileBusy(target: RunTarget, label: string) {
+    const host = this.host();
+    host.busy = label;
+    this.changed();
+    try {
+      return await this.readTransactions(target);
+    } finally {
+      if (host.busy === label) host.busy = "";
+      this.changed();
+    }
+  }
+  /**
+   * A cancel refused because a transaction is in doubt (it went in doubt
+   * after Studio read it): the platform's sentence and code, and its incident
+   * to resolve first. False for any other refusal.
+   */
+  private async inDoubtRefusal(
+    error: unknown,
+    target: RunTarget,
+    failed: string,
+  ): Promise<boolean> {
+    const plain = describeError(error);
+    if (plain.status !== 409 || plain.code !== "WV-TXN-IN-DOUBT") return false;
+    const read = await this.readTransactions(target);
+    if (read && this.current(target))
+      this.know(target.id, read.views, read.complete, true);
+    this.host().notify(
+      `${failed} ${sentence(plain.message)} Support code: ${plain.code}.`,
+      this.incidentAction(
+        read?.views.find((view) => view.state === "in_doubt"),
+      ),
+      "danger",
+    );
+    return true;
   }
 
   async signal() {

@@ -154,7 +154,7 @@ def test_a_stored_rule_whose_signal_this_server_doesnt_know_still_reads():
     view = wire(
         AlertRuleView,
         {
-            **rule(signal="transactions.in_doubt", window_seconds=None, min_samples=1),
+            **rule(signal="queue.retrying_tasks", window_seconds=None, min_samples=1),
             "id": str(uuid4()),
             "revision": 2,
             "created_at": now.isoformat(),
@@ -163,7 +163,7 @@ def test_a_stored_rule_whose_signal_this_server_doesnt_know_still_reads():
             "state": {"state": "unsupported", "since": now.isoformat(), "no_data": False},
         },
     )
-    assert (view.signal, view.state.state, view.state.unit) == ("transactions.in_doubt", "unsupported", None)
+    assert (view.signal, view.state.state, view.state.unit) == ("queue.retrying_tasks", "unsupported", None)
     with pytest.raises(ValidationError):
         wire(AlertRuleDraft, view.model_dump(mode="json", include=set(AlertRuleDraft.model_fields)))
 

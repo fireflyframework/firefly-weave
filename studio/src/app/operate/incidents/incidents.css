@@ -65,6 +65,133 @@ weave-operate-state {
 .incident-table .badges {
   align-items: center;
 }
+/* A business key is a name people look up whole: it never breaks. */
+.incident-table .business-key {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* The two bands: transactions in doubt, then every other incident, each with
+   its heading, its count on the same baseline and its own table. */
+.incident-band {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.incident-band + .incident-band {
+  margin-top: var(--space-6);
+}
+.band-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.band-heading h2 {
+  margin: 0;
+  font: var(--type-title-sm);
+}
+.band-heading weave-icon {
+  display: inline-flex;
+  margin-inline-end: 2px;
+  vertical-align: -2px;
+  color: var(--danger-ink);
+}
+.band-count {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+/* At 1440x900 the first two other incidents are in view under the band. */
+.band-note {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.incident-band.high .incident-table {
+  border-color: var(--danger-bd);
+}
+
+/* A case: its header line, then its members on the table's columns. Only the
+   incident cell indents, on the rule that ties them together. */
+.case {
+  background: var(--raised);
+}
+/* Each group of rows is ruled off from the next; a case has no rules inside. */
+.incident-band
+  .incident-table
+  > [role="rowgroup"]:not(:first-child, :last-child) {
+  border-bottom: 1px solid var(--line);
+}
+.case .resource-row {
+  border-bottom: 0;
+}
+.case-head {
+  padding: 10px var(--space-4) 6px;
+}
+.incident-table .case-head > [role="cell"] {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  color: var(--text);
+}
+.case-head weave-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--danger-ink);
+}
+.case-words {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.case-words strong {
+  font: var(--type-label);
+  line-height: 20px;
+}
+.case-words code {
+  font: var(--type-mono);
+}
+/* The cell fills its row, so the rule runs whole from member to member. */
+.case .resource-row > .row-text:first-child {
+  position: relative;
+  align-self: stretch;
+  align-content: center;
+  margin-block: calc(-1 * var(--space-2));
+  padding-block: var(--space-2);
+  padding-inline-start: 22px;
+}
+.case .resource-row > .row-text:first-child::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 7px;
+  width: 1px;
+  background: var(--danger-bd);
+}
+.case .resource-row:last-child > .row-text:first-child::before {
+  bottom: 50%;
+}
+.case .tag {
+  font: var(--type-caption);
+}
+/* A member no list holds: its link's facts, and the way to open it. */
+.incident-table .not-listed {
+  cursor: default;
+}
+.incident-table .not-listed:hover {
+  background: none;
+}
+/* The header lines up with its rows, which pad less on a phone. */
+@media (max-width: 767px) {
+  .case-head {
+    padding-inline: var(--space-3);
+  }
+}
+.not-listed strong {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .effects {
   display: inline-flex;
   color: var(--warning-ink);
@@ -76,9 +203,23 @@ weave-operate-state {
 .operate-filters input:not([type="checkbox"], [type="datetime-local"]) {
   width: 16ch;
 }
+/* A text filter gives up a little of its width before a filter leaves the row:
+   each browser draws its dates at a width of its own. */
+@media (min-width: 768px) {
+  .operate-filters
+    .field:has(input:not([type="checkbox"], [type="datetime-local"])) {
+    grid-template-columns: minmax(0, 1fr);
+    flex: 1 1 108px;
+    max-width: max-content;
+  }
+  .operate-filters input:not([type="checkbox"], [type="datetime-local"]) {
+    max-width: 100%;
+  }
+}
 @media (max-width: 767px), (pointer: coarse) {
   .operate-filters input:not([type="checkbox"]),
-  .operate-filters select {
+  .operate-filters select,
+  .not-listed button.sm {
     min-height: var(--control-touch);
   }
 }
@@ -92,8 +233,8 @@ weave-operate-state {
 /* Narrower: the run moves to the drawer. */
 @container incidents (min-width: 680px) and (max-width: 899px) {
   .incident-table {
-    --cols: minmax(160px, 1.2fr) 140px minmax(110px, 1fr) minmax(100px, 1fr)
-      110px;
+    --cols: minmax(200px, 1.5fr) 118px minmax(110px, 1fr) minmax(72px, 0.6fr)
+      96px;
   }
   .incident-table [data-wider] {
     display: none;
@@ -108,11 +249,16 @@ weave-operate-state {
   /* A fixed status column: every row's grid is its own, so an auto width
      would put each row's status somewhere else. */
   .incident-table {
-    --cols: minmax(0, 1fr) 150px;
+    --cols: minmax(0, 1fr) 118px;
   }
   .incident-table [data-wide],
   .incident-table [data-wider] {
     display: none;
+  }
+  /* Without its column, Open sits on its own line under the member. */
+  .incident-table .not-listed > .open-cell {
+    grid-column: 1 / -1;
+    padding-inline-start: 22px;
   }
   .incident-table .table-head > [role="columnheader"]:nth-child(2) {
     display: block;
@@ -147,6 +293,90 @@ weave-operate-state {
 .opened small {
   display: block;
   margin-top: var(--space-1);
+}
+
+/* The parts of a transaction's drawer are 16 px apart, the pill's too. */
+.badges.over-panel {
+  margin: 0 0 var(--space-4);
+}
+.badges.over-panel .status-pill {
+  margin-bottom: 0;
+}
+/* On a phone or a small window the drawer is the screen. */
+@media (max-width: 767px) {
+  .record-detail {
+    inset: 0;
+    width: auto;
+    padding: var(--space-4);
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+/* The drawer: the decisions on a transaction in doubt, each with what it does
+   and what it needs, none drawn as the recommended one. */
+.offers {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+.offers h3 {
+  margin: 0;
+  font: var(--type-label);
+  line-height: 20px;
+}
+.offer {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.offer > button {
+  justify-self: start;
+  max-width: 100%;
+}
+/* Reading the incident it keeps its place and its border: it isn't refused. */
+.offer > button[aria-busy="true"] {
+  gap: var(--space-2);
+}
+.offer > button.danger:not(:disabled) {
+  border-color: var(--danger-bd);
+}
+.offer p {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.offer .why {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: var(--space-1);
+  color: var(--warning-ink);
+}
+.offer .why weave-icon,
+.offer .notice > weave-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.offer .notice {
+  margin: var(--space-1) 0 0;
+}
+.offer .notice p {
+  color: var(--text);
+}
+.offer .notice .support-code {
+  margin-top: var(--space-1);
+  font: var(--type-caption);
+}
+.offer .spin {
+  animation: spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .offer .spin {
+    animation: none;
+  }
 }
 
 /* The drawer: the run's last engine events. */

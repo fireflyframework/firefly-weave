@@ -1,0 +1,271 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* A decision on a transaction in doubt: fields 16 px apart, the panel scrolls
+   inside, its footer stays on the panel's bottom edge with why the confirm
+   waits on a line of its own. */
+.decide-form {
+  display: grid;
+  gap: var(--space-4);
+  /* What the decision does reads on from its title. */
+  margin-top: calc(-1 * var(--space-2));
+}
+.decide-form > p {
+  margin: 0;
+}
+.context {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.context code,
+.confirm-reason code {
+  font: var(--type-mono);
+  color: var(--text);
+}
+/* One that appears comes into view clear of the dialog's sticky title. */
+.notice {
+  scroll-margin-top: 88px;
+  color: var(--text);
+}
+.notice p {
+  margin: 0;
+}
+.notice .support-code {
+  margin-top: var(--space-1);
+  font: var(--type-caption);
+  color: var(--text);
+}
+.notice button {
+  margin-top: var(--space-2);
+}
+.notice > weave-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.notice[data-tone="danger"] > weave-icon {
+  color: var(--danger-ink);
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+fieldset {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+legend {
+  padding: 0;
+  font: var(--type-label);
+}
+/* A fieldset's grid leaves its legend out of the gap. */
+.endings legend,
+.checklist legend {
+  margin-bottom: var(--space-2);
+}
+.endings {
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+}
+.ending {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  min-height: var(--control-md);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: var(--type-body);
+  cursor: pointer;
+}
+.ending:hover {
+  border-color: var(--border-hover);
+}
+.ending:has(:checked) {
+  border-color: var(--accent);
+  background: var(--selected);
+}
+.ending > span {
+  display: grid;
+  min-width: 0;
+}
+.ending small {
+  font: var(--type-small);
+  color: var(--muted);
+}
+/* A radio or a checkbox is its own 16 px box, not the field's width. */
+.ending input,
+.tick input {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin: 2px 0 0;
+}
+.checklist {
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.checklist[aria-invalid="true"] {
+  border-color: var(--danger);
+  box-shadow: none;
+}
+.checklist legend {
+  float: left;
+  width: 100%;
+}
+.tick {
+  display: grid;
+  grid-template-columns: var(--space-4) minmax(0, 1fr);
+  gap: 2px var(--space-2);
+  align-content: start;
+  clear: both;
+  min-height: var(--control-sm);
+  font: var(--type-body);
+  cursor: pointer;
+}
+.tick small {
+  grid-column: 2;
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+/* The whole key, which a person pastes: it wraps at any character. */
+.tick code {
+  font: var(--type-mono);
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.field-help,
+.field-error {
+  margin: 0;
+}
+.label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.label-row label,
+.field > label {
+  font: var(--type-label);
+}
+.count {
+  font: var(--type-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.decide-form textarea {
+  width: 100%;
+  min-height: 72px;
+}
+.decide-form textarea.monospace {
+  min-height: 96px;
+}
+.typed-id {
+  font: var(--type-mono);
+}
+.stays-done {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+}
+.stays-done h3 {
+  margin: 0 0 var(--space-2);
+  font: var(--type-label);
+}
+.stays-done ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: var(--type-small);
+}
+.stays-done li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+.stays-done li weave-icon {
+  flex: none;
+  margin-top: 2px;
+}
+.stays-done strong {
+  font: var(--type-mono);
+  font-weight: 600;
+  color: var(--text);
+}
+/* The gap above the footer is the fields' own. */
+.decide-form > .dialog-footer {
+  margin-top: 0;
+}
+.confirm-reason {
+  flex: 1 0 100%;
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+  text-align: right;
+  text-wrap: pretty;
+}
+/* On its way it isn't refused: it keeps its color. */
+.dialog-footer button.primary[aria-busy="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.dialog-footer button.danger-solid[aria-busy="true"] {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--on-accent);
+}
+/* Two answers share their row on a phone too. */
+@container dialog (max-width: 424px) {
+  .decide-form > .dialog-footer.dialog-footer {
+    flex-flow: row wrap;
+  }
+  .decide-form > .dialog-footer > button {
+    flex: 1 1 auto;
+  }
+  .confirm-reason {
+    text-align: left;
+  }
+}
+/* The dialog's own frame: 8 px from a phone's edges. */
+@media (max-width: 519px) {
+  :host ::ng-deep .modal-backdrop {
+    padding-inline: var(--space-2);
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .ending,
+  .tick {
+    min-height: var(--control-touch);
+  }
+  .decide-form button,
+  .decide-form input:not([type="radio"], [type="checkbox"]) {
+    min-height: var(--control-touch);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

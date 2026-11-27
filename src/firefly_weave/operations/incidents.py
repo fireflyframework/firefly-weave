@@ -27,6 +27,7 @@ from pyfly.container import service
 from sqlalchemy import text
 
 from firefly_weave.access.audit import AuditContext
+from firefly_weave.access.authorization import AuthorizationService
 from firefly_weave.access.models import Principal
 from firefly_weave.access.service import AccessService, audit
 from firefly_weave.api.transport import encode_cursor, encode_cursor_v2
@@ -49,6 +50,7 @@ from firefly_weave.operations.fact_reads import (
     TRANSACTION_BYTES,
     FactReadRepository,
     incident_of,
+    participants_with_children,
     transaction_facts,
 )
 from firefly_weave.operations.facts import task_fact_update
@@ -78,6 +80,20 @@ SAFE_RETRY_POLICIES = frozenset({"read_only", "idempotent", "idempotency_key"})
 
 def retry_allowed(policy: str, ambiguous: bool) -> bool:
     return policy in SAFE_RETRY_POLICIES
+
+
+# The transaction records an incident view names, each called step with the run of its latest call.
+_RECORDS = (
+    "SELECT t.instance_key,t.state,t.business_key,t.incident_key,"
+    + participants_with_children("t")
+    + " AS participants FROM run_transactions t "
+)
+
+
+def reads_every_incident(authorization: AuthorizationService, principals: tuple[Principal, ...], scope: Scope) -> bool:
+    """Whether every principal holds ``incident.read`` for the whole environment, not only for named incidents: what
+    the incidents linked to an incident (another run's, another workflow's) need before a read shows them."""
+    return all(authorization.allows(principal, scope, "incident.read") for principal in principals)
 
 
 def closed_beside(
@@ -199,11 +215,14 @@ class IncidentService:
                 if facts is not None and item["node_id"] is not None and item["code"] in IN_DOUBT_CODES
                 if (owner := incident_transaction(facts, item["node_id"], item["code"])) is not None
             }
+            # Measured as they are sent: each called step with the run of its latest call.
             sizes = {
                 record["instance_key"]: record["bytes"]
                 for record in await repository.rows(
-                    f"SELECT instance_key,{TRANSACTION_BYTES.format('t')} AS bytes FROM run_transactions t "
-                    f"WHERE {SCOPE} AND run_id=:run AND instance_key=ANY(cast(:keys AS text[]))",
+                    f"SELECT r.instance_key,{TRANSACTION_BYTES.format('r')} AS bytes FROM ("
+                    + _RECORDS
+                    + f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
+                    "AND t.instance_key=ANY(cast(:keys AS text[]))) r",
                     run=run_id,
                     keys=sorted(set(owners.values())),
                 )
@@ -222,8 +241,8 @@ class IncidentService:
             records = {
                 record["instance_key"]: record
                 for record in await repository.rows(
-                    f"SELECT * FROM run_transactions WHERE {SCOPE} AND run_id=:run "
-                    "AND instance_key=ANY(cast(:keys AS text[]))",
+                    _RECORDS + f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
+                    "AND t.instance_key=ANY(cast(:keys AS text[]))",
                     run=run_id,
                     keys=sorted(sizes),
                 )
@@ -549,8 +568,8 @@ class IncidentService:
                 previous.id, [incident["incident_key"]], actor.id, event.timestamp, recorded
             )
             records = await repository.rows(
-                f"SELECT * FROM run_transactions WHERE {SCOPE} AND run_id=:run AND CASE "
-                "WHEN cast(:transaction AS text) IS NULL THEN incident_key=:key ELSE instance_key=:transaction END",
+                _RECORDS + f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run AND CASE "
+                "WHEN cast(:transaction AS text) IS NULL THEN t.incident_key=:key ELSE t.instance_key=:transaction END",
                 run=previous.id,
                 key=incident["incident_key"],
                 transaction=transaction_key,
@@ -604,8 +623,9 @@ class IncidentService:
         """One incident from its facts; the run's classification metadata decides whether it is withheld."""
         self.runtime.require(actor, scope, "incident.read", context)
         async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
-            await self._require_current(actor, scope, tx, context)
-            rows = await FactReadRepository(tx).incident_details([identifier])
+            current = await self._require_current(actor, scope, tx, context)
+            links = reads_every_incident(self.runtime.definitions.authorization, (actor, current), scope)
+            rows = await FactReadRepository(tx).incident_details([identifier], links=links)
             if not rows:
                 raise CatalogError(404, "WV-NOT-FOUND", "Incident not found")
             return incident_of(rows[0])
@@ -913,13 +933,14 @@ class IncidentService:
             raise ValueError("Chronological order requires a time position")
         self.runtime.require(actor, scope, "incident.read", context)
         async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
-            await self._require_current(actor, scope, tx, context)
+            current = await self._require_current(actor, scope, tx, context)
+            links = reads_every_incident(self.runtime.definitions.authorization, (actor, current), scope)
             repository = FactReadRepository(tx)
             if run_id is not None and not await repository.run_exists(run_id):
                 raise CatalogError(404, "WV-NOT-FOUND", "Run not found")
             rows = await repository.incident_rows(query, position, run_id)
             selected = [row["id"] for row in rows[: query.limit]]
-            details = {row["id"]: row for row in await repository.incident_details(selected)}
+            details = {row["id"]: row for row in await repository.incident_details(selected, links=links)}
             # The page may end before its limit, at the byte budget; its cursor then continues there.
             visible = [row for row in rows if row["id"] in details]
             items = [incident_of(details[row["id"]]).model_dump(mode="json") for row in visible]
@@ -934,6 +955,10 @@ class IncidentService:
                     next_cursor = encode_cursor_v2(scope, collection, at.isoformat() if at else None, str(last["id"]))
             return {"items": items, "next_cursor": next_cursor}
 
-    async def _require_current(self, actor: Principal, scope: Scope, tx: Transaction, context: AuditContext) -> None:
+    async def _require_current(
+        self, actor: Principal, scope: Scope, tx: Transaction, context: AuditContext
+    ) -> Principal:
         """`incident.read` on the principal stored now, in the read transaction; the token was checked first."""
-        self.runtime.require(await self.access.load_principal(actor.id, tx=tx), scope, "incident.read", context)
+        current = await self.access.load_principal(actor.id, tx=tx)
+        self.runtime.require(current, scope, "incident.read", context)
+        return current

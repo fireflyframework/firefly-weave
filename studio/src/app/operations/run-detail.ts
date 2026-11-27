@@ -29,6 +29,7 @@ import {
   input,
   signal,
 } from "@angular/core";
+import { Router } from "@angular/router";
 import { FFlowModule } from "@foblex/flow";
 import type { App } from "../app";
 import { copyText } from "../connection";
@@ -36,6 +37,16 @@ import { Icon } from "../icon";
 import { RunActions, isTerminal, runState } from "../operate/runs/run-actions";
 import { RunLogs } from "../operate/runs/run-logs";
 import { StepTimeline, type RunStepsView } from "../operate/runs/step-timeline";
+import {
+  noticeSteps,
+  openIncident,
+  showInIncidents,
+  type ListedTransactions,
+  type NoticeSteps,
+} from "../operate/transactions/open-incident";
+import { RunCancelDialog } from "../operate/transactions/run-cancel-dialog";
+import { RunTransactions } from "../operate/transactions/run-transactions-section";
+import { stoppedForTransaction } from "../operate/transactions/transaction-contracts";
 import { StartRunDialog } from "../run/start-run-dialog";
 import type { Node } from "../model";
 import { absoluteTime, isoTime, relativeTime, shortId } from "../format";
@@ -64,7 +75,15 @@ const isRecord = (value: unknown): value is Json =>
   selector: "weave-run-detail",
   changeDetection: ChangeDetectionStrategy.Eager,
   standalone: true,
-  imports: [Icon, FFlowModule, RunLogs, StartRunDialog, StepTimeline],
+  imports: [
+    Icon,
+    FFlowModule,
+    RunCancelDialog,
+    RunLogs,
+    RunTransactions,
+    StartRunDialog,
+    StepTimeline,
+  ],
   styleUrl: "./run-detail.css",
   template: `@let h = host();
     @let run = h.selectedRecord!;
@@ -122,10 +141,40 @@ const isRecord = (value: unknown): value is Json =>
         <weave-icon name="failCircle" [size]="20" />
         <div>
           <p>
-            <strong>This run stopped at {{ incident.step }}.</strong>
+            <strong
+              >This run stopped{{
+                incident.step ? " at " + incident.step : ""
+              }}.</strong
+            >
           </p>
           @if (incident.text) {
             <p class="incident-text">{{ incident.text }}</p>
+          }
+          @if (stoppedForTransaction(incident.code)) {
+            <!-- Empty until the transactions are read: the notice keeps its height. -->
+            <div class="incident-steps">
+              @if (next(); as next) {
+                @if (next.open; as open) {
+                  <button type="button" (click)="actions.openIncident(open.id)">
+                    <weave-icon name="incidents" [size]="16" />{{ open.label }}
+                  </button>
+                }
+                @if (next.code; as code) {
+                  <button type="button" (click)="showInIncidents(code)">
+                    <weave-icon name="incidents" [size]="16" />Show in Incidents
+                  </button>
+                }
+                @if (next.goTo; as label) {
+                  <button
+                    type="button"
+                    class="text-link"
+                    (click)="transactions.focusInDoubt()"
+                  >
+                    {{ label }}
+                  </button>
+                }
+              }
+            </div>
           }
         </div>
       </div>
@@ -168,13 +217,30 @@ const isRecord = (value: unknown): value is Json =>
           Pause run
         </button>
       }
+      <!-- While the platform would refuse a cancel it stays here, focusable, saying why. -->
       @if (!h.runTerminal() && h.can("run.cancel", id)) {
+        @let held = actions.held();
         <button
           class="danger"
+          [attr.aria-disabled]="held ? 'true' : null"
+          [attr.aria-describedby]="held ? 'cancel-blocked-reason' : null"
           [disabled]="h.busy !== '' || h.unknownCommand"
-          (click)="actions.cancel()"
+          (click)="held ? null : actions.cancel()"
         >
           Cancel run
+        </button>
+      }
+      @if (actions.withoutUndoing(); as offer) {
+        <button
+          class="danger"
+          [attr.aria-disabled]="offer.blocked ? 'true' : null"
+          [attr.aria-describedby]="
+            offer.blocked ? 'cancel-blocked-reason' : null
+          "
+          [disabled]="h.busy !== '' || h.unknownCommand"
+          (click)="offer.blocked ? null : actions.cancelWithoutUndoing()"
+        >
+          Cancel without undoing
         </button>
       }
       @if (h.runTerminal() && h.can("run.retry", id)) {
@@ -193,6 +259,38 @@ const isRecord = (value: unknown): value is Json =>
         <weave-icon name="download" [size]="16" />Export history
       </button>
     </div>
+    @if (actions.waits(); as wait) {
+      <p class="cancel-blocked">
+        <weave-icon name="warning" [size]="16" /><span
+          id="cancel-blocked-reason"
+          >{{ wait.text }}</span
+        >
+        @if (!next()?.open && wait.incidentId; as incident) {
+          <button
+            type="button"
+            class="text-link"
+            (click)="actions.openIncident(incident)"
+          >
+            Open incident
+          </button>
+        }
+      </p>
+    }
+    @if (actions.cancelDialog; as cancel) {
+      <weave-run-cancel-dialog
+        [mode]="cancel.mode"
+        [runId]="cancel.target.id"
+        [lines]="cancel.lines"
+        [unlisted]="cancel.unlisted"
+        [incidentId]="cancel.incidentId"
+        [sending]="cancel.sending"
+        (confirm)="actions.confirmWithoutUndoing($event)"
+        (dismiss)="actions.closeCancelDialog()"
+        (openIncident)="
+          actions.closeCancelDialog(); actions.openIncident($event)
+        "
+      />
+    }
     @if (actions.retry; as retry) {
       <weave-start-run-dialog
         heading="Retry this run"
@@ -220,7 +318,12 @@ const isRecord = (value: unknown): value is Json =>
         (cancel)="actions.retry = null"
       />
     }
-    @if (h.runCanvas; as canvas) {
+    @if (h.runCanvas?.error) {
+      <section class="run-workflow" aria-labelledby="run-graph-title">
+        <h3 id="run-graph-title">Workflow {{ workflowName() }}</h3>
+        <p class="run-undrawn">Studio can't draw this workflow.</p>
+      </section>
+    } @else if (h.runCanvas; as canvas) {
       <section class="run-workflow" aria-labelledby="run-graph-title">
         <h3 id="run-graph-title">Workflow {{ workflowName() }}</h3>
         <div
@@ -310,6 +413,20 @@ const isRecord = (value: unknown): value is Json =>
         </ol>
       </section>
     }
+    <weave-run-transactions
+      #transactions
+      [host]="h"
+      [runId]="id"
+      [live]="live()"
+      (loaded)="
+        listed = $event;
+        actions.know($event.runId, $event.views, $event.complete)
+      "
+      (unread)="
+        listed = { runId: $event.runId, views: [], complete: false };
+        actions.unreadable($event.runId, $event.problem)
+      "
+    />
     @if (timeline(); as view) {
       <weave-step-timeline [view]="view" />
       <weave-run-logs
@@ -446,11 +563,24 @@ export class RunDetail implements DoCheck, OnDestroy {
   /** The run's step timeline from runs.steps, when the page showing the run reads it. */
   timeline = input<RunStepsView | null>(null);
   private cdr = inject(ChangeDetectorRef);
-  /** Cancel run, Retry run, Send signal and Export history. */
+  private router = inject(Router);
+  /** Cancel run, Cancel without undoing, Retry run, Send signal and Export history. */
   readonly actions = new RunActions(
     () => this.host(),
     () => this.cdr.markForCheck(),
+    (incident) => void openIncident(this.host(), this.router, incident),
   );
+  /** What the Transactions section lists, for the run it lists; null until it read it. */
+  listed: (ListedTransactions & { runId: string }) | null = null;
+  readonly stoppedForTransaction = stoppedForTransaction;
+  /** Where the stopped run's notice leads; null when nowhere, or not yet. */
+  next(): NoticeSteps | null {
+    const listed = this.listed?.runId === this.run()["id"] ? this.listed : null;
+    return noticeSteps(this.incident()?.code ?? "", listed);
+  }
+  showInIncidents(code: string) {
+    void showInIncidents(this.host(), this.router, code);
+  }
 
   ngDoCheck() {
     // A Retry run dialog belongs to the run it was opened for.
@@ -513,9 +643,14 @@ export class RunDetail implements DoCheck, OnDestroy {
       `Run ${shortId(run["id"])}`
     );
   }
-  /** The workflow version the run's graph shows. */
+  /** The workflow version the run's graph shows; a graph Studio can't draw holds another. */
   workflowName() {
-    const metadata = this.host().runCanvas?.definition.metadata;
+    const canvas = this.host().runCanvas;
+    if (canvas?.error)
+      return runWorkflow(this.run(), {
+        versions: this.host().workflowVersions,
+      });
+    const metadata = canvas?.definition.metadata;
     return metadata ? `${metadata.name} ${metadata.version}` : "";
   }
   activationRevision() {

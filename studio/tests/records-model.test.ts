@@ -203,9 +203,174 @@ describe("run detail", () => {
           },
         }),
       ),
-    ).toEqual({ step: "check", text: "The CRM answered 500 three times." });
+    ).toEqual({
+      step: "check",
+      text: "The CRM answered 500 three times.",
+      code: "WV-TASK",
+    });
     expect(runIncident(run())).toBeNull();
   });
+
+  it("explains a run several incidents stop by the one the platform names", () => {
+    const stopped = (incident: string) =>
+      runIncident(
+        run({
+          state: {
+            status: "suspended",
+            incident,
+            incidents: {
+              "send:0": { node_id: "send", code: "WV-TASK-AMBIGUOUS" },
+              "hold#cancel:0": {
+                node_id: "hold#cancel",
+                code: "WV-TXN-CANCEL-STUCK",
+              },
+              "add#undo:0": { node_id: "add#undo", code: "WV-TXN-UNDO-STUCK" },
+            },
+          },
+        }),
+      );
+    expect(stopped("WV-TXN-UNDO-STUCK")).toEqual({
+      step: "add",
+      text: "A step's undo couldn't finish, so the transaction is in doubt. Support code: WV-TXN-UNDO-STUCK.",
+      code: "WV-TXN-UNDO-STUCK",
+    });
+    // Named for another incident, it still leads to its first transaction's.
+    expect(stopped("WV-TASK-AMBIGUOUS")).toEqual({
+      step: "send",
+      text: "Support code: WV-TASK-AMBIGUOUS",
+      code: "WV-TXN-UNDO-STUCK",
+    });
+  });
+
+  it("names the step of the first of two incidents with one code, as the platform orders them", () => {
+    const stuck = (node_id: string) => ({
+      node_id,
+      code: "WV-TXN-CANCEL-STUCK",
+    });
+    expect(
+      runIncident(
+        run({
+          state: {
+            status: "suspended",
+            incident: "WV-TXN-CANCEL-STUCK",
+            incidents: {
+              "hold#cancel:0": stuck("hold#cancel"),
+              "book#cancel:0": stuck("book#cancel"),
+            },
+          },
+        }),
+      )?.step,
+    ).toBe("book");
+  });
+
+  it("leads from a run held whole to its incident, also when another one is named", () => {
+    expect(
+      runIncident(
+        run({
+          state: {
+            status: "suspended",
+            incident: "WV-TASK-AMBIGUOUS",
+            incidents: {
+              "@transactions:0": {
+                node_id: "@transactions",
+                code: "WV-TXN-RUN-OVERSIZED",
+              },
+              "1send:0": { node_id: "1send", code: "WV-TASK-AMBIGUOUS" },
+            },
+          },
+        }),
+      ),
+    ).toEqual({
+      step: "1send",
+      text: "Support code: WV-TASK-AMBIGUOUS",
+      code: "WV-TXN-RUN-OVERSIZED",
+    });
+  });
+
+  it("says where a run stopped for an incident without a code, and nothing else", () => {
+    expect(
+      runIncident(
+        run({
+          state: {
+            status: "suspended",
+            incidents: { "check:0": { node_id: "check" } },
+          },
+        }),
+      ),
+    ).toEqual({ step: "check", text: "", code: "" });
+  });
+
+  it("says why an ended run stopped, with no incident left to open", () => {
+    expect(
+      runIncident(
+        run({
+          state: {
+            status: "failed",
+            incident: "WV-TXN-ROLLED-BACK",
+            incidents: {},
+          },
+        }),
+      ),
+    ).toEqual({
+      step: "an unknown step",
+      text: "The transaction was undone. Support code: WV-TXN-ROLLED-BACK.",
+      code: "",
+    });
+  });
+
+  it.each([
+    [
+      "add#undo",
+      "WV-TXN-UNDO-STUCK",
+      "add",
+      "A step's undo couldn't finish, so the transaction is in doubt. Support code: WV-TXN-UNDO-STUCK.",
+    ],
+    [
+      "hold[3]#cancel",
+      "WV-TXN-CANCEL-STUCK",
+      "hold[3]",
+      "A reservation couldn't be released, so the transaction is in doubt. Support code: WV-TXN-CANCEL-STUCK.",
+    ],
+    [
+      "hold#confirm",
+      "WV-TXN-CONFIRM-STUCK",
+      "hold",
+      "A reservation couldn't be confirmed after the transaction went ahead. Support code: WV-TXN-CONFIRM-STUCK.",
+    ],
+    [
+      "move",
+      "WV-TXN-SETTLE-TIMEOUT",
+      "move",
+      "Steps still running didn't finish in time, so nothing can be undone safely yet. Support code: WV-TXN-SETTLE-TIMEOUT.",
+    ],
+    // A run held whole is stopped at no step of its own.
+    [
+      "@transactions",
+      "WV-TXN-RUN-OVERSIZED",
+      null,
+      "The run grew too large to undo its transactions, so they're held until someone force ends the run. Support code: WV-TXN-RUN-OVERSIZED.",
+    ],
+    // Studio has no sentence for a code of a step's own; its step is still named.
+    ["add#undo", "WV-TASK-AMBIGUOUS", "add", "Support code: WV-TASK-AMBIGUOUS"],
+  ])(
+    "says a run stopped at %s (%s) in words, by its step",
+    (key, code, step, text) => {
+      // The platform names the code of the incident that stops the run.
+      for (const named of [{ incident: code }, {}])
+        expect(
+          runIncident(
+            run({
+              state: {
+                status: "suspended",
+                active: [key],
+                incidents: { [`${key}:0`]: { node_id: key, code } },
+                ...named,
+              },
+            }),
+          ),
+        ).toEqual({ step, text, code });
+    },
+  );
 
   it("marks the live step, finished steps and the rest", () => {
     const history = {
