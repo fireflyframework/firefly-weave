@@ -57,7 +57,6 @@ def test_effect_cases_match_the_host(case: dict[str, Any]) -> None:
         assert scripted_effect(action, ScriptedError.model_validate(failure)) == case["effect"]
 
 
-
 def test_the_held_run_names_force_end() -> None:
     # The server refuses to cancel a held run without undoing, so its sentence names the one way out.
     assert CORPUS["codes"]["WV-TXN-RUN-OVERSIZED"].endswith("held until someone force ends the run.")
