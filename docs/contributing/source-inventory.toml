@@ -892,14 +892,6 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
-path = "studio/tests/fixtures/transaction-corpus.json"
-kind = "commentless"
-reason = "Strict JSON words for the platform's transaction states, step statuses, codes and incident resolutions, whose keys tests/unit/test_transaction_corpus.py pins to the platform; shared by the Python and Studio suites."
-copyright = "Copyright 2026 Firefly Software Foundation."
-author = "Firefly Software Foundation"
-license = "Apache-2.0"
-
-[[exceptions]]
 path = "studio/tests/fixtures/transaction-effect-cases.json"
 kind = "commentless"
 reason = "Strict JSON cases of whether a simulated failure inside a transaction changed anything, which tests/unit/test_transaction_corpus.py checks against the host's rule; shared by the Python and Studio suites."
