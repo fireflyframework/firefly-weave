@@ -1,0 +1,102 @@
+{
+  "description": "Studio's words for the platform's transaction states, step statuses, WV-TXN codes and incident resolutions. tests/unit/test_transaction_corpus.py checks the keys against the platform (TRANSACTION_STATES, PARTICIPANT_STATUSES, TRANSACTION_MESSAGES and IncidentResolution's kinds); studio/tests/transaction-words.test.ts checks Studio's words against these. A state's facts are what its frame badge also reads; a pending step shows no word.",
+  "states": {
+    "open": { "badge": "", "tone": "live" },
+    "deciding": {
+      "facts": { "pivot": "submit" },
+      "badge": "Waiting for submit, which can't be undone",
+      "tone": "live"
+    },
+    "committing": { "badge": "Finishing", "tone": "live" },
+    "completed": { "badge": "Completed", "tone": "success" },
+    "compensating": {
+      "facts": { "undoing": { "done": 2, "of": 3 } },
+      "badge": "Undoing · 2 of 3",
+      "tone": "live"
+    },
+    "compensated": { "badge": "Undone", "tone": "warning" },
+    "cancelled": { "badge": "Canceled", "tone": "warning" },
+    "in_doubt": { "badge": "In doubt · action needed", "tone": "danger" },
+    "reconciled": { "badge": "Reconciled", "tone": "muted" },
+    "force_ended": { "badge": "Force ended", "tone": "danger" }
+  },
+  "stateWords": {
+    "open": "Open",
+    "deciding": "Deciding",
+    "committing": "Finishing",
+    "completed": "Completed",
+    "compensating": "Undoing",
+    "compensated": "Undone",
+    "cancelled": "Canceled",
+    "in_doubt": "In doubt",
+    "reconciled": "Reconciled",
+    "force_ended": "Force ended"
+  },
+  "statuses": {
+    "pending": null,
+    "dispatched": { "word": "Running", "tone": "live" },
+    "done": { "word": "Done", "tone": "success" },
+    "failed": { "word": "Failed", "tone": "danger" },
+    "unknown": { "word": "Unknown", "tone": "warning" },
+    "skipped": { "word": "Skipped", "tone": "muted" },
+    "cancelling": { "word": "Releasing", "tone": "live" },
+    "cancelled": { "word": "Released", "tone": "warning" },
+    "cancel_stuck": { "word": "Release failed", "tone": "danger" },
+    "undoing": { "word": "Undoing", "tone": "live" },
+    "undone": { "word": "Undone", "tone": "warning" },
+    "undo_stuck": { "word": "Undo failed", "tone": "danger" },
+    "confirming": { "word": "Confirming", "tone": "live" },
+    "confirmed": { "word": "Confirmed", "tone": "success" },
+    "confirm_stuck": { "word": "Confirm failed", "tone": "danger" }
+  },
+  "codes": {
+    "WV-TXN-UNDO-STUCK": "A step's undo couldn't finish, so the transaction is in doubt.",
+    "WV-TXN-CANCEL-STUCK": "A reservation couldn't be released, so the transaction is in doubt.",
+    "WV-TXN-CONFIRM-STUCK": "A reservation couldn't be confirmed after the transaction went ahead.",
+    "WV-TXN-AFTER-PIVOT-STUCK": "A step after the point of no return couldn't finish.",
+    "WV-TXN-PIVOT-UNKNOWN": "The step that can't be undone may or may not have happened.",
+    "WV-TXN-SETTLE-TIMEOUT": "Steps still running didn't finish in time, so nothing can be undone safely yet.",
+    "WV-TXN-HOLD-INSUFFICIENT": "Reservations wouldn't outlast the step that can't be undone, so the transaction was undone first.",
+    "WV-TXN-HOLD-EXPIRED": "Reservations were about to expire before the transaction could finish.",
+    "WV-TXN-ROLLED-BACK": "The transaction was undone.",
+    "WV-TXN-RUN-CANCELLED": "The run was canceled, so the transaction was undone.",
+    "WV-TXN-RUN-TIMED-OUT": "The run timed out, so the transaction was undone.",
+    "WV-TXN-IN-DOUBT": "Resolve the transaction first.",
+    "WV-TXN-RUN-OVERSIZED": "The run grew too large to undo its transactions, so they're held until someone force ends the run.",
+    "WV-TXN-UNDO-PINNED": "A transaction that is still running may need this activation to undo a step.",
+    "WV-TXN-RECONCILE-DENIED": "This run isn't allowed to resolve the transaction.",
+    "WV-TXN-RECONCILE-INCOMPLETE": "Say what happened to every step whose end isn't known."
+  },
+  "resolutions": {
+    "retry": {
+      "kind": "retry_safe",
+      "label": "Retry the undo",
+      "help": "Runs the undo again with the same operation key. Only if the other system can take it again."
+    },
+    "wait_again": {
+      "kind": "retry_safe",
+      "label": "Wait again",
+      "help": "Waits again for the steps still running, up to the same limit."
+    },
+    "mark_reconciled": {
+      "kind": "accept_reconciled_result",
+      "label": "Mark as reconciled",
+      "help": "You checked every step in the other systems. Say how the transaction ended."
+    },
+    "it_happened": {
+      "kind": "accept_reconciled_result",
+      "label": "It happened",
+      "help": "The step that can't be undone did happen. The transaction finishes and its later steps run."
+    },
+    "it_didnt_happen": {
+      "kind": "accept_reconciled_failure",
+      "label": "It didn't happen",
+      "help": "The step that can't be undone didn't happen. Weave undoes what was done."
+    },
+    "force_end": {
+      "kind": "terminate",
+      "label": "Force end",
+      "help": "Ends the transaction and the run as they are. Nothing more is done or undone."
+    }
+  }
+}

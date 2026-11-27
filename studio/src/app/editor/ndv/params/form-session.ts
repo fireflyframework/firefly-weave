@@ -35,6 +35,7 @@ import {
   type ReferenceScope,
   type Schema,
   type ScopeEntry,
+  type UndoPlace,
   type VisibleStep,
 } from "../../../forms/core/scope";
 import { decode, get } from "../../../forms/core/binding";
@@ -49,6 +50,7 @@ import {
   NOT_SAVED,
   fieldFor,
   fixFor,
+  messageField,
   type PlacedSpec,
   type StepIssue,
 } from "../issues";
@@ -145,6 +147,22 @@ import {
 } from "./slots";
 import { resourceProblem } from "./resource";
 import { outlineRank, stepsAfter } from "../navigation";
+import {
+  UNDO_STEPS,
+  clearUndo,
+  removedUndoText,
+  writeUndo,
+  type StepPatch,
+} from "../../transactions/undo";
+import {
+  CHANGED_SINCE,
+  aboutNow,
+  applyTransactionFix,
+  fixedText,
+  type FindingPlace,
+  type TransactionFix,
+} from "../../transactions/fixes";
+import type { UndoMode } from "../../transactions/transaction-words";
 import type { StepDetailsController } from "../step-details-controller";
 import type { StepDetailsHost } from "../step-details-host";
 import {
@@ -176,8 +194,8 @@ export interface SessionHooks {
     options: DialogOptions & { field: DialogField },
   ): Promise<string | null>;
   announce(text: string): void;
-  /** Moves focus to a field, switching tab when needed; `open` also opens its choices. */
-  focusField?(field: PlacedSpec, open: boolean): void;
+  /** Moves focus to a field, switching tab when needed; `open` also opens its choices, `press` presses its button there. */
+  focusField?(field: PlacedSpec, open: boolean, press?: string): void;
 }
 export interface FieldLine {
   kind: "error" | "warning" | "preview" | "hint" | "reason" | "none";
@@ -196,8 +214,10 @@ const NOTES: PlacedSpec = {
 };
 const NOTE_KEY = "note";
 /** Fixes the field itself offers: Studio shows them only in the issues list. */
-const AT_THE_FIELD = new Set(["focus", "connection"]);
+const AT_THE_FIELD = new Set(["focus", "connection", "undo", "clearUndo"]);
 const pointer = formatPointer;
+const stepChanges = (patch: StepPatch): FormChange[] =>
+  patch.map(({ path, value }) => ({ scope: "step", path, value }));
 const WHOLE_PATH =
   "The path values are mapped as a whole. Edit them with Edit as YAML in the More menu.";
 
@@ -1126,6 +1146,15 @@ export class FormSession {
     const root = expressionRoot(spec.path, this.subject().roots) ?? spec.path;
     return { stepId: this.target, field: pointer(root) };
   }
+  /** The step's undo a field is in, or null. */
+  undoPlace(spec: ParamSpec): UndoPlace | null {
+    const [phase, field] = spec.path;
+    return (spec.scope ?? "step") === "step" &&
+      field === "with" &&
+      UNDO_STEPS.some((name) => name === phase)
+      ? { step: this.target, phase: phase as UndoPlace["phase"] }
+      : null;
+  }
   scope(spec: ParamSpec): ScopeEntry[] {
     const { stepId, field } = this.rootPointer(spec);
     return referenceScope(
@@ -1171,7 +1200,8 @@ export class FormSession {
       (entry) =>
         entry.source === "input" ||
         entry.source === "step" ||
-        entry.source === "error",
+        entry.source === "error" ||
+        entry.source === "undo",
     ) as unknown as ScopeEntry[];
     const steps: VisibleStep[] = hosted
       .filter((entry) => entry.source === "step" && entry.path.length === 0)
@@ -1271,7 +1301,7 @@ export class FormSession {
   }
   /** What a value resolves to at this field: a Fixed value as it is, a formula through the preview. */
   previewOf(spec: ParamSpec, value: ParamValue): PreviewResult | null {
-    if (value.mode === "absent") return null;
+    if (value.mode === "absent" || spec.withholdsValue) return null;
     if (value.mode === "fixed") return { ok: true, value: value.value };
     return this.controller
       .ndvContext(this.target)
@@ -1356,8 +1386,8 @@ export class FormSession {
     if (!root || !subject.step) return undefined;
     try {
       return get(
-        decode(subject.step[String(root[0])] ?? undefined),
-        spec.path.slice(1),
+        decode(getAt(subject.step, root) ?? undefined),
+        spec.path.slice(root.length),
       );
     } catch {
       return undefined;
@@ -1423,7 +1453,7 @@ export class FormSession {
       };
     if (address) return { kind: "preview", text: `= ${address.address}` };
     const value = this.read(spec);
-    if (value.mode === "mapped") {
+    if (value.mode === "mapped" && !spec.withholdsValue) {
       const preview = this.controller
         .ndvContext(this.target)
         .evaluate(value.expression, spec.path);
@@ -1577,7 +1607,7 @@ export class FormSession {
           field: placed,
           fix:
             problem.code === "required"
-              ? fixFor("required", null, placed)
+              ? fixFor("required", null, placed, this.place(placed.spec.path))
               : { kind: "focus", label: "Fix" },
         });
         ruled.add(fieldKey(placed));
@@ -1633,7 +1663,7 @@ export class FormSession {
     this.controller.diagnostics(this.target).forEach((diagnostic, index) => {
       // Notes aren't issues: the canvas doesn't count them either.
       if (diagnostic.severity === "info") return;
-      const field = fieldFor(diagnostic.at, scoped);
+      const field = messageField(diagnostic.code, diagnostic.at, scoped);
       if (
         /REQUIRED$/.test(diagnostic.code) &&
         field &&
@@ -1643,13 +1673,15 @@ export class FormSession {
       )
         return;
       const message = describeDiagnostic(diagnostic).text;
+      // One message a field: its own rule's, or How it's undone's, whose
+      // several fields each get the same finding.
       if (
         field &&
         issues.some(
           (item) =>
             item.field === field &&
             item.message === message &&
-            item.key.startsWith("rule:"),
+            (item.key.startsWith("rule:") || field.spec.id === "undo"),
         )
       )
         return;
@@ -1662,6 +1694,7 @@ export class FormSession {
           diagnostic.code,
           suggestedChange(diagnostic.suggestedEdit, definition),
           field,
+          this.place(diagnostic.at),
         ),
       });
     });
@@ -1787,15 +1820,37 @@ export class FormSession {
       ? `${list.label} (row ${row + 1})`
       : `${list.label} (${row})`;
   }
+  /** Where a problem of this step is, for its fix. */
+  private place(at: Path): FindingPlace {
+    return { stepId: this.target, at, workflow: this.model.definition };
+  }
   runFix(issue: StepIssue): void {
     const fix = issue.fix;
     if (!fix || !this.isCurrent()) return;
     switch (fix.kind) {
       case "suggestion":
-        void this.host.applySuggestion(fix.change);
+        void this.host.applySuggestion(fix.change).then(() => {
+          if (fix.label === "Set Hold for" && issue.field && this.isCurrent())
+            this.hooks.focusField?.(issue.field, false);
+        });
         return;
       case "answers":
         void this.host.branchOnDecision(this.target);
+        return;
+      case "clearUndo":
+      case "move":
+      case "waitForCall":
+        this.change(fix);
+        return;
+      case "hold":
+        this.goTo(fix.stepId, fix.path);
+        return;
+      case "openWorkflow":
+        this.host.openWorkflow?.(fix.uses);
+        return;
+      case "openAction":
+        if (issue.field)
+          this.hooks.focusField?.(issue.field, false, ".param-open");
         return;
       case "update":
         window.open(fix.href, "_blank", "noopener");
@@ -1812,6 +1867,68 @@ export class FormSession {
         if (issue.field)
           this.hooks.focusField?.(issue.field, fix.kind === "connection");
     }
+  }
+
+  // ------------------------------------------------ how it's undone
+  /**
+   * Writes how the step is undone as one undo step. Chosen operations of
+   * another way go with it, and a toast names them and offers Undo.
+   */
+  chooseUndo(choice: UndoMode): boolean {
+    const step = this.controller.step(this.target);
+    if (!step) return false;
+    const { patch, removed } = writeUndo(step, choice);
+    if (!this.commit(stepChanges(patch), "undo")) return false;
+    if (removed.length) this.sayDone(removedUndoText(removed));
+    return true;
+  }
+  /** Says what a change did, with Undo while the workflow stays as it left it. */
+  private sayDone(text: string): void {
+    const { host, model, opened } = this;
+    const revision = model.revision;
+    host.notify(
+      text,
+      {
+        label: "Undo",
+        run: () =>
+          void host.undoIfUnchanged(
+            () =>
+              host.model === model &&
+              model.opened === opened &&
+              model.revision === revision,
+          ),
+      },
+      "neutral",
+    );
+  }
+  /** A fix that changes where the step is or how it runs, as one undo step. */
+  private change(fix: TransactionFix): void {
+    if (this.controller.readOnlyReason(this.target)) return;
+    if (!aboutNow(this.host)) return this.host.notify(CHANGED_SINCE);
+    const text = fixedText(this.model.definition, fix, this.target);
+    let changed = false;
+    if (fix.kind === "clearUndo") changed = this.clearUndo();
+    else
+      this.host.perform(() => {
+        changed = applyTransactionFix(this.model, fix, this.target);
+      });
+    this.host.refreshView();
+    if (changed && text && !this.host.error) this.sayDone(text);
+  }
+  /** A field of this step, or of another one in its own step details. */
+  private goTo(stepId: string, path: Path): void {
+    if (stepId !== this.target)
+      return void this.host.openStepDetails(stepId, {
+        revealAll: true,
+        focus: { kind: "path", path },
+      });
+    const field = fieldFor(path, this.placedSpecs());
+    if (field) this.hooks.focusField?.(field, false);
+  }
+  /** Removes every field that says how the step is undone, as one undo step. */
+  clearUndo(): boolean {
+    const step = this.controller.step(this.target);
+    return !!step && this.commit(stepChanges(clearUndo(step)), "undo");
   }
 
   // ------------------------------------------- entries not applied yet

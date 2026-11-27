@@ -1993,6 +1993,208 @@ and names, a failure it can't simulate: "Studio can't simulate this failure's
 code." (such as a called workflow's lowercase code) or "Studio can't simulate
 a failure after more than 1,000 attempts."
 
+### Run steps as a transaction
+
+A **Transaction** groups steps that change other systems, so that either all of
+them go through or what they did is undone. [Undo steps together with a
+transaction](transactions.md) describes what the platform does; this section
+shows how to build one in Studio, test what happens when a step fails, and read
+a recorded run.
+
+Transactions need a platform whose language manifest lists `flow.transaction`.
+On another platform, **Add a step** still lists **Transaction**, disabled, with
+"Needs a platform with transactions (flow.transaction)."
+
+#### Add a transaction
+
+- **From Add a step.** In **Add a step**, open **Flow** and choose
+  **Transaction**: "Run steps together; if one fails, undo what's done." Search
+  finds it by words such as _undo_ or _all or nothing_ too. The canvas draws a
+  frame headed "Transaction · All of these succeed, or what's done is undone"
+  with an empty **Add a step** slot. Until it holds a step, it reads **Setup
+  needed** and **Diagnostics** lists "Add a step to the transaction."
+- **From steps you already have.** Select two or more steps next to each other
+  in one path, then choose **Group in a transaction** in the selection toolbar
+  or in a selected step's menu. It has no keyboard shortcut.
+  When later steps read data from the steps you group, Studio lists them first
+  ("Group 3 steps in a transaction?"): after grouping they can read only the
+  transaction's result. **Group anyway** keeps those reads, and **Diagnostics**
+  then lists each one; **Cancel** has focus. Grouping is one undo step, and the
+  message offers **Undo**: "Grouped 3 steps in transaction-1."
+
+A transaction can't contain another one: inside a transaction, **Transaction**
+is disabled with "A transaction can't contain another transaction." Selected
+steps that aren't next to each other read "Group in a transaction works on
+steps next to each other in one path. Select a single run of steps."
+
+The transaction's **Parameters** has **Result**: "What later steps read as this
+transaction's output." Its **Settings** hold:
+
+| Setting | Default | What it says |
+| --- | --- | --- |
+| **Business key** | Empty | "Shown in Operations and in platform events. Use a reference, never personal data." |
+| **Hold reservations for** | 15 minutes | "From 30 seconds to 1 day. Steps that reserve hold for this long unless they set their own Hold for." |
+| **Undo retries** | **Max tries** 10, **Wait between tries** 2 s, **Longest wait** 5 min | "Weave retries each undo step until it succeeds, waiting longer each time." |
+| **Give up undoing after** | 1 day | "If an undo, a release or a confirm still hasn't finished after this long, Weave stops trying and the transaction is in doubt." |
+| **On error** | **Stop the run** | "A transaction in doubt always waits for a person; On error never handles it." |
+
+**On error** on a transaction reads: **Stop the run**, "If the transaction is
+undone, the run fails. Nothing stays applied."; **Continue**, "If the
+transaction is undone, the run goes on; later steps read its error."; and
+**Continue with error output**, "If the transaction is undone, the run takes
+the error path." Studio never shows the value a **Business key** resolves to,
+only its mapping.
+
+#### Say how each step is undone
+
+Each step inside a transaction that changes data must say how it is undone
+before the workflow can publish.
+
+1. Open the step's details and select **Settings**.
+1. In **How it's undone**, after **Retry on fail** and **Timeout** and before
+   **On error**, choose one way:
+
+    | Choice | What it says | Then set |
+    | --- | --- | --- |
+    | **Reserve, then confirm** | "This step holds something; Weave confirms it when the transaction succeeds, or releases it if anything fails." | **Confirm with**, **Release with**, and **Hold for** ("Same as the transaction's Hold reservations for.") |
+    | **An action that reverses it** | "If anything later fails, Weave runs this to reverse the step." | **Reverse with** |
+    | **Can't be undone** | "Once this step runs, the transaction can't go back. It must be the last step that changes data." | Nothing more |
+
+1. In each field the choice shows, pick the action or workflow that does it,
+   and map its input rows.
+
+Nothing is chosen for you: until you choose, the step reads "This step changes
+data. Choose how it's undone." Studio never chooses **Can't be undone** on its
+own, and its fixes never do either. An action that only reads shows "Doesn't
+change anything, nothing to undo."
+
+**Confirm with**, **Release with**, and **Reverse with** list the project's
+published actions, then its workflows, each with its input as rows to map.
+Weave retries an undo step until it succeeds, so an action that isn't safe to
+retry is listed but can't be chosen: "Weave retries undo steps until they
+succeed, so this action must be safe to retry." An action that only reads is
+listed the same way: "This action only reads data, so it can't confirm,
+release or reverse anything." A workflow without a time limit reads "Called
+workflows inside a transaction need a time limit."
+
+The data picker inside an undo step starts with **This step's undo**:
+**Operation key**, **Outcome of hold**, **Transaction ID**, and **Business
+key**. In **Release with**, the step's own output isn't offered: "hold's own
+output isn't offered here: Release must work even if the hold didn't go
+through." Its input rows add "Release must work even if the hold didn't go
+through. Use the step's operation key or your own reference." In **Reverse
+with**, the step's output is offered, with "Empty when add failed with an
+unknown outcome."
+
+Changing the choice removes the operations the old one used, in one undo step,
+and says so: "Removed Confirm with and Release with." with **Undo**.
+
+On the canvas, each step shows how it is undone with an icon and a word under
+its name: **Reversible**, **Reserved** or **Can't be undone**. A dashed line,
+**Point of no return**, follows the step that can't be undone, one on each
+path that has one. Its description reads "Once submit succeeds, the transaction
+finishes. Steps after this line retry until they succeed and are never undone."
+Dragging a step that can be undone past the line shows "Steps that can be
+undone must come before the step that can't be undone."
+
+#### Fix what the check finds
+
+The compiler checks the transaction as you edit, and **Diagnostics** and the
+step's details offer a fix for each finding:
+
+| Fix | What it does |
+| --- | --- |
+| **Move to end** | Moves the step that can't be undone after the steps that can |
+| **Move out**, **Move after transaction** | Moves the step out of the loop or parallel step it sits in inside the transaction, or after the transaction, where it no longer says how it is undone |
+| **Choose how it's undone** | Opens **How it's undone** on the step |
+| **Set Hold for** | Sets **Hold for** to the compiler's value when it suggests one; otherwise opens the **Hold for** that ends first, or the transaction's **Hold reservations for** |
+| **Open data picker** | Opens the data picker on the undo step's input that reads what it can't |
+| **Open action**, **Open workflow** | Opens the undo step's action or workflow |
+| **Clear How it's undone** | Clears the undo fields of a step outside a transaction |
+| **Wait for its result** | Makes a call inside the transaction wait for its result |
+
+A fix that changes the workflow is one undo step; the others open the field,
+action, or workflow where you decide. **Publish** with any of these findings
+opens "This transaction isn't safe to publish: 2 problems," with the list and
+its fixes, and stays off until they are fixed.
+
+#### Simulate a failure and an undo that fails
+
+[Simulate a failure](#simulate-a-failure) works inside a transaction too. To
+see the transaction undo what's done:
+
+1. On a step after the ones you want undone, open **Simulate a failure…** and
+   keep **The step** in **What fails**.
+1. Choose the **Code** and the **Outcome**. Inside a transaction, **Didn't
+   happen** reads "The step failed."
+1. On a step that says how it is undone, **Did it change anything?** offers
+   **It may have** and **It changed nothing**. Until you pick one, it follows
+   the platform's rule, and a line under the choices says why: with **Didn't
+   happen** and a code the action lists as a definite failure, it changed
+   nothing; with any other code, or on a step that calls a workflow, it may
+   have. With **Outcome** set to **Unknown**, **It changed nothing** is off.
+1. Select **Simulate failure**, then **Execute workflow**.
+
+To see an undo that fails, open **Simulate a failure…** on a step that the
+transaction undoes and choose **Its undo** in **What fails** (**Its release**
+or **Its confirm** on a step that reserves). It fails every one of the
+transaction's **Max tries**, and the Output pane's banner reads "This step's
+undo fails when you execute it in Studio. Real runs ignore it." A release or an
+undo runs only when the transaction is undone, so also fail a later step, as
+the dialog says: "Something must fail after hold for the transaction to be
+undone: simulate a failure of a later step too."
+
+Then **Execute workflow** plays what Weave would do. The frame counts the undo
+steps as they run ("Undoing · 1 of 2"), each step lights as it is undone with
+the edge into it drawn back, and the frame ends on how the transaction ended:
+
+| Frame | Steps |
+| --- | --- |
+| **Undone** | The steps that were undone read **Undone**, a released reservation **Released**, and the failed step **Failed** |
+| **In doubt · action needed** | The undo that failed reads **Undo failed**; a step still applied reads **Still reserved** or **Not undone**, never a success check |
+| **Completed** | Reserved steps read **Confirmed** |
+
+In the run log, a row such as "Transaction move · Undone" follows the step that
+failed, and the undo steps are listed under it, further in, in the order they
+ran: "Undo of add · Undone," then "Release of hold · Released." An undo that
+failed reads "Undo of add · Failed after 10 tries," and the summary says "The
+transaction move is in doubt, so the simulated run stopped." The **Point of no
+return** stays drawn while a run shows. With reduced motion, the end states
+show at once.
+
+When an undo step returns fields Studio can't make up, **Execute workflow**
+stops and asks for them in **Set test output to execute**: "hold's Confirm with
+needs test output: source-system.confirm-hold returns fields Studio can't make
+up." **Set test output** opens that undo step's test output. What you enter is
+saved with the workflow's test data, for Execute only, and real runs ignore it.
+A simulated transaction in doubt stops the simulated run; in a real run,
+someone resolves it in Operate.
+
+#### Read a recorded run's transactions
+
+On the [Runs tab](#read-a-workflows-runs-and-debug-them), a recorded run shows
+the same frame and step words as a simulated one, read from the platform, with
+the **Point of no return** drawn. Studio reads the first 100 transactions of a
+run and says "Showing the first 100 transactions." when there are more.
+
+A run whose transaction is in doubt is **On hold**. Its header names what failed
+and the code: "Failed at submit: REQUEST_REFUSED · transaction move is in doubt
+· WV-TXN-UNDO-STUCK." Its row in the list reads "Failed at submit · move in
+doubt" once Studio has read its transactions, and "Transaction in doubt" before.
+The transaction's details say which undo failed and what is still applied,
+under "This transaction is in doubt. Someone must resolve it in Operate."
+**Open in Operate** opens its incident. A step that was undone reads "This step
+was undone after the transaction failed (try 2 of 10)." When the platform
+refuses to show a run's transactions, the header reads "You can't see this
+run's transactions here."
+
+**Debug in editor** copies the failure that undid the transaction into the
+draft's test data, with what it may have changed, so **Execute workflow**
+undoes the same steps. An undo step the run didn't record is listed as left
+out, and so is an undo that got stuck: Studio can't copy an undo's failure from
+a run. To test that undo, open **Simulate a failure…** on its step and choose
+**Its undo**, **Its release** or **Its confirm**.
+
 ### Read a workflow's runs and debug them
 
 When you are connected, the **Runs** tab of a workflow lists its runs in the

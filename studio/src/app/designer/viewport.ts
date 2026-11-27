@@ -49,6 +49,8 @@ export const FIT_ALL_MIN = 0.4;
 export const READABLE_MIN = 0.75;
 /** Below this zoom, overview mode simplifies labels while keeping insertion. */
 export const OVERVIEW_BELOW = 0.6;
+/** The zoom as the zoom control reads it: a whole percent, 0.546 as 55. */
+export const zoomPercent = (zoom: number) => Math.round(zoom * 100);
 
 const clamp = (value: number, low: number, high: number) =>
   Math.max(low, Math.min(high, value));

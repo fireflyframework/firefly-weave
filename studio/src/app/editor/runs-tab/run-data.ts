@@ -34,13 +34,21 @@ import {
   handledPolicy,
   type RecordedFailure,
 } from "./run-overlay";
+import { POLICY, triesOf } from "../transactions/policy";
+import { stateBadge } from "../transactions/transaction-words";
 import type {
   HandledRecord,
   RecordedOutput,
+  RecordedTransactionFacts,
   Received,
   RunDataPort,
 } from "./run-port";
 import type { RunRecord } from "./run-record";
+import {
+  inDoubtLines,
+  undoneLine,
+  type RunTransactionView,
+} from "./run-transactions";
 
 type Json = unknown;
 type StepMark =
@@ -97,6 +105,8 @@ export class RunData implements RunDataPort {
 
   /** Steps whose outputs were asked for. */
   private readonly asked = new Set<string>();
+  /** The run's transactions, once read. */
+  private transactions: readonly RunTransactionView[] = [];
   /** The failures steps' On error handled, as read at a version of the run's data. */
   private handledRead: {
     version: number;
@@ -390,6 +400,45 @@ export class RunData implements RunDataPort {
 
   definitionVersion(): string | null {
     return this.definition?.metadata.version ?? null;
+  }
+
+  /** The run's transactions as read (runs.transactions); empty when they can't be. */
+  setTransactions(views: readonly RunTransactionView[]): void {
+    this.transactions = views;
+    this.changed();
+  }
+  transaction(stepId: string, key: string): RecordedTransactionFacts | null {
+    const views = this.transactions;
+    // The transaction itself, in the item shown.
+    const block =
+      views.find((view) => view.instance_key === key) ??
+      (key === stepId
+        ? views.find((view) => view.node_id === stepId)
+        : undefined);
+    if (block) {
+      const lines = inDoubtLines(
+        block,
+        (instance) => this.facts.get(instance)?.error_code ?? null,
+      );
+      return (
+        lines && { kind: "in-doubt", pill: stateBadge(block).text, ...lines }
+      );
+    }
+    for (const view of views) {
+      const step = view.participants.find(
+        ({ instance_key }) => instance_key === key,
+      );
+      if (!step) continue;
+      const transaction =
+        this.definition &&
+        findStep(this.definition.spec.steps, (s) => s.id === view.node_id);
+      const line = undoneLine(
+        step,
+        transaction ? triesOf(transaction) : POLICY.undoRetry.maxAttempts,
+      );
+      return line ? { kind: "undone", line } : null;
+    }
+    return null;
   }
 
   private mark(stepId: string, mark: StepMark) {

@@ -62,6 +62,7 @@ export const CANVAS_COMMANDS: ReadonlySet<KeymapCommand> =
     "executeWorkflow",
     "toggleRunLog",
     "toggleBreakpoint",
+    "groupInTransaction",
   ]);
 
 /** Commands about steps: only from a step or the canvas, never from a "+", a tool or a menu. */
@@ -73,6 +74,7 @@ export const STEP_COMMANDS: ReadonlySet<KeymapCommand> = new Set<KeymapCommand>(
     "copy",
     "cut",
     "duplicate",
+    "groupInTransaction",
     "deleteSelection",
     "previousStep",
     "nextStep",

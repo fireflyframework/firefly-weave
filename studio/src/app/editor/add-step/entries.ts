@@ -43,6 +43,7 @@ import {
   TRIGGER_KINDS,
   type TriggerIntent,
 } from "../state/canvas-sidecar";
+import { NESTED_TRANSACTION } from "../transactions/group";
 
 export type Preset =
   | "text-template"
@@ -142,6 +143,8 @@ export interface CatalogInput {
   triggers: readonly TriggerIntent[];
   hasSteps: boolean;
   canCreateActions: boolean;
+  /** The place is inside a transaction, which can't hold another one. */
+  insideTransaction?: boolean;
 }
 export interface Catalog {
   views: ReadonlyMap<string, PanelView>;
@@ -288,6 +291,17 @@ const CATEGORY_STEPS: Readonly<Record<string, readonly StepSpec[]>> = {
       noun: "loops",
     },
     {
+      id: "kind:transaction",
+      kind: "transaction",
+      label: "Transaction",
+      description: "Run steps together; if one fails, undo what's done",
+      icon: "transaction",
+      keywords:
+        "transaction undo rollback all or nothing together reserve confirm",
+      feature: "flow.transaction",
+      noun: "transactions",
+    },
+    {
       id: "kind:callWorkflow",
       kind: "callWorkflow",
       label: "Call a workflow",
@@ -350,13 +364,17 @@ const CALL_AN_ACTION: StepSpec = {
 function stepEntry(spec: StepSpec, input: CatalogInput): PanelEntry {
   const info = input.kinds.find((kind) => kind.kind === spec.kind);
   const label = spec.label ?? info?.label ?? spec.kind;
-  const disabled = gateReason(
-    spec.feature,
-    spec.kind,
-    !!info,
-    input.language,
-    spec.noun ?? label.toLowerCase(),
-  );
+  const disabled =
+    gateReason(
+      spec.feature,
+      spec.kind,
+      !!info,
+      input.language,
+      spec.noun ?? label.toLowerCase(),
+    ) ??
+    (spec.kind === "transaction" && input.insideTransaction
+      ? NESTED_TRANSACTION
+      : null);
   return entry({
     id: spec.id,
     label,

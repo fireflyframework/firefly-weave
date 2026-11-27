@@ -24,7 +24,9 @@ import type { Json } from "../ndv/registry";
 import { fingerprints, type StepFingerprints } from "./fingerprints";
 import { contractOf, ownedContract, pinsView, staleText } from "./pins-stale";
 import type { StudioTestData } from "./test-data";
+import { playbackFrames } from "../canvas/trace-playback";
 import { TestDataService, type TestDataHost } from "./test-data-service";
+import type { ExecuteResponse } from "./execution";
 import { ExecutionService, type ExecutionHost } from "./execution-service";
 import { checkInputsOf } from "./test-data-inputs";
 import type { CheckInputs } from "./test-data-check";
@@ -32,7 +34,11 @@ import {
   studioDefinitions as definitionsOf,
   type StudioDefinitionsHost,
 } from "./host-definitions";
-import { calleeDefinitions, type CalleesHost } from "../calls/callee-drafts";
+import {
+  calleeDefinitions,
+  undoDefinitions,
+  type CalleesHost,
+} from "../calls/callee-drafts";
 import type { StudioApi } from "../../api";
 import { eventFields } from "../triggers/platform-event";
 import { loadFileTestData } from "./test-data-file";
@@ -42,22 +48,33 @@ export { studioCallees } from "../calls/callee-drafts";
 
 /**
  * Studio's definitions for its host: the drafts and copies the workflow
- * uses, then the workflows it calls, so a call's output has fields.
+ * uses, then the workflows it calls and the actions that undo its steps, so
+ * a call's output and an undo step's have fields.
  */
 export async function studioDefinitions(
   host: StudioDefinitionsHost & CalleesHost,
 ) {
-  return [...(await definitionsOf(host)), ...(await calleeDefinitions(host))];
+  const own = await definitionsOf(host);
+  // Reading the workflows it calls reads the project's actions too.
+  const called = await calleeDefinitions(host);
+  return [...own, ...called, ...undoDefinitions(host, own)];
 }
 export * as testDataOps from "./test-data-ops";
 export { readTestData } from "./test-data-read";
 export { CHECK_WORDS } from "./test-data-check";
 export {
   finalAnnouncement,
-  playbackFrames,
   PLAYBACK_STEP_MS,
   runFailureOf,
 } from "../canvas/trace-playback";
+/** The answer's playback on this page: only how it ended with reduced motion. */
+export const playbackOf = (response: ExecuteResponse, workflow: Workflow) =>
+  playbackFrames(
+    response,
+    typeof matchMedia === "function" &&
+      matchMedia("(prefers-reduced-motion: reduce)").matches,
+    workflow,
+  );
 export { summaryLine } from "./run-summary";
 export { findStep } from "../ndv/step-walk";
 export { branchVariables, staleResults } from "./last-results";

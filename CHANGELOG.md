@@ -258,6 +258,41 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Studio, desktop app, and CLI
 
+- Studio builds transactions. **Add a step › Flow › Transaction** draws a frame
+  where the platform lists `flow.transaction`, and **Group in a transaction**
+  turns steps next to each other into one in one undo step, after listing the
+  later reads that would break. The transaction's step details set its result,
+  business key, how long it holds reservations, its undo retries, when Weave
+  gives up undoing, and On error.
+- Each step of a transaction says how it is undone in **How it's undone**:
+  reserve then confirm, an action or workflow that reverses it, or can't be
+  undone. The undo pickers list published actions and workflows with whether
+  each reads or changes data, and say why one can't be used; inside an undo step
+  the data picker starts with **This step's undo**. A dashed **Point of no
+  return** follows the step that can't be undone. Diagnostics and step details
+  fix a transaction's problems in one click, such as **Move to end**, **Move
+  out** and **Set Hold for**, and **Publish** lists the problems that remain.
+- **Simulate a failure** fails a step or its undo, release or confirm inside a
+  transaction, and **Execute workflow** plays the undo steps in the order Weave
+  runs them. The run summary says whether the transaction was undone, canceled
+  or left in doubt. Execute step on a step inside a transaction leaves the
+  transaction open unless the step comes after the one that can't be undone.
+- Execute, and Continue in the run log, move the clock to the waits inside
+  called workflows, so a **Call a workflow** step whose workflow waits runs to
+  its end. Execute stops a simulated run just before its 30-second limit and
+  says so, and loops with waits simulate in time proportional to their items.
+- The Runs tab shows a recorded run's transactions: the frame's state, each
+  step's word, and a run in doubt's caption, with **Open in Operate**. On a
+  phone, a run opens with how its transaction stands in view. **Debug in
+  editor** copies the failure that undid a transaction; for a stuck undo,
+  release or confirm, it names the **Simulate a failure…** choice that
+  reproduces it.
+- Studio shows the platform's sentences for `WV-TXN-RECONCILE-INCOMPLETE` and
+  `WV-TXN-RUN-OVERSIZED`. A number or duration box keeps what is typed until it
+  is left, and a dialog that scrolls, such as Publish on a phone, shows the focus
+  ring when the keyboard reaches it.
+- The Studio guide describes running steps as a transaction, and the
+  simulation reference describes how Studio executes them.
 - Studio builds workflows that start from platform events, for example to tell a
   team that a transaction needs attention. **+ › Triggers › Platform event** adds
   the trigger; its step details choose the events and the workflows, check the

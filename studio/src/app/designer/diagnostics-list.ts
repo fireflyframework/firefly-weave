@@ -21,8 +21,13 @@ SPDX-License-Identifier: Apache-2.0
 // suggestion becomes an "Apply suggested edit" button that hands the host the
 // edited step or workflow; the host applies it as one undoable change.
 import { Component, computed, input, output } from "@angular/core";
+import {
+  transactionFix,
+  type TransactionFix,
+} from "../editor/transactions/fixes";
 import { eventPlace, eventProblem } from "../editor/triggers/event-diagnostics";
 import { Icon } from "../icon";
+import type { Workflow } from "../model";
 import { describeDiagnostic, type DiagnosticView } from "./diagnostic-copy";
 import {
   locateDiagnostic,
@@ -51,7 +56,15 @@ interface Row {
   view: DiagnosticView;
   location: DiagnosticLocation | null;
   where: string;
+  /** The compiler's own edit, where Studio offers it as it is. */
   change: SuggestedChange | null;
+  /** The fix of a transaction's finding. */
+  fix: TransactionFix | null;
+}
+/** A fix chosen in a row, and where its problem is. */
+export interface ChosenFix {
+  fix: TransactionFix;
+  location: DiagnosticLocation;
 }
 
 const stepFields: Record<string, string> = {
@@ -74,6 +87,19 @@ const stepFields: Record<string, string> = {
   concurrency: "Concurrency",
   code: "Error code",
   message: "Message",
+  mode: "When it runs",
+  confirm: "How it's undone",
+  cancel: "How it's undone",
+  compensate: "How it's undone",
+  irreversible: "How it's undone",
+  holdSeconds: "Hold for",
+};
+/** The field a finding on a whole step is about: the choice it lacks, or how long it waits. */
+const findingFields: Record<string, (kind: string) => string> = {
+  "WV-COMP-TXN_UNDECLARED": () => "compensate",
+  "WV-COMP-TXN_HOLD_WAIT": (kind) =>
+    ({ wait: "durationSeconds", signal: "timeoutSeconds" })[kind] ??
+    "expirySeconds",
 };
 /** Fields whose name depends on the step's kind: a decision table's `uses` is its table's version. */
 const kindFields: Record<string, Record<string, string>> = {
@@ -111,9 +137,14 @@ export function fieldName(
 }
 
 /** "Step check · Input", or "Workflow settings · Input schema". */
-export function placeOf(location: DiagnosticLocation, kind?: string): string {
+export function placeOf(
+  location: DiagnosticLocation,
+  kind?: string,
+  code?: string,
+): string {
+  const about = location.field.length ? undefined : findingFields[code ?? ""];
   const field = fieldName(
-    location.field,
+    about ? [about(kind ?? "")] : location.field,
     location.stepId === WORKFLOW ? undefined : kind,
   );
   const owner =
@@ -221,6 +252,16 @@ export function diagnosticRows(
     const view = describeDiagnostic(diagnostic, (key) =>
       fieldName([key], kind),
     );
+    const change = suggestedChange(diagnostic.suggestedEdit, definition);
+    const fix = transactionFix(
+      view.code,
+      change,
+      location && {
+        stepId: location.stepId,
+        at: [...location.field, ...location.dataPath],
+        workflow: definition as Workflow,
+      },
+    );
     const event = stepDetails ? eventProblem(diagnostic, definition) : null;
     const row: Row = {
       view: event?.text
@@ -231,9 +272,10 @@ export function diagnosticRows(
       where: event
         ? eventPlace(event.part)
         : location
-          ? placeOf(location, kind)
+          ? placeOf(location, kind, view.code)
           : "",
-      change: suggestedChange(diagnostic.suggestedEdit, definition),
+      change: fix === undefined ? change : null,
+      fix: fix ?? null,
     };
     (view.severity === "info" ? notes : problems).push(row);
   }
@@ -251,11 +293,50 @@ const severityLabels = { error: "Error", warning: "Warning", info: "Note" };
   selector: "weave-diagnostics-list",
   standalone: true,
   imports: [Icon],
+  styles: `
+    /* A fix sits at the row's right end, across its lines. */
+    .diagnostic-row.has-fix {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      column-gap: var(--space-4);
+      align-items: start;
+    }
+    .diagnostic-row.has-fix > * {
+      grid-column: 1;
+    }
+    .diagnostic-row.has-fix > .diagnostic-fix {
+      grid-column: 2;
+      grid-row: 1 / span 4;
+      min-height: 32px;
+      padding: 0 var(--space-3);
+      white-space: nowrap;
+    }
+    @media (max-width: 767px), (pointer: coarse) {
+      .diagnostic-row.has-fix > .diagnostic-fix {
+        min-height: 44px;
+      }
+    }
+    @media (max-width: 479px) {
+      .diagnostic-row.has-fix {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .diagnostic-row.has-fix > .diagnostic-fix {
+        grid-column: 1;
+        grid-row: auto;
+        justify-self: start;
+        margin: var(--space-1) 0 var(--space-1) 24px;
+      }
+    }
+  `,
   template: `
     @if (rows().problems.length) {
       <ul class="diagnostic-rows" aria-label="Problems found">
         @for (row of rows().problems; track $index) {
-          <li class="diagnostic-row" [attr.data-severity]="row.view.severity">
+          <li
+            class="diagnostic-row"
+            [class.has-fix]="!!row.fix"
+            [attr.data-severity]="row.view.severity"
+          >
             <p class="diagnostic-target">
               <weave-icon
                 class="diagnostic-icon"
@@ -280,6 +361,17 @@ const severityLabels = { error: "Error", warning: "Warning", info: "Note" };
             </p>
             @if (row.view.hint) {
               <p class="diagnostic-hint">{{ row.view.hint }}</p>
+            }
+            @if (row.fix; as fix) {
+              <button
+                type="button"
+                class="diagnostic-fix"
+                [attr.aria-label]="fix.name"
+                [disabled]="readonly() && changes(fix)"
+                (click)="fixed.emit({ fix, location: row.location! })"
+              >
+                {{ fix.label }}
+              </button>
             }
             @if (row.change) {
               <p class="diagnostic-detail">
@@ -344,6 +436,12 @@ export class DiagnosticsList {
   stepDetails = input(false);
   locate = output<DiagnosticLocation>();
   apply = output<SuggestedChange>();
+  /** A transaction finding's fix was chosen. */
+  fixed = output<ChosenFix>();
+  /** A fix that changes the workflow; the others only open a place. */
+  changes({ kind }: TransactionFix): boolean {
+    return ["suggestion", "move", "clearUndo", "waitForCall"].includes(kind);
+  }
   rows = computed(() =>
     diagnosticRows(this.diagnostics(), this.definition(), this.stepDetails()),
   );

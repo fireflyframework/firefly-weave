@@ -249,7 +249,7 @@ TypeScript types in `studio/src/app/editor/state/test-data.ts`.
 | `aiTurns` | Recorded AI turns: `{turns, memory?, autoApprove?}` with their source and fingerprints. Each entry follows `urn:firefly-weave:schema:studio-ai-turns:v1` ([studio-ai-turns-v1.json](../../src/firefly_weave/contracts/schemas/studio-ai-turns-v1.json)): a turn is `{toolCalls: [{name, arguments}], text?}` or `{final, text?}`, with at most 33 turns and 16 calls a turn. An AI task replays one `final` turn |
 | `workflows` | Mocks for steps inside called workflows, by callee reference: `{"notify-customer@1.0.0": {"mocks": {...}}}` |
 | `waits` | `autoAdvance`, true when absent |
-| `errors` | Simulated failures, at most 1,000: `{code, outcome?, attempts?, source?}` with `runId` and `runEnvironmentId` for one copied from a run. Only Execute in Studio reads them; see [Simulated failures](#simulated-failures) |
+| `errors` | Simulated failures, at most 1,000: `{code, outcome?, attempts?, effect?, source?}` with `runId` and `runEnvironmentId` for one copied from a run. Only Execute in Studio reads them; see [Simulated failures](#simulated-failures) |
 
 - **Keys** of `pins`, `signals`, `humans`, `aiTurns`, `errors` and each called
   workflow's `mocks` are a step ID, which applies to every iteration, or an
@@ -264,6 +264,13 @@ TypeScript types in `studio/src/app/editor/state/test-data.ts`.
   doesn't follow this grammar, such as `send mail` or `send[01]`, is refused;
   `firefly_weave.contracts.instance_keys` defines it, and `$defs.key` in the
   JSON Schema repeats it.
+- **Undo steps.** A key of `pins` or `errors` may end with `#confirm`,
+  `#cancel`, or `#undo` for a step's confirm, release, or undo inside a
+  transaction (`hold#confirm`, `add[2]#undo`). Such a pin is checked against
+  that undo step's own output schema (the action's `outputSchema`, or the
+  called workflow's), never its step's, and a secret-marked value in it is
+  refused by its pointer as in any pin. An `errors` key names a phase the step
+  declares, else `422 WV-DEBUG-MOCK-KEY` on Execute.
 - **Frames.** A script with `frame` (`enrich`, `notify[2]/enrich`) applies only
   inside that sub-workflow.
 - **Source.** `source` is `manual`, `schema`, `simulated`, `test-call` or `run`
@@ -291,6 +298,7 @@ it: Execute in an environment, for one step or the whole draft, sends no
 | `code` | Required. 1–128 characters matching `^[A-Z][A-Z0-9_.-]*$`, such as `REQUEST_REFUSED` |
 | `outcome` | `not_started`, `failed` (when absent) or `unknown`: what the platform would report after the step's own retries |
 | `attempts` | 0–1000, 1 when absent |
+| `effect` | `none` or `unknown`: for a step inside a transaction, whether the failed step may have changed anything, so whether it is undone. `none` with `outcome: unknown` is refused |
 | `source` | `manual`, or `run` with `runId` and `runEnvironmentId` |
 
 An entry never holds a message: the platform's copy for the code applies, and
@@ -299,6 +307,14 @@ copied from a run keeps only its code, outcome, attempts and the run it came
 from, and counts as run data like a pin from a run. Studio copies a step's
 failures with the step only when their `source` is `manual` or absent. A
 document without `errors` keeps its bytes, and `schemaVersion` stays 1.
+
+Inside a transaction, Simulate a failure writes `effect` for the failure of a
+step that says how it is undone, from the platform's rule unless the builder
+picked one: `none` for `not_started`, or for `failed` with a code the action
+lists in `definiteFailures`; `unknown` otherwise. A failure of an undo step
+(`add#undo`) holds only its `code`; Execute sends it with `attempts` set to the
+transaction's **Max tries**, at most 1,000. A document without `effect` or
+phase keys keeps its bytes.
 
 Simulate a failure writes `outcome` only when it isn't `failed`. For a
 `transform` or a `decisionTable` it asks no outcome and writes `not_started`:
@@ -381,6 +397,14 @@ bodies are camelCase. The Python models are in
   key, and no last result or AI turns for an instance that fails, by its own
   key or its step's; an item's own pin still wins over its step's failure for
   every item, as the more specific key.
+- **Transactions.** Inside a transaction, a failure carries `effect` (`none`
+  or `unknown`; the host derives it as test data does when it is left out),
+  and the host refuses `effect: none` with `outcome: unknown`
+  (`422 WV-STUDIO-REQUEST`). A key that ends with `#confirm`, `#cancel` or
+  `#undo` mocks or fails that undo step (`node:hold#confirm`,
+  `node:add#undo`). An undo step without a mock completes with `{}` when its
+  output schema accepts it, and blocks with `reason: "missing_mock"` on that
+  key otherwise. Real runs never carry `errors` or a key with `#`.
 - **Called workflows.** `workflows` carries each callee's local source and
   format, or only its mocks when the callee is published.
 - **Result.** `status` is `completed`, `blocked`, `failed` or `limit`. Every
@@ -405,6 +429,22 @@ bodies are camelCase. The Python models are in
   inside an error path its step didn't take blocks with `reason: "path"` and,
   for example, "With this test data, submit succeeds, so notify-team isn't
   reached."
+- **Transactions in the result.** `trace` keeps its shape, and undo steps never
+  appear in it. `transactions` lists the simulated workflow's transactions:
+  `{instanceKey, nodeId, state, cause?, pendingAbort?, incidentKey?,
+  reconciledAs?, participants}`, where `cause` is `{code?, instanceKey,
+  effect}` and each participant is `{nodeId, instanceKey, mode, status,
+  effect, attempts?}`. They carry keys, states, codes and counts only, never a
+  value or a business key. `phases` lists each confirm, release, and undo in the
+  order they ended: `{afterIndex, nodeId, instanceKey, phase, status, input?,
+  output?}`, where `phase` is `confirm`, `cancel`, or `undo`, `afterIndex` is the
+  last `trace` entry before it (-1 before any), and `status` is `completed`,
+  `failed`, or `waiting`; their `input` and
+  `output` pass the same secret check as pins. Both lists are left out when
+  empty. Over 1,000 entries in either, or over 1 MiB of JSON in the two
+  together, answers `status: "limit"`. A run whose transaction ends in doubt
+  answers `failed` with a diagnostic carrying the incident's `WV-TXN-*` code
+  and "A transaction is in doubt, so the simulated run stopped."
 - **Test data checks** report each entry by JSON pointer; refused entries name
   `WV-SCHEMA-SECRET_VALUE`, `WV-SCHEMA-CLASSIFICATION`,
   `WV-STUDIO-TESTDATA-SCHEMA` or `WV-STUDIO-TESTDATA-UNRESOLVED`.
@@ -517,6 +557,22 @@ in `firefly_weave.contracts.step_tests` and the TypeScript types in
 | 422 | `WV-STEPTEST-INPUT`, `WV-SCHEMA-SECRET_VALUE`, `WV-STEPTEST-CONNECTION`, `WV-STEPTEST-RELEASE`, `WV-STEPTEST-KIND`, `WV-STEPTEST-DRAFT`, `WV-STEPTEST-TOOL-MOCK`, `WV-ACTIVATION-AI-PROVIDER`, `WV-ACTIVATION-AI-MODEL`, `WV-ACTIVATION-AI-RESERVED`, `WV-TESTACTIVATION-COMPILE`, `WV-TESTACTIVATION-LIFETIME`, `WV-ETAG` |
 | 429 | `WV-STEPTEST-BUSY` |
 | 503 | `WV-COMPATIBILITY`, `WV-AI-POLICY` |
+
+## What an undo step reads
+
+Inside the input (`with`) of a step's `confirm`, `cancel`, or `compensate`, the
+data picker and the formula check list what the compiler's `scope_at` lists,
+after the workflow input and any loop's item: the step's **Operation key**
+(`/participant/operationKey`) and outcome (`/participant/outcome`, `done` or
+`unknown`), then its transaction's ID (`/transaction/id`) and business key
+(`/transaction/businessKey`, text or null). Then come the outputs of the steps
+it can read. The step's own output is always there in a `confirm`, may be
+empty in a `compensate`, since the step may not have gone through, and is never
+read in a `cancel` (`TXN_CANCEL_OUTPUT`). Steps
+after a transaction read its result, `/steps/<transaction>/output`, never the
+steps inside it. Studio's own scope (`studio/src/app/forms/core/scope.ts`)
+follows the compiler's, and the generated
+`studio/tests/fixtures/language/scope.json` pins the two together.
 
 ## Trigger choices
 

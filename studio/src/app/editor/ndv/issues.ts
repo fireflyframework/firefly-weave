@@ -20,12 +20,18 @@ SPDX-License-Identifier: Apache-2.0
 // it. The header counts them in words; its tone is danger when any is an
 // error.
 import type { SuggestedChange } from "../../designer/diagnostics-list";
+import {
+  transactionFix,
+  type FindingPlace,
+  type TransactionFix,
+} from "../transactions/fixes";
 import { pathStartsWith } from "./params/paths";
 import type { ParamSpec, Path } from "./registry";
 import type { StepDetailsTab } from "./step-details-service";
 
 export const UPDATE_URL =
   "https://fireflyframework.github.io/firefly-weave/guides/platform-overview/";
+const UNDECLARED_CODE = "WV-COMP-TXN_UNDECLARED";
 /** What a field shows while what it holds isn't in the workflow. */
 export const NOT_APPLIED = "Not applied";
 /** What Notes show while their text isn't saved. */
@@ -41,6 +47,7 @@ export type IssueFix =
       change: SuggestedChange;
     }
   | { kind: "answers"; label: "Add paths for answers" }
+  | TransactionFix
   | { kind: "update"; label: "Update the platform"; href: string };
 
 export interface PlacedSpec {
@@ -70,6 +77,33 @@ export function fieldFor(at: Path, specs: PlacedSpec[]): PlacedSpec | null {
   return best;
 }
 
+/** The fields that say how a step is undone, where a problem belongs to How it's undone as a whole. */
+const UNDO_FIELDS: ReadonlySet<string> = new Set([
+  "confirm",
+  "cancel",
+  "compensate",
+  "irreversible",
+  "holdSeconds",
+]);
+/**
+ * The field a compiler message shows at: the deepest that holds its path, or
+ * How it's undone for a choice the step lacks or a field of it that no
+ * control holds.
+ */
+export function messageField(
+  code: string,
+  at: Path,
+  specs: PlacedSpec[],
+): PlacedSpec | null {
+  const field = fieldFor(at, specs);
+  if (
+    field ||
+    !(code === UNDECLARED_CODE || UNDO_FIELDS.has(String(at[0] ?? "")))
+  )
+    return field;
+  return specs.find((placed) => placed.spec.id === "undo") ?? null;
+}
+
 /** A field whose value must be data from earlier in the workflow. */
 const takesData = (spec: ParamSpec): boolean =>
   spec.mapping === "mapped" ||
@@ -80,7 +114,10 @@ export function fixFor(
   code: string,
   suggestion: SuggestedChange | null,
   field: PlacedSpec | null,
+  place: FindingPlace | null = null,
 ): IssueFix | null {
+  const transaction = transactionFix(code, suggestion, place);
+  if (transaction !== undefined) return transaction;
   if (suggestion)
     return {
       kind: "suggestion",
@@ -94,6 +131,8 @@ export function fixFor(
     return { kind: "connection", label: "Choose a connection" };
   if (/(UNAVAILABLE|MISSING)_REFERENCE$/.test(code))
     return { kind: "picker", label: "Use data…" };
+  if (code === "required" && field.spec.id === "undo")
+    return transactionFix(UNDECLARED_CODE, null, place) ?? null;
   if (code === "required")
     return takesData(field.spec)
       ? { kind: "picker", label: "Use data…" }

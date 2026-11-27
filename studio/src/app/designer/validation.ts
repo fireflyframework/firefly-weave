@@ -27,6 +27,7 @@ SPDX-License-Identifier: Apache-2.0
 //   and the publish gate reuse the artifact instead of compiling twice.
 
 export { contractGaps } from "./contract-gaps";
+export { withEmptyTransactions } from "./diagnostic-copy";
 
 export type SourceFormat = "yaml" | "json";
 export type ValidationMode = "local" | "project";

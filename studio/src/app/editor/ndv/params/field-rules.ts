@@ -26,7 +26,14 @@ import type { ParamSpec } from "../registry";
 import type { Entries, ParamValue } from "./value-io";
 
 export interface RuleProblem {
-  code: "required" | "range" | "length" | "items" | "positive" | "format";
+  code:
+    | "required"
+    | "range"
+    | "length"
+    | "items"
+    | "positive"
+    | "whole"
+    | "format";
   message: string;
   severity: "error" | "warning";
 }
@@ -83,6 +90,34 @@ const error = (code: RuleProblem["code"], message: string): RuleProblem => ({
   severity: "error",
 });
 
+/** "1 day", "30 seconds": a duration in the largest unit it is whole in. */
+export function durationWords(seconds: number): string {
+  const [size, unit] = (
+    [
+      [86_400, "day"],
+      [3_600, "hour"],
+      [60, "minute"],
+    ] as const
+  ).find(([size]) => seconds > 0 && seconds % size === 0) ?? [1, "second"];
+  const amount = seconds / size;
+  return `${amount} ${unit}${amount === 1 ? "" : "s"}`;
+}
+
+/** What a number takes; a duration says it in the units it offers. */
+function rangeMessage(spec: ParamSpec, low: boolean): string {
+  const { min, max } = spec;
+  if (spec.type === "duration" && (spec.units?.length ?? 4) > 1) {
+    if (min !== undefined && max !== undefined)
+      return `Use ${durationWords(min)} to ${durationWords(max)}.`;
+    return low
+      ? `Use ${durationWords(min!)} or more.`
+      : `Use ${durationWords(max!)} or less.`;
+  }
+  if (min !== undefined && max !== undefined)
+    return `Use a number from ${min} to ${max}.`;
+  return low ? `Use ${min} or more.` : `Use ${max} or less.`;
+}
+
 export function fieldRules(
   spec: ParamSpec,
   value: ParamValue,
@@ -101,23 +136,15 @@ export function fieldRules(
     !(Number.isInteger(v) && v > 0)
   )
     problems.push(error("positive", "Enter a whole number greater than 0."));
+  if (spec.whole && typeof v === "number" && !Number.isInteger(v))
+    problems.push(error("whole", "Enter a whole number."));
   if (
     (spec.type === "number" || spec.type === "duration") &&
     typeof v === "number"
   ) {
     const low = spec.min !== undefined && v < spec.min;
     const high = spec.max !== undefined && v > spec.max;
-    if (low || high)
-      problems.push(
-        error(
-          "range",
-          spec.min !== undefined && spec.max !== undefined
-            ? `Use a number from ${spec.min} to ${spec.max}.`
-            : low
-              ? `Use ${spec.min} or more.`
-              : `Use ${spec.max} or less.`,
-        ),
-      );
+    if (low || high) problems.push(error("range", rangeMessage(spec, low)));
   }
   if (
     spec.maxLength !== undefined &&

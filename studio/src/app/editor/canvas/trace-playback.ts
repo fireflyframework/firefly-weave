@@ -17,11 +17,22 @@ SPDX-License-Identifier: Apache-2.0
 */
 // A simulated run played back on the canvas, one step every 120 ms: the
 // current tile gets the live border, finished ones the check, a failed one
-// the error. With reduced motion only the last frame is shown. DOM-free.
+// the error. A transaction's undo steps play after the step they followed.
+// With reduced motion only the last frame is shown. DOM-free.
+import type { Workflow } from "../../model";
 import { getAt, isJsonObject, parsePointer } from "../../forms/core/json";
 import { loopLimitText } from "./loop-frame";
 import { stepPointerOf } from "../formula/loops";
 import type { ExecuteResponse, TraceEntry } from "../state/execution";
+import { transactionSummary } from "../state/run-summary";
+import {
+  beatsOf,
+  containedFailures,
+  playedBack,
+  simulatedRollback,
+  type TransactionRun,
+} from "../transactions/rollback";
+import { TRANSACTION_CODE_TEXT } from "../transactions/transaction-words";
 import {
   type HandledFailure,
   LOOP_LIMIT,
@@ -32,20 +43,43 @@ import {
 
 export const PLAYBACK_STEP_MS = 120;
 
+/**
+ * Whether the run went on past a step's failure: its On error handled it, or
+ * the transaction it undid did.
+ */
+export function wentOn(
+  response: ExecuteResponse,
+): (entry: TraceEntry) => boolean {
+  const contained = containedFailures(response);
+  return (entry) =>
+    entry.status === "failed" &&
+    (!!entry.handled || contained.has(entry.instanceKey || entry.nodeId));
+}
+/** The step of this workflow the run stopped at, not a called one's. */
+export function stoppedAt(response: ExecuteResponse): TraceEntry | null {
+  const past = wentOn(response);
+  return (
+    response.trace.find(
+      (entry) => entry.status === "failed" && !entry.frame && !past(entry),
+    ) ?? null
+  );
+}
 /** The steps of the trace a playback reads: this workflow's, not a called one's. */
 export function stepsOf(response: ExecuteResponse): TraceStep[] {
   const top = response.trace.filter((entry) => !entry.frame);
+  const past = wentOn(response);
   // The loop the run stopped at failed itself on its Up to: the answer's diagnostic.
   const overLimit = (response.diagnostics ?? []).some(
     (problem) => problem.code === LOOP_LIMIT,
   );
-  return top.map(
-    ({ nodeId, instanceKey, kind, status, output, handled }, index) => ({
+  return top.map((entry, index) => {
+    const { nodeId, instanceKey, kind, status, output } = entry;
+    return {
       nodeId,
       instanceKey,
       kind,
       status,
-      ...(status === "failed" && handled ? { handled: true as const } : {}),
+      ...(past(entry) ? { handled: true as const } : {}),
       ...(kind === "forEach" && Array.isArray(output)
         ? { results: output.length }
         : {}),
@@ -55,8 +89,8 @@ export function stepsOf(response: ExecuteResponse): TraceStep[] {
       index === top.length - 1
         ? { code: LOOP_LIMIT }
         : {}),
-    }),
-  );
+    };
+  });
 }
 /** Each loop instance's count, as the simulator reports it (`orders`, `lines[2]`). */
 export const countsOf = (response: ExecuteResponse): Record<string, number> =>
@@ -75,15 +109,19 @@ export const pausedOf = (response: ExecuteResponse): Record<string, number> =>
       .map((loop) => [loop.instanceKey || loop.nodeId, loop.completed]),
   );
 
-/** The run as it stands after the whole trace. */
-export function finalRun(response: ExecuteResponse): CanvasRun {
+/** The run as it stands after the whole trace; with the workflow, its transactions too. */
+export function finalRun(
+  response: ExecuteResponse,
+  workflow?: Workflow,
+): CanvasRun {
   const top = response.trace.filter((entry) => !entry.frame);
+  const past = wentOn(response);
   // A failure its On error handled: the run went on past the step.
   const went = (e: TraceEntry) =>
     e.status === "completed" || (e.status === "failed" && !!e.handled);
   const done = top.filter(went).map((e) => e.nodeId);
   const failed = top
-    .filter((e) => e.status === "failed" && !e.handled)
+    .filter((e) => e.status === "failed" && !past(e))
     .map((e) => e.nodeId);
   const waiting = top
     .filter((e) => e.status === "waiting")
@@ -107,8 +145,20 @@ export function finalRun(response: ExecuteResponse): CanvasRun {
     counts: countsOf(response),
     ended: true,
     ...handledOf(top),
+    ...failedOf(top.filter(past)),
     paused: pausedOf(response),
+    ...(workflow && response.transactions?.length
+      ? { transactions: simulatedRollback(response, workflow) }
+      : {}),
   };
+}
+
+/** The steps that failed without their On error handling it, of the entries the run went on past. */
+function failedOf(entries: readonly TraceEntry[]): { failed?: string[] } {
+  const failed = entries.flatMap((entry) =>
+    entry.status === "failed" && !entry.handled ? [entry.nodeId] : [],
+  );
+  return failed.length ? { failed: [...new Set(failed)] } : {};
 }
 
 /**
@@ -142,40 +192,61 @@ function handledOf(top: readonly TraceEntry[]): {
 
 /**
  * The frames of the playback: one per trace entry (that step live, the ones
- * before it finished), then the final run. Reduced motion: the final run only.
+ * before it finished), and with the workflow one per undo step of its
+ * transactions, after the entry it followed; then the final run. Reduced
+ * motion: the final run only.
  */
 export function playbackFrames(
   response: ExecuteResponse,
   reducedMotion: boolean,
+  workflow?: Workflow,
 ): CanvasRun[] {
-  const last = finalRun(response);
+  const last = finalRun(response, workflow);
   if (reducedMotion) return [last];
   const top = response.trace.filter((entry) => !entry.frame);
   // Every frame shares the trace; each says how far the playback is.
   const trace = last.trace!;
   const counts = last.counts!;
-  const frames: CanvasRun[] = top.map((entry, index) => ({
-    mode: "simulated",
-    status: "running",
-    current: [entry.nodeId],
-    active: [],
-    done: [
-      ...new Set(
-        top
-          .slice(0, index)
-          .filter(
-            (e) =>
-              e.status === "completed" ||
-              (e.status === "failed" && !!e.handled),
-          )
-          .map((e) => e.nodeId),
-      ),
-    ],
-    trace,
-    at: index,
-    counts,
-    ...handledOf(top.slice(0, index)),
-  }));
+  const phases = (last.transactions && response.phases) || [];
+  const beats = beatsOf(top, phases);
+  const transactions =
+    last.transactions && workflow
+      ? playedBack(response, workflow, top, beats)
+      : null;
+  let index = 0;
+  const frames = beats.map((beat, moment): CanvasRun => {
+    const phase = "phase" in beat ? phases[beat.phase] : null;
+    const played = phase ? index : index++;
+    let kept: TransactionRun | undefined;
+    return {
+      mode: "simulated",
+      status: "running",
+      current: [phase ? phase.nodeId : top[played].nodeId],
+      active: [],
+      done: [
+        ...new Set(
+          top
+            .slice(0, played)
+            .filter(
+              (e) =>
+                e.status === "completed" ||
+                (e.status === "failed" && !!e.handled),
+            )
+            .map((e) => e.nodeId),
+        ),
+      ],
+      trace,
+      at: played,
+      counts,
+      ...handledOf(top.slice(0, played)),
+      ...failedOf(top.slice(0, played)),
+      ...(phase && phase.phase !== "confirm" ? { undoing: phase.nodeId } : {}),
+      // Worked out when the frame shows.
+      get transactions() {
+        return (kept ??= transactions?.(moment));
+      },
+    };
+  });
   return [...frames, last];
 }
 
@@ -252,6 +323,9 @@ export function finalAnnouncement(
   loopsAround?: (stepId: string) => readonly string[],
   definition?: unknown,
 ): string {
+  const transaction = transactionSummary(response);
+  if (transaction)
+    return [transaction.text, transaction.detail].filter(Boolean).join(" ");
   const trace = stepsOf(response);
   const failed = loopProgress(
     trace,
@@ -299,23 +373,31 @@ function overLimitSaid(
 
 /**
  * Why the run failed at a step, for its tile and step details: the run's
- * first error, a list over Up to in Studio's own sentence; null when the
- * run didn't fail at that step.
+ * first error, a list over Up to in Studio's own sentence; a step whose
+ * failure undid its transaction, its own. Null when it didn't fail there.
  */
 export function runFailureOf(
   response: ExecuteResponse,
   stepId: string,
   definition: unknown,
 ): { code?: string; message?: string } | null {
-  if (response.status !== "failed") return null;
-  // A failure a step's On error handled went on: the run stopped later. A
-  // called run's step (its frame) failed inside the call, never the run.
-  const failed = response.trace.find(
-    (entry) => entry.status === "failed" && !entry.handled && !entry.frame,
+  const contained = containedFailures(response);
+  const own = response.trace.find(
+    (entry) =>
+      entry.nodeId === stepId &&
+      !entry.frame &&
+      contained.has(entry.instanceKey || entry.nodeId),
   );
+  // The run went on past its transaction.
+  if (own?.error) return { code: own.error.code, message: own.error.message };
+  if (response.status !== "failed") return null;
+  const failed = stoppedAt(response);
   if (failed?.nodeId !== stepId) return null;
   const diagnostic = response.diagnostics?.[0];
   if (!diagnostic) return {};
+  // The run's error is its transaction's: the step's is why that happened.
+  if (failed.error && TRANSACTION_CODE_TEXT[diagnostic.code ?? ""])
+    return { code: failed.error.code, message: failed.error.message };
   if (diagnostic.code !== LOOP_LIMIT)
     return { code: diagnostic.code, message: diagnostic.message };
   const { count, limit } = overLimitOf(definition, response, stepId);

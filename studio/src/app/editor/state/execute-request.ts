@@ -25,6 +25,10 @@ import { calledReferenceSites } from "../activation/callee-pins";
 import { simulateBlock } from "../ndv/panes/simulate-failure";
 import { blockSteps } from "../ndv/step-walk";
 import { blocksOf } from "../step-blocks";
+import { splitPhase } from "../transactions/phase-keys";
+import { phaseOperation } from "../transactions/phases";
+import { undoTries } from "../transactions/policy";
+import { undoChoiceOf } from "../transactions/points";
 import type { Json } from "../ndv/registry";
 import type {
   Blocked,
@@ -134,13 +138,31 @@ export interface ExecuteParts {
 export function executeRequest(parts: ExecuteParts): ExecuteRequest {
   const { testData, results, workflow } = parts;
   const steps = new Map<string, Step>();
-  const visit = (list: Step[]) => {
+  /** The steps a transaction holds, each to that transaction. */
+  const inside = new Map<string, Step>();
+  const visit = (list: Step[], held: Step | null) => {
     for (const step of list) {
       steps.set(step.id, step);
-      branchesOf(step).forEach(visit);
+      if (held) inside.set(step.id, held);
+      for (const block of blocksOf(step))
+        visit(
+          blockSteps(block),
+          held ??
+            ((step.kind as string) === "transaction" && block.kind === "body"
+              ? step
+              : null),
+        );
     }
   };
-  visit(workflow.spec.steps ?? []);
+  visit(workflow.spec.steps ?? [], null);
+  /** The step a key's undo step belongs to while it has it; null for any other key. */
+  const undoes = (key: string): Step | null => {
+    const named = splitPhase(key);
+    const step = named && steps.get(instanceStep(key));
+    return step && inside.has(step.id) && phaseOperation(step, named.phase)
+      ? step
+      : null;
+  };
   // Executing one step sends only the test data of the steps it runs.
   const runs =
     parts.target.mode === "workflow" || !parts.target.stepId
@@ -151,34 +173,52 @@ export function executeRequest(parts: ExecuteParts): ExecuteRequest {
   // takes a key as a failure or a mock, never both, so no pin, replayed
   // result or AI turns goes there. A failure of a step that can't take one
   // any more (its On error went back to Stop the run, a call that no longer
-  // waits) or that left the draft stays in test data and isn't sent: the
-  // host would refuse the whole request for it.
+  // waits, an undo step it no longer has) or that left the draft stays in
+  // test data and isn't sent: the host would refuse the whole request for it.
   const failures = Object.fromEntries(
     Object.entries(testData.errors ?? {}).filter(([key]) => {
+      if (splitPhase(key)) return !!undoes(key);
       const step = steps.get(instanceStep(key));
-      return !!step && simulateBlock(step, false) === null;
+      return !!step && simulateBlock(step, false, inside.has(step.id)) === null;
     }),
   );
   const fails = (key: string) =>
     Object.hasOwn(failures, key) || Object.hasOwn(failures, instanceStep(key));
   const errors: Record<MockKey, ScriptedFailure> = {};
-  for (const [key, { code, outcome, attempts }] of Object.entries(failures))
-    if (sent(key))
-      errors[`node:${key}`] = {
-        code,
-        ...(outcome === undefined ? {} : { outcome }),
-        ...(attempts === undefined ? {} : { attempts }),
-      };
+  for (const [key, entry] of Object.entries(failures)) {
+    if (!sent(key)) continue;
+    const { code, outcome } = entry;
+    const step = steps.get(instanceStep(key))!;
+    // An undo step fails every one of its transaction's tries as they are
+    // now, whatever they were when the failure was saved.
+    const attempts = splitPhase(key)
+      ? undoTries(inside.get(step.id)!)
+      : entry.attempts;
+    // What a failure changed is for a step of a transaction that is undone or
+    // can't be; the host refuses it anywhere else. Set before the step was
+    // in one, an unknown outcome says so itself: the host would go by the code.
+    const effect =
+      splitPhase(key) || !inside.has(step.id) || !undoChoiceOf(step)
+        ? undefined
+        : (entry.effect ?? (outcome === "unknown" ? "unknown" : undefined));
+    errors[`node:${key}`] = {
+      code,
+      ...(outcome === undefined ? {} : { outcome }),
+      ...(attempts === undefined ? {} : { attempts }),
+      ...(effect === undefined ? {} : { effect }),
+    };
+  }
   const mocks: Record<MockKey, Json> = {};
   const pins = testData.pins ?? {};
   // A pin gives way only to a failure at its own key: an item's pin under
   // its step's failure for every item is the more specific key, and the
-  // host takes it for that item.
+  // host takes it for that item. An undo step's pin stands for its result
+  // alone, while the step has it.
   for (const [key, pin] of Object.entries(pins))
     if (
       sent(key) &&
       !Object.hasOwn(failures, key) &&
-      mocked(steps.get(instanceStep(key)))
+      (splitPhase(key) ? !!undoes(key) : mocked(steps.get(instanceStep(key))))
     )
       mocks[`node:${key}`] = pin.output;
   for (const [key, result] of Object.entries(results?.steps ?? {})) {

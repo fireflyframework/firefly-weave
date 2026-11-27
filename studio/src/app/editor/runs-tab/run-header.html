@@ -79,7 +79,16 @@ SPDX-License-Identifier: Apache-2.0
                 this run</span
               >
             }
-            @if (v.failedAt) {
+            @if (v.inDoubt; as parts) {
+              <!-- Whole parts: a code or a name never splits or is cut. -->
+              <span class="run-in-doubt">
+                @for (part of parts; track $index) {
+                  <span class="run-in-doubt-part"
+                    >{{ part }}{{ $last ? "" : " ·" }}</span
+                  >&ngsp;
+                }
+              </span>
+            } @else if (v.failedAt) {
               <span class="run-failed-at">{{ v.failedAt }}</span>
             } @else if (v.handled) {
               <span class="run-handled">{{ v.handled }}</span>
@@ -141,6 +150,14 @@ SPDX-License-Identifier: Apache-2.0
     @if (refusal(); as why) {
       <p class="run-refusal" id="run-refusal">
         <weave-icon name="lock" [size]="16" />{{ why }}
+      </p>
+    }
+    @if (v.transactionsNote; as note) {
+      <p class="run-transactions-note" role="status">
+        <weave-icon
+          [name]="note === refusedNote ? 'lock' : 'info'"
+          [size]="16"
+        />{{ note }}
       </p>
     }
     @if (chosen()?.stopped) {

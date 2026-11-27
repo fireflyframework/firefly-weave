@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // runs.logs. Mirrors src/firefly_weave/contracts/run_views.py. Wire fields are
 // snake_case; every key is present unless it is marked optional here.
 import type { StudioApi } from "../api";
+import type { TransactionState } from "../editor/transactions/transaction-words";
 
 export const runStatuses = [
   "queued",
@@ -140,6 +141,8 @@ export interface RunSummary {
   active_incidents: number;
   archived: boolean;
   handled_errors?: number;
+  /** Its worst transaction's state; left out for a run without transactions. */
+  transaction_state?: TransactionState;
 }
 /** A run whose classification is unavailable: only its ID is shown. */
 export interface UnavailableRun {

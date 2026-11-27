@@ -3664,11 +3664,16 @@ export class App implements CanvasHost {
       this.contractRevision++;
       this.cdr.markForCheck();
     }
-    // Decision cases without a condition are named by Studio itself: the
-    // compiler reports such a step only as a whole.
+    // Decision cases without a condition and transactions without steps are
+    // named by Studio itself: the compiler reports such a step only as a whole.
     const conditions =
-      (source: string, format: string) => (result: Validation) =>
-        withConditionDiagnostics(result, this.parseSource(source, format));
+      (source: string, format: string) => (result: Validation) => {
+        const definition = this.parseSource(source, format);
+        return module.withEmptyTransactions(
+          withConditionDiagnostics(result, definition),
+          definition,
+        );
+      };
     return (this.validation ??= new module.ValidationService({
       transport: {
         local: (source, format) =>
@@ -7752,10 +7757,7 @@ export class App implements CanvasHost {
     const tools = this.tools;
     if (!tools) return;
     clearTimeout(this.playTimer);
-    const reduced =
-      typeof matchMedia === "function" &&
-      matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const frames = tools.playbackFrames(response, reduced);
+    const frames = tools.playbackOf(response, this.model.definition);
     const draftId = this.draftId;
     this.runAnnouncement.set(null);
     let at = 0;
@@ -8527,17 +8529,9 @@ export class App implements CanvasHost {
       if (e instanceof ApiError && e.code === "WV-COMPILE" && result) {
         this.shownResult = result;
         this.showDiagnostics(result);
-        const { countDiagnostics, countLine } = await import(
-          "./designer/validation"
-        );
-        const counts = countLine({
-          ...countDiagnostics(result.diagnostics),
-          errors: Math.max(
-            1,
-            result.errorCount,
-            countDiagnostics(result.diagnostics).errors,
-          ),
-        });
+        const counts = (
+          await import("./editor/ndv/owned/owned-commands")
+        ).publishRefused(this, result);
         this.validationView = {
           tone: "errors",
           headline: `${counts}. Fix the errors to publish.`,

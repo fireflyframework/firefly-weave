@@ -40,6 +40,7 @@ import { memo } from "../memo";
 import { loadKindRegistrations } from "../ndv/kinds";
 import { ndvRegistry } from "../ndv/registry";
 import { triggerInputs, type TriggerIntent } from "../state/canvas-sidecar";
+import { enclosingTransaction } from "../transactions/group";
 import { keyPlatform } from "../state/canvas-commands";
 import { commandFor, eventCombo } from "../state/keymap";
 import type { AddStepHost, AddStepRequest } from "./add-step-host";
@@ -162,6 +163,7 @@ export class AddStepPanel implements OnInit, DoCheck {
       triggers: readonly TriggerIntent[] | undefined,
       hasSteps: boolean,
       canCreate: boolean,
+      insideTransaction: boolean,
     ): Catalog =>
       buildCatalog({
         kinds: ready
@@ -181,6 +183,7 @@ export class AddStepPanel implements OnInit, DoCheck {
         triggers: triggers ?? [],
         hasSteps,
         canCreateActions: canCreate,
+        insideTransaction,
       }),
   );
   catalog(): Catalog {
@@ -196,6 +199,8 @@ export class AddStepPanel implements OnInit, DoCheck {
       h.model.canvas.triggers,
       h.model.definition.spec.steps.length > 0,
       !h.profile || h.can("definition.publish"),
+      !!h.addStep &&
+        !!enclosingTransaction(h.model.definition, h.addStep.insert.owner),
     );
   }
   private catalogState(): CatalogState {

@@ -187,6 +187,13 @@ class DebugState(ContractModel):
     asks: dict[str, PersonTask] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
 
+class TransactionDebugCause(RunTransactionCause):
+    """Why a simulated transaction left its normal path. Its code is any that a simulation takes: a scripted failure's
+    (up to 128 characters) or a fail step's, which has no limit."""
+
+    code: str = Field(min_length=1)
+
+
 class TransactionDebugView(ContractModel):
     """One transaction of a simulated run: its state, why it left its normal path, and its steps. It carries no
     values: no input, output or undo scope, and no business key that derives from a secret input."""
@@ -194,9 +201,9 @@ class TransactionDebugView(ContractModel):
     instance_key: InstanceKeyText
     node_id: ResourceName
     state: TransactionState
-    cause: RunTransactionCause | None = Field(default=None, exclude_if=lambda v: v is None)
+    cause: TransactionDebugCause | None = Field(default=None, exclude_if=lambda v: v is None)
     # A cancel or a failure that waits for the step that can't be undone to settle.
-    pending_abort: RunTransactionCause | None = Field(default=None, exclude_if=lambda v: v is None)
+    pending_abort: TransactionDebugCause | None = Field(default=None, exclude_if=lambda v: v is None)
     # The in-doubt incident's key, which a resolve command names.
     incident_key: str | None = Field(default=None, exclude_if=lambda v: v is None)
     business_key: BusinessKey | None = Field(default=None, exclude_if=lambda v: v is None)

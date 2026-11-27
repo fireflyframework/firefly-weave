@@ -18,7 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 // Plain-language explanations of compiler diagnostics. Rows show `text`
 // (and `hint`); the stable code and the compiler's own message stay
 // available as secondary detail for support.
+import { blocksOf } from "../editor/step-blocks";
 import { readable } from "../errors";
+import { formatPointer } from "../forms/core/json";
+import type { Step } from "../model";
 
 export type Severity = "error" | "warning" | "info";
 
@@ -537,5 +540,129 @@ export function describeDiagnostic(
     code,
     technical,
     ...(hint ? { hint } : {}),
+  };
+}
+
+interface DiagnosticLike {
+  code?: unknown;
+  severity?: unknown;
+  path?: unknown;
+  message?: unknown;
+}
+interface ResultLike {
+  diagnostics: readonly object[];
+  errorCount?: number;
+  validationOk?: boolean;
+  ok?: boolean;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+/** A step of a step's undo that runs nothing yet. */
+const unset = (operation: unknown): boolean =>
+  isRecord(operation) && !operation["uses"];
+
+/** What a step's undo lacks, with the field it is chosen in; null when it has all. */
+function unsetUndo(
+  step: Record<string, unknown>,
+  inside: boolean,
+): { field: string[]; code: string; message: string } | null {
+  const pair = ["confirm", "cancel"].find((name) => unset(step[name]));
+  const name = pair ?? (unset(step["compensate"]) ? "compensate" : null);
+  if (!name) return null;
+  if (!inside)
+    return {
+      field: [name],
+      code: "WV-COMP-TXN_OUTSIDE",
+      message: "It applies only to steps inside a transaction.",
+    };
+  return {
+    field: [name, "uses"],
+    ...(pair
+      ? {
+          code: "WV-COMP-TXN_RESERVE_PAIR",
+          message: "A step that reserves needs both confirm and cancel.",
+        }
+      : {
+          code: "WV-STUDIO-UNDO",
+          message: "Choose what reverses this step.",
+        }),
+  };
+}
+
+/** What transactions and their steps lack, at any depth, with where each is. */
+function unfinishedTransactions(
+  definition: unknown,
+): { path: string; code: string; message: string }[] {
+  const found: ReturnType<typeof unfinishedTransactions> = [];
+  const visit = (steps: unknown, at: (string | number)[], inside: boolean) => {
+    if (!Array.isArray(steps)) return;
+    steps.forEach((step: unknown, index) => {
+      if (!isRecord(step)) return;
+      const here = [...at, index];
+      const transaction = step["kind"] === "transaction";
+      const own = step["steps"];
+      if (transaction && Array.isArray(own) && !own.length)
+        found.push({
+          path: formatPointer(here),
+          code: "WV-STUDIO-TRANSACTION",
+          message: "Add a step to the transaction.",
+        });
+      const lacks = unsetUndo(step, inside);
+      if (lacks)
+        found.push({
+          path: formatPointer([...here, ...lacks.field]),
+          code: lacks.code,
+          message: lacks.message,
+        });
+      for (const block of blocksOf(step as Step))
+        if (isRecord(block.branch))
+          visit(
+            block.branch["steps"],
+            [...here, ...block.path, "steps"],
+            transaction ? block.kind === "body" : inside,
+          );
+    });
+  };
+  if (isRecord(definition) && isRecord(definition["spec"]))
+    visit(definition["spec"]["steps"], ["spec", "steps"], false);
+  return found;
+}
+
+/**
+ * A check result that says what each transaction lacks: "Add a step to the
+ * transaction." on one without steps, and on a step what undoes it. The
+ * platform answers those only with a general error, on the step of the main
+ * sequence that holds them: that answer is replaced by the ones that say what
+ * to do, where it is to be done.
+ */
+export function withEmptyTransactions<T extends ResultLike>(
+  result: T,
+  definition: unknown,
+): T {
+  const unfinished = unfinishedTransactions(definition);
+  if (!unfinished.length || !Array.isArray(result.diagnostics)) return result;
+  const all = result.diagnostics as DiagnosticLike[];
+  const generic = (d: DiagnosticLike) =>
+    text(d.code).startsWith("WV-SCHEMA-") &&
+    d.severity !== "warning" &&
+    d.severity !== "info" &&
+    text(d.path).startsWith("/spec/steps/") &&
+    unfinished.some(({ path }) => `${path}/`.startsWith(`${text(d.path)}/`));
+  const kept = all.filter((d) => !generic(d));
+  const added = unfinished.map(({ path, code, message }) => ({
+    code,
+    severity: "error",
+    message,
+    path,
+  }));
+  const replaced = all.length - kept.length;
+  return {
+    ...result,
+    diagnostics: [...added, ...kept],
+    errorCount: Math.max(0, (result.errorCount ?? 0) - replaced) + added.length,
+    validationOk: false,
+    ...(result.ok !== undefined ? { ok: false } : {}),
   };
 }

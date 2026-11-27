@@ -40,6 +40,7 @@ import { entriesOf } from "../state/test-data-ops";
 import type { TestDataService } from "../state/test-data-service";
 import { runPrints } from "../state/test-data-tools";
 import type { ToastAction } from "../../toast";
+import { splitPhase } from "../transactions/phase-keys";
 import {
   leftOutText,
   mergeQuestion,
@@ -117,6 +118,11 @@ export class DebugRun {
     if (refusal) return { kind: "refused", message: refusal };
     const record = chosen.record;
     const definition = chosen.data ? chosenDefinition(chosen) : null;
+    // Read before any await, with the run they belong to.
+    const transactions =
+      chosen.transactions && "views" in chosen.transactions
+        ? chosen.transactions.views
+        : null;
     if (!record || !definition)
       return {
         kind: "refused",
@@ -158,6 +164,8 @@ export class DebugRun {
         facts,
         definition,
         failedStep: failedStepOf(chosen),
+        // As the tab read them for this run: what undid a transaction is copied.
+        ...(transactions ? { transactions } : {}),
       },
       host.model.definition,
       runPrints(definition, record.input as Json, host.model),
@@ -296,13 +304,16 @@ function failedStepOf(
 /**
  * The instance the simulation stopped at: blocked, or failed. A failure its
  * step's On error handled is a failed entry too, and the run went on past it.
+ * Null at an undo step, whose test output the run log asks for.
  */
 export function stopOf(
   outcome: Extract<ExecuteOutcome, { kind: "done" }>,
 ): string | null {
   const response = outcome.response;
   if (response.blocked)
-    return response.blocked.instanceKey || response.blocked.nodeId;
+    return splitPhase(response.blocked.instanceKey)
+      ? null
+      : response.blocked.instanceKey || response.blocked.nodeId;
   const failed = response.trace.find(
     (entry) => entry.status === "failed" && !entry.handled,
   );

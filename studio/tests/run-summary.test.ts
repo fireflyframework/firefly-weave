@@ -68,6 +68,9 @@ describe("what a step that ran says", () => {
     expect(summaryLine(step("signal"), {})).toBe("Signal received");
     expect(summaryLine(route, null, taking("default"))).toBe("Path: Otherwise");
     expect(summaryLine(step("action"), undefined)).toBeNull();
+    // A new transaction's result is null: its frame says nothing of it.
+    expect(summaryLine(step("transaction"), null)).toBeNull();
+    expect(summaryLine(step("transaction"), { a: 1 })).toBe("1 field");
   });
   it("names a taken case by its condition", () => {
     const amount = {

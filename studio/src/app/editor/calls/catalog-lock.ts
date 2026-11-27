@@ -17,8 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The project's catalog lock (`GET {project}/catalog`, catalog.read): every
 // published definition with its digest. Studio reads it once per account and
-// environment for the workflows a step may call and the workflows that call
-// this one. Rendering asks for it, so a read that failed isn't asked again
+// environment for the workflows a step may call, the workflows that call
+// this one and what may undo a step in a transaction. Rendering asks for it, so a read that failed isn't asked again
 // until its pause is over (5 s, doubling to a minute), and an answer that
 // arrives after the account or environment changed is dropped.
 import { signal } from "@angular/core";
@@ -28,8 +28,8 @@ import { isJsonObject, type JsonObject } from "../../forms/core/json";
 export const LOCK_RETRY_MS = 5_000;
 export const LOCK_RETRY_MAX_MS = 60_000;
 
-/** A published workflow version of the lock. */
-export interface LockedWorkflow {
+/** A published version of the lock: a workflow's, or an action's. */
+export interface LockedDefinition {
   /** `name@version`. */
   uses: string;
   name: string;
@@ -37,9 +37,10 @@ export interface LockedWorkflow {
   /** The definition as the platform published it. */
   document: JsonObject;
 }
-/** The workflow versions of a catalog lock, by `name@version`, and its shared schemas. */
+/** The workflow and action versions of a catalog lock, by `name@version`, and its shared schemas. */
 export interface CatalogLock {
-  workflows: ReadonlyMap<string, LockedWorkflow>;
+  workflows: ReadonlyMap<string, LockedDefinition>;
+  actions: ReadonlyMap<string, LockedDefinition>;
   /** Schemas a definition's schemas reference by name (`customer.json`, `customer.json#/$defs/x`). */
   schemas: Readonly<Record<string, JsonObject>>;
 }
@@ -71,13 +72,21 @@ const UNREADABLE = "Studio couldn't read this project's published workflows.";
 
 const text = (value: unknown) => (typeof value === "string" ? value : "");
 
-/** The workflows and shared schemas of a catalog lock answer, or null when it isn't one. */
+/** The workflows, actions and shared schemas of a catalog lock answer, or null when it isn't one. */
 export function parseCatalogLock(value: unknown): CatalogLock | null {
   if (!isJsonObject(value) || !Array.isArray(value["definitions"])) return null;
-  const workflows = new Map<string, LockedWorkflow>();
+  const workflows = new Map<string, LockedDefinition>();
+  const actions = new Map<string, LockedDefinition>();
   for (const entry of value["definitions"]) {
     const document = isJsonObject(entry) ? entry["document"] : null;
-    if (!isJsonObject(document) || document["kind"] !== "Workflow") continue;
+    if (!isJsonObject(document)) continue;
+    const kept =
+      document["kind"] === "Workflow"
+        ? workflows
+        : document["kind"] === "Action"
+          ? actions
+          : null;
+    if (!kept) continue;
     const metadata = isJsonObject(document["metadata"])
       ? document["metadata"]
       : {};
@@ -85,7 +94,7 @@ export function parseCatalogLock(value: unknown): CatalogLock | null {
       version = text(metadata["version"]);
     if (!name || !version) continue;
     const uses = `${name}@${version}`;
-    workflows.set(uses, { uses, name, version, document });
+    kept.set(uses, { uses, name, version, document });
   }
   const schemas: Record<string, JsonObject> = {};
   if (isJsonObject(value["schemas"]))
@@ -95,7 +104,7 @@ export function parseCatalogLock(value: unknown): CatalogLock | null {
           value: schema,
           enumerable: true,
         });
-  return { workflows, schemas };
+  return { workflows, actions, schemas };
 }
 
 /**

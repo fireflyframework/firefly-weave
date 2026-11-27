@@ -25,12 +25,21 @@ passes the time (``time.monotonic()``), so tests choose it.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
-from firefly_weave.studio.simulation import SimulationRefused, simulator_for, stuck_at, unsimulated
+from firefly_weave.studio.simulation import (
+    OutOfTime,
+    SimulationRefused,
+    host_simulator,
+    never,
+    simulator_for,
+    stuck_at,
+    unsimulated,
+)
 
 if TYPE_CHECKING:
     from firefly_weave.compiler.catalog import CatalogSnapshot
@@ -43,6 +52,7 @@ logger = logging.getLogger(__name__)
 SESSIONS = 4
 IDLE_SECONDS = 1800
 SESSION_BYTES = 16 * 1024 * 1024
+LATE = "The run log took longer than 30 seconds; execute fewer steps"
 
 
 @dataclass
@@ -105,14 +115,30 @@ class HostSessions:
         kept.touched = now
         return self._session(identifier, kept, self._restored(kept))
 
-    def command(self, identifier: UUID, revision: int, command: DebugCommand, now: float) -> DebugSession:
+    def command(
+        self,
+        identifier: UUID,
+        revision: int,
+        command: DebugCommand,
+        now: float,
+        out_of_time: Callable[[], bool] = never,
+    ) -> DebugSession:
+        """Move a session on; one that runs out of time is refused, and the session stays as it was."""
+        try:
+            return self._command(identifier, revision, command, now, out_of_time)
+        except OutOfTime:
+            raise SimulationRefused(503, "WV-STUDIO-TIMEOUT", LATE) from None
+
+    def _command(
+        self, identifier: UUID, revision: int, command: DebugCommand, now: float, out_of_time: Callable[[], bool]
+    ) -> DebugSession:
         from firefly_weave.operations.debug.models import DebugError
         from firefly_weave.runtime.kernel import KernelError
 
         kept = self._find(identifier, now)
         if revision != kept.revision:
             raise SimulationRefused(409, "WV-DEBUG-REVISION", "The run log changed since; reload it")
-        simulator = self._restored(kept)
+        simulator = self._restored(kept, out_of_time)
         _refuse_secret_answer(simulator, command)
         try:
             if command.kind == "continue" and kept.scripts is not None:
@@ -125,10 +151,10 @@ class HostSessions:
             raise SimulationRefused(422, error.code, "The run log couldn't do that here") from None
         except KernelError as error:
             raise SimulationRefused(422, str(error), "The simulated run refused that") from None
-        except SimulationRefused:
+        except (SimulationRefused, OutOfTime):
             raise
         except Exception as error:  # noqa: BLE001 - never a 500: the session stops where the simulator did
-            place, _ = stuck_at(self._restored(kept), kept.scripts)
+            place, _ = stuck_at(self._restored(kept, out_of_time), kept.scripts)
             # The kind of failure and where, never its message (it can hold values).
             logger.debug("Studio couldn't simulate %s: %s", place, type(error).__name__)
             raise SimulationRefused(422, "WV-STUDIO-SIMULATION", unsimulated(place)) from None
@@ -166,10 +192,10 @@ class HostSessions:
             del self._kept[identifier]
 
     @staticmethod
-    def _restored(kept: _Kept) -> Simulator:
-        from firefly_weave.operations.debug.simulator import Simulator
-
-        return Simulator.restore(kept.state)
+    def _restored(kept: _Kept, out_of_time: Callable[[], bool] = never) -> Simulator:
+        simulator = host_simulator().restore(kept.state)
+        simulator.out_of_time = out_of_time
+        return cast("Simulator", simulator)
 
     @staticmethod
     def _session(identifier: UUID, kept: _Kept, simulator: Simulator) -> DebugSession:
@@ -225,4 +251,5 @@ def _continue(simulator: Simulator, scripts: ExecuteScripts) -> None:
     from firefly_weave.operations.debug.simulator import TERMINAL
     from firefly_weave.studio.simulation import _drive
 
-    _drive(simulator, scripts, SignalNode, HumanTaskNode, TERMINAL)
+    host = cast(Any, simulator)
+    host.drive(lambda: _drive(host, scripts, SignalNode, HumanTaskNode, TERMINAL))

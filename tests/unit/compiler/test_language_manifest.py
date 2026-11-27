@@ -245,13 +245,15 @@ def test_a_manifest_from_a_server_without_step_fields_still_reads():
 
 def test_new_constructs_stay_pending_until_studio_ships_them():
     manifest = language_manifest()
-    assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {
-        "agent",
-        "transaction",
-    }
+    assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {"agent"}
     assert {entry.name for entry in manifest.operators if entry.studio == "pending"} == {"concat", "join"}
     assert {entry.name for entry in manifest.workflow_fields if entry.studio == "pending"} == set()
-    assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == {"undo"}
+    assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == set()
+
+
+def test_studio_edits_how_a_step_in_a_transaction_is_undone():
+    undo = next(entry for entry in language_manifest().step_fields if entry.name == "undo")
+    assert undo.studio == "ready"
 
 
 def test_studio_edits_what_a_steps_failure_does():

@@ -34,11 +34,20 @@ from uuid import UUID
 
 from jsonschema import Draft202012Validator, FormatChecker, validators
 from jsonschema.exceptions import ValidationError as SchemaViolation
-from pydantic import AwareDatetime, BeforeValidator, ConfigDict, Field, ValidationInfo, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    model_validator,
+)
 
 from firefly_weave.contracts.definitions import ContractModel, OmissionOnly, _is_absent, _omit_absent_default
 from firefly_weave.contracts.instance_keys import InstanceKeyText
 from firefly_weave.contracts.step_errors import StepOutcome
+from firefly_weave.contracts.transactions import Effect
 from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonData, JsonObject, JsonObjectData, UnicodeString
 
 TEST_DATA_SCHEMA_ID: Final = "urn:firefly-weave:schema:studio-test-data:v1"
@@ -55,7 +64,11 @@ REFERENCE_PATTERN: Final = (
 HASH_PATTERN: Final = r"^fnv1a64:[0-9a-f]{16}$"
 # The codes a simulation can script: the platform's own (WV-...) and an action's definite failure codes.
 ERROR_CODE_PATTERN: Final = r"^[A-Z][A-Z0-9_.-]*$"
+# The instance keys a simulated failure may have: a step's, one of its confirm, cancel and undo (`hold#confirm`,
+# `add[2]#undo`), or a repeated activation's, whose segments start with a digit (`support#1.2`).
+ERROR_KEY_PATTERN: Final = r"^[^#]*(?:#(?:confirm|cancel|undo|[0-9].*))?$"
 MAX_SIMULATED_ATTEMPTS: Final = 1000
+NOTHING_APPLIED: Final = "A failure whose outcome is unknown can't also say that nothing was applied"
 
 type FrameKey = Annotated[UnicodeString, Field(max_length=1024, pattern=FRAME_PATTERN)]
 type CalleeReference = Annotated[UnicodeString, Field(max_length=300, pattern=REFERENCE_PATTERN)]
@@ -98,6 +111,16 @@ def _not_boolean(value: object) -> object:
     return value
 
 
+_ERROR_KEY = re.compile(ERROR_KEY_PATTERN[1:-1])
+
+
+def _error_key(key: str) -> str:
+    if _ERROR_KEY.fullmatch(key) is None:
+        raise ValueError("A failure of a phase names a step's confirm, cancel or undo")
+    return key
+
+
+type ErrorKey = Annotated[InstanceKeyText, AfterValidator(_error_key)]
 type HyphenatedUUID = Annotated[UUID, BeforeValidator(_hyphenated)]
 # A validator ahead of the datetime hands it a Python str, which strict mode refuses; so it is lax and _rfc3339 gates.
 type Rfc3339DateTime = Annotated[AwareDatetime, Field(strict=False), BeforeValidator(_rfc3339)]
@@ -229,8 +252,10 @@ class ErrorEntry(_Provenanced):
     """A failure a step reports in place of its result when Studio executes the workflow; real runs never see it.
 
     ``outcome`` (``failed`` when omitted) and ``attempts`` (1 when omitted) are what the platform would report after
-    the step's own retries. A failure never holds a message: the platform's copy for the code applies, and a failure
-    copied from a run keeps only its code, outcome, attempts and the run it came from.
+    the step's own retries. ``effect`` says whether a step inside a transaction may have applied anything; omitted, it
+    follows from the code and the outcome, as on a platform. A failure never holds a message: the platform's copy for
+    the code applies, and a failure copied from a run keeps only its code, outcome, attempts, effect and the run it
+    came from.
     """
 
     code: SimulatedErrorCode
@@ -240,9 +265,16 @@ class ErrorEntry(_Provenanced):
     attempts: OmissionOnly[Annotated[int, Field(ge=0, le=MAX_SIMULATED_ATTEMPTS)]] = Field(
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
+    effect: OmissionOnly[Effect] = Field(default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default)
     source: OmissionOnly[ErrorSource] = Field(
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
+
+    @model_validator(mode="after")
+    def effect_rule(self) -> Self:
+        if self.effect == "none" and self.outcome == "unknown":
+            raise ValueError(NOTHING_APPLIED)
+        return self
 
 
 type SignalEntry = SignalScript | SignalTimeout
@@ -274,7 +306,7 @@ class StudioTestData(_Sidecar):
     waits: OmissionOnly[WaitScripts] = Field(
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
-    errors: OmissionOnly[Annotated[dict[InstanceKeyText, ErrorEntry], Field(max_length=1000)]] = Field(
+    errors: OmissionOnly[Annotated[dict[ErrorKey, ErrorEntry], Field(max_length=1000)]] = Field(
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
 

@@ -21,6 +21,7 @@ import type { ActionPickerItem } from "../src/app/integrations/action-picker";
 import { builtInKinds } from "../src/app/editor/ndv/kinds/builtin";
 import { callKind } from "../src/app/editor/ndv/kinds/call";
 import { llmKind } from "../src/app/editor/ndv/kinds/llm";
+import { transactionKind } from "../src/app/editor/ndv/kinds/transaction";
 import type {
   Catalog,
   CatalogInput,
@@ -28,15 +29,18 @@ import type {
   PanelEntry,
 } from "../src/app/editor/add-step/entries";
 
-export const kinds: KindInfo[] = [...builtInKinds, llmKind, callKind].map(
-  (kind) => ({
-    kind: kind.kind,
-    label: kind.label,
-    description: kind.description,
-    keywords: kind.keywords,
-    icon: kind.icon,
-  }),
-);
+export const kinds: KindInfo[] = [
+  ...builtInKinds,
+  llmKind,
+  callKind,
+  transactionKind,
+].map((kind) => ({
+  kind: kind.kind,
+  label: kind.label,
+  description: kind.description,
+  keywords: kind.keywords,
+  icon: kind.icon,
+}));
 export const published: ActionPickerItem[] = [
   {
     id: "a1",

@@ -17,7 +17,8 @@
 """Execute step, Execute previous steps and Execute workflow on the Studio host: the slice of a workflow a target
 needs, the catalog a simulation compiles against, stubs for what isn't there, and the simulated run as a trace.
 
-Pure: no network, no clock and no files. The host fetches the project catalog itself and passes it in.
+Pure: no network, no clock and no files. The host fetches the project catalog itself and passes it in, and says when
+a request's time is up.
 """
 
 from __future__ import annotations
@@ -27,17 +28,33 @@ import functools
 import json
 import logging
 import math
-from collections.abc import Iterable, Iterator, Mapping
+import re
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot
-from firefly_weave.contracts.definitions import ActionDefinition, load_definition
+from firefly_weave.contracts.definitions import NAME_PATTERN, SEMVER_PATTERN, ActionDefinition, load_definition
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
+    from firefly_weave.compiler.api import CompiledArtifact
     from firefly_weave.compiler.ir import WorkflowIR
+    from firefly_weave.contracts.transactions import TransactionState, UndoPhase
+    from firefly_weave.operations.debug.models import DebugState, TransactionDebugView
     from firefly_weave.operations.debug.simulator import Simulator
-    from firefly_weave.studio.local_contracts import CompileSummary, ExecuteRequest, ExecuteResponse, SimulationRequest
+    from firefly_weave.operations.debug.transactions import PhaseTarget
+    from firefly_weave.runtime.kernel import PreparedWorkflow
+    from firefly_weave.runtime.models import CallIntent, Deadline, RunState, RuntimeEvent, TransactionRecord
+    from firefly_weave.runtime.transactions import TransactionShapes
+    from firefly_weave.studio.local_contracts import (
+        CompileSummary,
+        ExecuteRequest,
+        ExecuteResponse,
+        SimulationRequest,
+        TraceEntry,
+    )
 
 NULL: JsonObject = {"literal": None}
 
@@ -133,7 +150,11 @@ def slice_for_target(document: JsonObject, step_id: str) -> JsonObject | None:
 # --- the catalog a simulation compiles against ------------------------------------------------------------------
 
 STUB_TASK = "studio.stub"
+# What a stub of a confirm, release or undo runs: one of those changes data, and may run again.
+UNDO_STUB_TASK = "studio.undo-stub"
 STUB_VERSION = "0.0.0"
+# The time limit of a stubbed called confirm, release or undo, which must have one.
+UNDO_STUB_SECONDS = 300
 
 
 class CatalogConflict(ValueError):
@@ -200,16 +221,21 @@ def _task_of(action: ActionDefinition) -> JsonObject | None:
     }
 
 
-def _stub_action(reference: str) -> JsonObject:
+def _stub_action(reference: str, capability: JsonObject) -> JsonObject:
     name, _, version = reference.partition("@")
+    implementation = {
+        "kind": "worker",
+        "taskType": capability["taskType"],
+        "taskVersion": capability["taskVersion"],
+    }
     return {
         "apiVersion": "weave/v1alpha1",
         "kind": "Action",
         "metadata": {"name": name, "version": version},
         "spec": {
-            "implementation": {"kind": "worker", "taskType": STUB_TASK, "taskVersion": STUB_VERSION},
-            "sideEffect": "read_only",
-            "timeoutSeconds": 60,
+            "implementation": implementation,
+            "sideEffect": capability["sideEffect"],
+            "timeoutSeconds": capability["timeoutSeconds"],
             "inputSchema": {},
             "outputSchema": {},
         },
@@ -224,16 +250,25 @@ STUB_CAPABILITY: JsonObject = {
     "sideEffect": "read_only",
     "timeoutSeconds": 60,
 }
+UNDO_STUB_CAPABILITY: JsonObject = {**STUB_CAPABILITY, "taskType": UNDO_STUB_TASK, "sideEffect": "idempotent"}
 
 
-def _stub_workflow(reference: str) -> JsonObject:
+def _stub_workflow(reference: str, timeout: int | None) -> JsonObject:
     """A called workflow nobody has, as an interface any workflow may call; its output comes from a pin."""
     name, _, version = reference.partition("@")
+    limit: JsonObject = {"timeoutSeconds": timeout} if timeout is not None else {}
     return {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
         "metadata": {"name": name, "version": version},
-        "spec": {"inputSchema": {}, "outputSchema": {}, "steps": [], "output": {"literal": None}, "callable": {}},
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "steps": [],
+            "output": {"literal": None},
+            "callable": {},
+            **limit,
+        },
     }
 
 
@@ -246,11 +281,14 @@ def simulation_catalog(
 ) -> tuple[CatalogSnapshot, list[str]]:
     """The union of the project catalog (when connected), what ships with Weave and the local definitions Studio
     sent, plus, with ``stub_unresolved``, a read-only stub for each action the workflow uses that none of them has and
-    an interface for each called workflow none of them has. Decision tables are never stubbed.
+    an interface for each called workflow none of them has. What confirms, releases or undoes a step gets a stub that
+    is safe to run again, or an interface with a time limit. Decision tables are never stubbed.
 
     Returns the catalog and the stubbed references, sorted. A local definition that doesn't load is left out, so the
     steps that use it are stubbed or fail to compile, never accepted on a guess.
     """
+    from firefly_weave.contracts.transactions import PHASE_SEGMENTS
+
     local = []
     tasks: list[JsonObject] = []
     for value in definitions:
@@ -274,31 +312,45 @@ def simulation_catalog(
         merged = _union([merged, CatalogSnapshot.from_definitions([], tasks=missing_tasks)])
     if not stub_unresolved:
         return merged, []
-    actions: set[str] = set()
-    callees: set[str] = set()
+    # What confirms, releases or undoes a step, wherever else the workflow uses it.
+    undos: set[tuple[str, str]] = set()
+    missing: set[tuple[str, str]] = set()
     spec = document.get("spec")
     for step in steps_of(spec.get("steps") if isinstance(spec, dict) else None):
-        uses = step.get("uses")
-        if not isinstance(uses, str):
-            continue
-        if step.get("kind") == "action" and ("Action", uses) not in merged.resources:
-            actions.add(uses)
-        elif step.get("kind") == "callWorkflow" and ("Workflow", uses) not in merged.resources:
-            callees.add(uses)
-    if actions or callees:
+        for phase, operation in ((None, step), *((name, step.get(name)) for name in PHASE_SEGMENTS)):
+            if not isinstance(operation, dict) or not isinstance(operation.get("uses"), str):
+                continue
+            kind = operation.get("kind")
+            if kind not in ("action", "callWorkflow"):
+                continue
+            used = ("Action" if kind == "action" else "Workflow", cast(str, operation["uses"]))
+            # Nothing can stand for a reference that isn't a name and a version: the compiler says what is wrong.
+            if used in merged.resources or re.fullmatch(f"{NAME_PATTERN}@{SEMVER_PATTERN}", used[1]) is None:
+                continue
+            missing.add(used)
+            if phase is not None:
+                undos.add(used)
+    if missing:
+        actions = {
+            reference: UNDO_STUB_CAPABILITY if (kind, reference) in undos else STUB_CAPABILITY
+            for kind, reference in sorted(missing)
+            if kind == "Action"
+        }
+        callees = [reference for kind, reference in sorted(missing) if kind == "Workflow"]
+        limits = {reference: UNDO_STUB_SECONDS for kind, reference in undos if kind == "Workflow"}
         merged = _union(
             [
                 merged,
                 CatalogSnapshot.from_definitions(
                     [
-                        *(load_definition(_stub_action(reference)) for reference in sorted(actions)),
-                        *(load_definition(_stub_workflow(reference)) for reference in sorted(callees)),
+                        *(load_definition(_stub_action(name, task)) for name, task in actions.items()),
+                        *(load_definition(_stub_workflow(name, limits.get(name))) for name in callees),
                     ],
-                    tasks=[STUB_CAPABILITY] if actions else [],
+                    tasks=[task for task in (STUB_CAPABILITY, UNDO_STUB_CAPABILITY) if task in actions.values()],
                 ),
             ]
         )
-    return merged, sorted(actions | callees)
+    return merged, sorted({reference for _, reference in missing})
 
 
 # --- the simulated run -------------------------------------------------------------------------------------------
@@ -315,6 +367,15 @@ class SimulationRefused(ValueError):
 ROUNDS = 1000
 
 
+class OutOfTime(Exception):
+    """The time of the request that simulates is up: the simulation stops at once, so the next request can start."""
+
+
+def never() -> bool:
+    """Whether the time is up, for a simulation without a limit of its own."""
+    return False
+
+
 def _pointer(*parts: str) -> str:
     return "".join("/" + part.replace("~", "~0").replace("/", "~1") for part in parts)
 
@@ -328,15 +389,16 @@ def classify_test_data(
     """Pointers into the request of values a schema marks secret, and of values too large or too deep to classify.
 
     Only typed values are classified, each against its own schema: the input, each step mock by its step's output
-    fields, each action mock by its action's, each AI agent tool's mock by every schema of the tool's result and a mock
-    of one agent call for secrets by every tool's, each mock inside a called workflow by that workflow's step, each
-    signal payload, each person's answer, each saved AI turn's final answer by its profile's output fields, and each
-    saved tool call's arguments by its tool's input. Both lists are refused before anything is simulated.
+    fields (a confirm's, cancel's or undo's by that operation's own), each action mock by its action's, each AI agent
+    tool's mock by every schema of the tool's result and a mock of one agent call for secrets by every tool's, each
+    mock inside a called workflow by that workflow's step, each signal payload, each person's answer, each saved AI
+    turn's final answer by its profile's output fields, and each saved tool call's arguments by its tool's input. Both
+    lists are refused before anything is simulated.
     """
     from firefly_weave.compiler.agent_tools import offline_input_schema
     from firefly_weave.compiler.platform_catalog import platform_schema_bundle
     from firefly_weave.compiler.schemas import _Failure
-    from firefly_weave.compiler.test_data import output_target, step_at
+    from firefly_weave.compiler.test_data import pin_target, step_at
     from firefly_weave.operations.debug.ai_turns import tool_values
     from firefly_weave.operations.redaction import classify
 
@@ -370,7 +432,7 @@ def classify_test_data(
                 instance = key.removeprefix("node:")
                 tools = _call_tools(workflow, instance, catalog)
                 if tools is None:
-                    check(_pointer(*prefix, key), output_target(workflow, step_at(workflow, instance), catalog), value)
+                    check(_pointer(*prefix, key), pin_target(workflow, instance, catalog), value)
                 # A mock of one call is checked for secrets by every schema of every tool, whether it fits that tool
                 # or not, since the saved turns decide which tool the call runs.
                 for schema in (schema for schemas in tools or [] for schema in schemas):
@@ -574,28 +636,32 @@ def _callees(request: SimulationRequest, catalog: CatalogSnapshot, stubs: Iterab
 
 def _called(
     artifact: Any, request: SimulationRequest, documents: Mapping[str, JsonObject], catalog: CatalogSnapshot
-) -> dict[str, Any]:
-    """Compiled called workflows the run reaches, with the mocks test data holds for their steps."""
+) -> tuple[dict[str, Any], set[str]]:
+    """Compiled called workflows the run reaches, with the mocks test data holds for their steps; and those the
+    request brings that don't read or compile."""
     from firefly_weave.compiler.api import compile_source
     from firefly_weave.operations.debug.models import CalledWorkflow
 
     called: dict[str, Any] = {}
+    broken: set[str] = set()
     pending = [artifact]
     while pending:
         current = pending.pop()
         for dependency in _dependencies(current):
             reference = dependency.reference
-            if dependency.kind != "Workflow" or reference in called or reference not in documents:
+            if dependency.kind != "Workflow" or reference in called or reference not in request.workflows:
                 continue
-            result = compile_source(documents[reference], format="object", catalog=catalog)
-            if not result.ok or result.artifact is None:
+            document = documents.get(reference)
+            result = compile_source(document, format="object", catalog=catalog) if document is not None else None
+            if result is None or not result.ok or result.artifact is None:
+                broken.add(reference)
                 continue
             called[reference] = CalledWorkflow(
                 artifact=json.loads(result.artifact.to_bytes()),
                 mocks=dict(request.workflows[reference].mocks),
             )
             pending.append(result.artifact)
-    return called
+    return called, broken
 
 
 def _dependencies(artifact: Any) -> list[Any]:
@@ -611,17 +677,20 @@ def _in_slice[V](document: JsonObject, whole: JsonObject, mocks: Mapping[str, V]
     A key that names no step (or action) anywhere in the workflow stays, so the simulator still refuses it.
     """
     from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
+    from firefly_weave.contracts.transactions import PHASE_SEGMENTS
 
     def ids(workflow: JsonObject) -> set[str]:
         spec = workflow.get("spec")
         return {cast(str, step.get("id")) for step in steps_of(spec.get("steps") if isinstance(spec, dict) else None)}
 
     def actions(workflow: JsonObject) -> set[str]:
+        # The actions its steps run, and those that confirm, release or undo a step.
         spec = workflow.get("spec")
         return {
-            cast(str, step.get("uses"))
+            cast(str, operation.get("uses"))
             for step in steps_of(spec.get("steps") if isinstance(spec, dict) else None)
-            if step.get("kind") == "action"
+            for operation in (step, *(step.get(phase) for phase in PHASE_SEGMENTS))
+            if isinstance(operation, dict) and operation.get("kind") == "action"
         }
 
     kept_ids, all_ids = ids(document), ids(whole)
@@ -659,19 +728,21 @@ def simulator_for(
     *,
     whole: JsonObject,
     sliced: bool,
+    target: str | None = None,
+    out_of_time: Callable[[], bool] = never,
 ) -> tuple[CompileSummary, Simulator | None, set[str]]:
     """Compile ``document`` (the workflow, or its slice) for a simulation and start it with the request's test data.
 
     Test data is checked against the whole workflow before compiling (secrets, and values too large to check);
     mocks for steps the slice doesn't run, and mocks that no longer fit, are left out before the simulator sees
     them (the misfits are returned); called workflows run with the mocks test data holds for their steps; AI tasks
-    replay their saved turns; simulated failures apply like mocks, to the steps the document runs. The simulator is
-    None when the workflow doesn't compile. Raises ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
+    replay their saved turns; simulated failures apply like mocks, to the steps the document runs. ``target`` is the
+    step the document is cut after. The simulator raises ``OutOfTime`` at its first step once ``out_of_time`` says so;
+    it is None when the workflow doesn't compile. Raises ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
     """
     from firefly_weave.compiler.api import compile_source
     from firefly_weave.operations.debug.ai_turns import with_ai_turns
-    from firefly_weave.operations.debug.models import ScriptedError
-    from firefly_weave.operations.debug.simulator import Simulator
+    from firefly_weave.operations.debug.models import DebugError, ScriptedError
     from firefly_weave.runtime.kernel import KernelError
     from firefly_weave.studio.local_contracts import CompileSummary
 
@@ -693,19 +764,257 @@ def simulator_for(
     ai_turns = {key: entry.model_dump(mode="json", by_alias=True) for key, entry in request.scripts.aiTurns.items()}
     kept = _in_slice(document, whole, {k: v for k, v in request.mocks.items() if k not in misfits})
     mocks = with_ai_turns(artifact, kept, ai_turns)
-    workflows = _called(artifact, request, callees, catalog)
+    workflows, broken = _called(artifact, request, callees, catalog)
     errors = {
-        key: ScriptedError(code=failure.code, outcome=failure.outcome, attempts=failure.attempts)
+        key: ScriptedError(code=failure.code, outcome=failure.outcome, attempts=failure.attempts, effect=failure.effect)
         for key, failure in _in_slice(document, whole, request.errors).items()
     }
     try:
-        simulator = Simulator(
-            artifact, mocks=mocks, input=request.input, now=request.now, workflows=workflows, errors=errors
+        simulator = _watching_simulator()(
+            artifact,
+            target=target,
+            broken=broken - set(stubs),
+            mocks=mocks,
+            input=request.input,
+            now=request.now,
+            workflows=workflows,
+            errors=errors,
         )
+        simulator.out_of_time = out_of_time
+    except DebugError as error:
+        if error.code == "WV-DEBUG-MOCK-KEY":
+            _refuse_stale_phases(artifact, mocks, errors, workflows)
+        raise
     except KernelError as error:
         # The test input doesn't fit the workflow's input fields: said with its pointer, never its value.
         raise SimulationRefused(422, str(error), "The test input doesn't fit the input fields", ["/input"]) from None
     return summary, simulator, misfits
+
+
+def _refuse_stale_phases(
+    artifact: CompiledArtifact,
+    mocks: Mapping[str, JsonValue],
+    errors: Mapping[str, object],
+    workflows: Mapping[str, Any],
+) -> None:
+    """Refuses test data of a confirm, release or undo its step doesn't declare (anymore), by its key."""
+    from firefly_weave.compiler.api import import_artifact
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.contracts.transactions import PHASE_SEGMENTS
+    from firefly_weave.operations.debug.transactions import phase_target
+    from firefly_weave.runtime.kernel import prepare
+
+    places: list[tuple[str, CompiledArtifact, tuple[str, ...], Mapping[str, object]]] = [
+        ("This workflow", artifact, ("mocks",), mocks),
+        ("This workflow", artifact, ("errors",), errors),
+    ]
+    for reference, called in workflows.items():
+        places.append((reference, import_artifact(called.artifact), ("workflows", reference, "mocks"), called.mocks))
+    stale: list[tuple[str, str]] = []
+    for owner, document, prefix, keyed in places:
+        prepared = prepare(document)
+        for key in keyed:
+            instance = key.removeprefix("node:")
+            phase = _phase_of(instance)
+            if key != instance and phase is not None and phase_target(prepared, instance) is None:
+                # A step that still has the phase has no such item: an index past its loop's limit, say.
+                step, forward = node_of(instance), instance.partition("#")[0]
+                has = phase_target(prepared, f"{step}#{PHASE_SEGMENTS[phase]}") is not None
+                said = f"{owner} has no {_PHASE_NAMES[phase]} of {forward if has else step}; remove its test data"
+                stale.append((said, _pointer(*prefix, key)))
+    if stale:
+        raise SimulationRefused(422, "WV-DEBUG-MOCK-KEY", stale[0][0], [path for _, path in stale])
+
+
+class _Hosted:
+    """What the host adds to a simulator: it stops at its next step once the request's time is up, and runs the
+    commands of a drive as one."""
+
+    out_of_time: Callable[[], bool] = staticmethod(never)
+    _driving = False
+
+    def drive[T](self, rounds: Callable[[], T]) -> T:
+        """Run ``rounds``, which gives the simulator many commands, as one command. Each command copies, checks and
+        shows the whole run, which takes longer the further the run is; a drive does it once. The commands inside of
+        it return nothing."""
+        found: list[T] = []
+
+        def run() -> None:
+            self._driving = True
+            try:
+                found.append(rounds())
+            finally:
+                self._driving = False
+
+        self._mutate(run)
+        return found[0]
+
+    def _mutate(self, operation: Callable[[], None]) -> Any:
+        if not self._driving:
+            return super()._mutate(operation)  # type: ignore[misc]
+        operation()
+        return None
+
+    def _step_run(self, key: str, run: Any, event: RuntimeEvent | None) -> bool:
+        if self.out_of_time():
+            raise OutOfTime
+        return cast(bool, super()._step_run(key, run, event))  # type: ignore[misc]
+
+
+@functools.cache
+def host_simulator() -> Any:
+    """The simulator of the host's sessions."""
+    from firefly_weave.operations.debug.simulator import Simulator
+
+    class HostSimulator(_Hosted, Simulator):
+        pass
+
+    return HostSimulator
+
+
+@functools.cache
+def _watching_simulator() -> Any:
+    """The simulator Execute runs, which keeps the last record of each transaction of each run and stops the
+    transaction a target is in at the target.
+
+    **Records.** The runtime deletes a transaction's record from the run's state when its loop iteration is released,
+    in the same event that ends it, and reports the final record nowhere else. This is the one place that works
+    around it: once the runtime reports the final record, the debug view lists it and the host can run a plain
+    ``Simulator``.
+
+    **Targets.** Execute step and Before a step cut the workflow after the target, so a transaction whose body holds
+    it ends there, half done. It never settles: a run that reaches the target, or ends the body another way, leaves
+    it open with its steps done, sends no confirm and asks for no confirm's test data. A failure at or before the
+    target is undone, or left in doubt, as in a whole run. A target after the step that can't be undone is past the
+    point of no return: the confirms that come before it run, and the transaction stays committing. In a loop each
+    item stops at the target, and a sequential loop goes on to its next item. A target that is the transaction, comes
+    after it or is in its error path, and every transaction before the target's, settles as in a whole run.
+
+    Before the step right after the one that can't be undone pauses in the middle of the event that brings that one's
+    result: the confirms it asks for aren't sent yet, so the reservations read confirming and no phase is listed.
+    Before a later step, they are confirmed and listed.
+
+    The kernel settles a transaction when its body ends or when its step that can't be undone succeeds. Right before
+    either, the reservations to confirm are marked confirmed in the simulated run, so it has none left to confirm and
+    ends the transaction, and the answer shows the record as it was.
+    """
+    from firefly_weave.compiler.ir import JoinNode
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.operations.debug.simulator import Simulator
+    from firefly_weave.operations.debug.transactions import phase_target
+    from firefly_weave.runtime.control import loop_suffix
+    from firefly_weave.runtime.kernel import _advance_owned, begin
+
+    class WatchingSimulator(_Hosted, Simulator):
+        def __init__(
+            self, artifact: CompiledArtifact, *, target: str | None = None, broken: Collection[str] = (), **options: Any
+        ) -> None:
+            super().__init__(artifact, **options)
+            # The called workflows of the request that don't compile.
+            self._broken = frozenset(broken)
+            self._records: dict[str, dict[str, TransactionRecord]] = {}
+            self._target = target
+            shapes = self._prepared.transactions
+            # The transaction whose body holds the target.
+            self._cut = shapes.owners.get(target) if shapes is not None and target is not None else None
+            # The transactions that stopped at the target: the state they show, and the reservations not confirmed.
+            self._stopped: dict[str, tuple[TransactionState, frozenset[str]]] = {}
+
+        def prepared_of(self, frame: str) -> PreparedWorkflow:
+            """The workflow a run executes: the simulated one ("") or a called run's."""
+            return self._workflow(frame).prepared
+
+        def transactions_of(self, frame: str) -> dict[str, TransactionRecord]:
+            """The last record of each transaction of a run, by instance key, in the order they opened; no values."""
+            self._watch(frame, self._run(frame))
+            found = dict(self._records[frame])
+            if not frame:
+                found |= {key: self._shown(key, record) for key, record in found.items() if key in self._stopped}
+            return found
+
+        def _watch(self, frame: str, run: Any) -> None:
+            kept = self._records.setdefault(frame, {})
+            state = run.cursor.result.state if run.cursor is not None else run.state
+            for key, record in state.transactions.items():
+                if key not in kept or kept[key].revision != record.revision:
+                    # Neither what its undos read nor its business key: a run's records would grow with its values.
+                    participants = [item.model_copy(update={"scope": {}}) for item in record.participants]
+                    kept[key] = record.model_copy(update={"business_key": None, "participants": participants})
+
+        def stopped(self) -> set[str]:
+            """The transactions that stopped at the target, by instance key."""
+            return set(self._stopped)
+
+        def broken_phase(self, frame: str, key: str) -> str | None:
+            """The called workflow of the request that a confirm, release or undo can't run, as it doesn't compile."""
+            phase = phase_target(self.prepared_of(frame), key)
+            return phase.reference if phase is not None and phase.reference in self._broken else None
+
+        def _call(self, key: str, run: Any, called: Any, command: CallIntent, *, generation: int | None = None) -> bool:
+            # A step's call asks for test data then. So does a confirm, release or undo, which would otherwise count
+            # as done with nothing to say.
+            if self.broken_phase(key, command.node_id) is not None:
+                answer = self._answer(key, command.node_id, (), retry=generation is not None)
+                if answer.kind == "none":
+                    self._missing("A called confirm, cancel or undo doesn't compile.", "Pin its output, or fix it.")
+                    return False
+            return super()._call(key, run, called, command, generation=generation)
+
+        def _shown(self, key: str, record: TransactionRecord) -> TransactionRecord:
+            state, held = self._stopped[key]
+            participants = [
+                item.model_copy(update={"status": "done"}) if item.key in held and item.status == "confirmed" else item
+                for item in record.participants
+            ]
+            if record.status in {"committing", "completed"}:
+                record = record.model_copy(update={"status": state})
+            return record.model_copy(update={"participants": participants})
+
+        def _step_run(self, key: str, run: Any, event: RuntimeEvent | None) -> bool:
+            if not key and self._cut is not None:
+                self._stop_at_target(run, event)
+            moved = super()._step_run(key, run, event)
+            self._watch(key, run)
+            return moved
+
+        def _stop_at_target(self, run: Any, event: RuntimeEvent | None) -> None:
+            if event is not None:
+                # The target may be the step that can't be undone: its success decides the transaction.
+                name = event.data.get("node_id")
+                if event.type not in {"task_completed", "call_completed"} or node_of(cast(str, name)) != self._target:
+                    return
+                owner = cast("TransactionShapes", self._prepared.transactions).owner_key(cast(str, name))
+                records = run.state.transactions
+                if owner is None or owner not in records or records[owner].status != "deciding":
+                    return
+                accepted = event.model_copy(update={"sequence": run.state.accepted_sequence + 1})
+                ahead = _advance_owned(begin(run.state, accepted, self.artifact), self._prepared)
+                if ahead.result.state.transactions[owner].decided_at_sequence is not None:
+                    self._hold_confirms(records, owner, "open")
+                return
+            cursor = run.cursor
+            if not cursor.admitted or not cursor.ready:
+                return
+            # The body ended: its join settles the transaction.
+            node = self._prepared.nodes[node_of(cursor.ready[0])]
+            if isinstance(node, JoinNode) and node.mode == "transaction" and node.owner == self._cut:
+                state = cursor.result.state
+                owner = node.owner + loop_suffix(cursor.ready[0])
+                status = state.transactions[owner].status
+                if status in {"open", "committing"}:
+                    self._hold_confirms(state.transactions, owner, status)
+
+        def _hold_confirms(self, records: dict[str, TransactionRecord], key: str, state: TransactionState) -> None:
+            shown, held = self._stopped.get(key, (state, frozenset()))
+            waiting = {p.key for p in records[key].participants if p.mode == "reserve" and p.status == "done"}
+            participants = [
+                item.model_copy(update={"status": "confirmed"}) if item.key in waiting else item
+                for item in records[key].participants
+            ]
+            records[key] = records[key].model_copy(update={"participants": participants})
+            self._stopped[key] = (shown, held | waiting)
+
+    return WatchingSimulator
 
 
 class _Stepper:
@@ -738,7 +1047,8 @@ def stuck_at(simulator: Any, scripts: Any = None) -> tuple[str, Any]:
     """Where a run stops on something the simulator can't carry on with, and the run up to there.
 
     ``simulator`` is a fresh one (the failed one's state is unknown). It replays as Execute does (scripted signals
-    and people answered, waits advanced) one boundary at a time; the step that raises names the place.
+    and people answered, waits advanced) one boundary at a time; the step that raises names the place. Raises
+    ``OutOfTime`` when the time is up before that.
     """
     from types import SimpleNamespace
 
@@ -749,9 +1059,27 @@ def stuck_at(simulator: Any, scripts: Any = None) -> tuple[str, Any]:
     stepper = _Stepper(simulator)
     try:
         _drive(stepper, scripts or SimpleNamespace(signals={}, humans={}), SignalNode, HumanTaskNode, TERMINAL)
+    except OutOfTime:
+        raise
     except Exception:  # noqa: BLE001 - this boundary is where it stops
         return (f"step {node_of(stepper.here[0])}" if stepper.here else "the current step"), simulator
     return "the current step", simulator
+
+
+def _unsettled(data: DebugState) -> str | None:
+    """The first transaction that still holds work, in words, when the run didn't end or pause; None otherwise."""
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.operations.debug.simulator import TERMINAL
+    from firefly_weave.runtime.transactions import UNSETTLED
+
+    if data.paused is not None or data.state is None or data.state.status in TERMINAL:
+        return None
+    runs = [("", data.state), *((f" of {f.workflow.rpartition('@')[0]}", f.state) for f in data.frames if f.state)]
+    for within, state in runs:
+        for key, record in state.transactions.items():
+            if record.status in UNSETTLED:
+                return f"transaction {node_of(key)}{within}"
+    return None
 
 
 def unsimulated(place: str) -> str:
@@ -759,28 +1087,36 @@ def unsimulated(place: str) -> str:
     return f"Studio couldn't simulate {place}, so the simulated run stopped there."
 
 
-def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> ExecuteResponse:
+def execute(
+    request: ExecuteRequest, project: CatalogSnapshot | None, *, out_of_time: Callable[[], bool] = never
+) -> ExecuteResponse:
     """Simulate the target of an Execute request; the answer is ``ExecuteResponse``.
 
-    Raises ``SimulationRefused`` for a request the host must refuse, and ``CatalogConflict`` for a local definition
-    that conflicts with the catalog. Nothing here reads the network, the clock or files.
+    The answer is ``limit`` when ``out_of_time`` says the request's time is up before the simulated run ends. Raises
+    ``SimulationRefused`` for a request the host must refuse, and ``CatalogConflict`` for a local definition that
+    conflicts with the catalog. Nothing here reads the network, the clock or files.
     """
     from firefly_weave.compiler.api import import_artifact
     from firefly_weave.compiler.ir import HumanTaskNode, SignalNode
     from firefly_weave.compiler.parser import ParseFailure, parse_source
     from firefly_weave.contracts.diagnostics import Diagnostic
     from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.contracts.transactions import IN_DOUBT_CODES, TRANSACTION_MESSAGES
     from firefly_weave.operations.debug.models import DebugError
     from firefly_weave.operations.debug.simulator import TERMINAL, first_instance
+    from firefly_weave.operations.debug.transactions import transaction_views
     from firefly_weave.runtime.kernel import KernelError, prepare
+    from firefly_weave.runtime.models import RunState
     from firefly_weave.studio.local_contracts import (
         Blocked,
         CompileSummary,
         ExecuteResponse,
         FrameView,
         LoopProgress,
+        PhaseEntry,
         SelectedScope,
         TraceEntry,
+        TransactionTrace,
     )
 
     if not request.scripts.autoAdvanceWaits:
@@ -793,8 +1129,9 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         return ExecuteResponse(status="failed", compile=unparsed, trace=[])
     whole = document
     sliced = False
-    if target.mode != "workflow":
-        part = slice_for_target(document, cast(str, target.stepId))
+    target_step = cast(str, target.stepId) if target.mode != "workflow" else None
+    if target_step is not None:
+        part = slice_for_target(document, target_step)
         if part is None:
             raise SimulationRefused(422, "WV-STUDIO-REQUEST", "That step isn't in this workflow")
         document, sliced = part, True
@@ -802,23 +1139,28 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     summary: CompileSummary | None = None
     unsimulated_at: str | None = None
     try:
-        summary, simulator, misfits = simulator_for(request, project, document, whole=whole, sliced=sliced)
+        summary, simulator, misfits = simulator_for(
+            request, project, document, whole=whole, sliced=sliced, target=target_step, out_of_time=out_of_time
+        )
         if simulator is None:
             return ExecuteResponse(status="failed", compile=summary, trace=[])
         if target.mode == "before":
             simulator.set_breakpoints({target.instanceKey or first_instance(simulator.ir, cast(str, target.stepId))})
         try:
-            blocked = _drive(simulator, scripts, SignalNode, HumanTaskNode, TERMINAL)
+            host = cast(Any, simulator)
+            blocked = host.drive(lambda: _drive(host, scripts, SignalNode, HumanTaskNode, TERMINAL))
         except KernelError as error:
             # A step the runtime refused (a condition that isn't true or false, say): the run fails there.
             stopped = Diagnostic(
                 code=str(error), severity="error", stage="evaluation", path="", message="The simulated run stopped."
             )
             return ExecuteResponse(status="failed", compile=summary, trace=[], diagnostics=[stopped])
-        except (DebugError, SimulationRefused):
+        except (DebugError, SimulationRefused, OutOfTime):
             raise
         except Exception as error:  # noqa: BLE001 - never a 500: the run fails where the simulator stopped
-            _, fresh, _ = simulator_for(request, project, document, whole=whole, sliced=sliced)
+            _, fresh, _ = simulator_for(
+                request, project, document, whole=whole, sliced=sliced, target=target_step, out_of_time=out_of_time
+            )
             if fresh is None:
                 raise
             place, simulator = stuck_at(fresh, scripts)
@@ -826,6 +1168,8 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             logger.debug("Studio couldn't simulate %s: %s", place, type(error).__name__)
             unsimulated_at = place
             blocked = None
+    except OutOfTime:
+        return ExecuteResponse(status="limit", compile=cast("CompileSummary", summary), trace=[])
     except DebugError as error:
         if error.code == "WV-DEBUG-LIMIT" and summary is not None:
             return ExecuteResponse(status="limit", compile=summary, trace=[])
@@ -834,9 +1178,15 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     data = simulator.data
     steps = {step.get("id") for step in steps_of(cast(JsonObject, whole["spec"]).get("steps"))}
     trace: list[TraceEntry] = []
+    stopped_at_target = cast(Any, simulator).stopped()
     seen: set[tuple[str | None, str]] = set()
-    # The called workflows that ran here, by frame key; a detached call without its workflow ran nothing.
+    # The called workflows that ran here, by frame key; a detached call without its workflow ran nothing. A called
+    # confirm, release or undo is one of the phases: its own steps stay out of the trace, and its run out of the frames.
     frames = {frame.key: frame for frame in view.frames if frame.status != "not_simulated"}
+    shown = {key: frame for key, frame in frames.items() if _called_phase(key) is None}
+    phases: list[JsonObject] = []
+    recorded = iter(view.events)
+    reduced: UUID | None = None
     # A run held on an incident (a step the runtime refused) stops there until a person ends it: it failed there. So
     # does a run left waiting on a called run held that way.
     held = _incident(view.status, view.variables)
@@ -849,6 +1199,9 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     # A run that timed out (a deadline passed) or was cancelled stopped too: it failed where it waited.
     timed_out = view.status in {"timed_out", "cancelled"}
     failed = (view.status == "failed" or timed_out or on_hold) and not view.diagnostics
+    if not failed and blocked is None and not view.diagnostics:
+        # An answer never says completed while a transaction has work left, unless Execute stopped at its target.
+        unsimulated_at = unsimulated_at or _unsettled(data)
 
     @functools.cache
     def handlers(frame: str | None) -> dict[str, Any]:
@@ -859,18 +1212,29 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         return _error_handlers(prepare(import_artifact(called.artifact)).ir) if called and called.artifact else {}
 
     for boundary in data.boundaries:
+        if boundary.kind == "event" and boundary.frame is None:
+            # The simulated workflow's event boundaries are its recorded events, in order. One that led to a step that
+            # couldn't be evaluated is reduced again with that step failing, and recorded again: the same event.
+            event = next(recorded, None)
+            result = event.data.get("node_id") if event is not None and event.id != reduced else None
+            reduced = event.id if event is not None else None
+            if isinstance(result, str) and _phase_of(result) is not None:
+                outcome: Literal["completed", "failed"] = "completed" if result in data.outputs else "failed"
+                phases.append(_phase_entry(result, len(trace) - 1, outcome, data))
         if boundary.kind != "node" or boundary.node_id is None:
             continue
         frame, key = boundary.frame, boundary.node_id
         # A step inside a called workflow comes with the frame it ran in; its key is its own workflow's. The nodes a
         # compiled workflow adds (@start, @end, @join…) are no one's steps.
-        step_of_a_run = node_of(key) in steps if frame is None else frame in frames and not key.startswith("@")
+        step_of_a_run = node_of(key) in steps if frame is None else frame in shown and not key.startswith("@")
         if not step_of_a_run or (frame, key) in seen:
             continue
         seen.add((frame, key))
         path = key if frame is None else f"{frame}/{key}"
         active = view.active_nodes if frame is None else frames[frame].active_nodes
-        reached = "completed" if path in data.outputs else "waiting" if key in active else "running"
+        # A transaction that stopped at the target ended in the simulation only, so the rest of its loop could run.
+        ended_here = path in data.outputs and path not in stopped_at_target
+        reached = "completed" if ended_here else "waiting" if key in active else "running"
         entry: dict[str, Any] = {
             "index": len(trace),
             "nodeId": node_of(key),
@@ -882,11 +1246,18 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             entry["frame"] = frame
         if path in data.inputs:
             entry["input"] = data.inputs[path]
-        if path in data.outputs:
+        if ended_here:
             entry["output"] = data.outputs[path]
         if path in data.failures:
             entry |= _handled_entry(handlers(frame), key, data.failures[path], data.outputs, frame)
         trace.append(TraceEntry.model_validate(entry))
+    phases.extend(_unsettled_phases(view.variables, data, {cast(str, entry["instanceKey"]) for entry in phases}, trace))
+    records = cast(Any, simulator).transactions_of
+    kept = RunState(input=None, transactions=records(""))
+    transactions = [_transaction_entry(record) for record in transaction_views(kept)]
+    if _too_many(transactions, phases):
+        return ExecuteResponse(status="limit", compile=summary, trace=[])
+    _refuse_secret_phases(data.artifact, phases, view.variables)
     if unsimulated_at is not None:
         failed = True
     # Where each run stopped: the simulated workflow's last step, and the last step of each called run that failed.
@@ -894,30 +1265,64 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     if failed:
         ended.add(None)
     # The failure each step of the simulated workflow reported last, and the actions its steps use.
-    reported = {
-        cast(str, event.data.get("node_id")): event.data for event in view.events if event.type == "step_failed"
-    }
+    reported = _reported(view.events)
     uses = {
         cast(str, step["id"]): cast(str, step["uses"])
         for step in steps_of(cast(JsonObject, whole["spec"]).get("steps"))
         if isinstance(step.get("uses"), str)
     }
-    for frame in ended:
-        last_of_run = next((i for i in reversed(range(len(trace))) if trace[i].frame == frame), None)
-        if last_of_run is not None and trace[last_of_run].status != "completed":
-            stopping = trace[last_of_run]
-            update: dict[str, Any] = {"status": "failed"}
-            if frame is None and stopping.handled is None:
-                key = stopping.instanceKey or stopping.nodeId
-                stopped = _stopping_error(key, stopping.kind, request.errors, uses, reported, held)
-                if stopped is not None:
-                    update["error"] = stopped
-            trace[last_of_run] = stopping.model_copy(update=update)
+    stopped_step: str | None = None
+    for frame in [None, *shown]:
+        shapes = cast(Any, simulator).prepared_of(frame or "").transactions
+        stopped_by_transaction = False
+        handled: set[str | None] = set()
+        stopped_at: list[str] = []
+        if shapes is not None:
+            # A run with transactions: what failed inside them, whatever settled after it.
+            handled = {_entry_key(entry) for entry in trace if entry.frame == frame and entry.handled is not None}
+            own_errors, own_uses = (request.errors, uses) if frame is None else ({}, {})
+            called = next((item for item in data.frames if item.key == frame), None)
+            events = view.events if called is None else called.events
+            reports = reported if called is None else _reported(events)
+            variables = view.variables if frame is None else frames[frame].variables
+            causes = _named_failures(records(frame or ""), variables)
+            stopped_at = _stopped_at(events, variables)
+            stopped_by_transaction = (held if frame is None else held_frames.get(frame)) in IN_DOUBT_CODES
+            for index, update in _transaction_failures(trace, frame, shapes, causes, reports, own_errors, own_uses):
+                trace[index] = trace[index].model_copy(update=update)
+                stopped_by_transaction |= shapes.owner_key(_entry_key(trace[index])) not in handled
+        of_run = [index for index, entry in enumerate(trace) if entry.frame == frame]
+        if frame not in ended or not of_run or stopped_by_transaction:
+            continue
+        # The last step, unless a run with transactions stopped at an earlier one, outside of them, while their steps
+        # went on: at a fail step it reached, which ends the run, or else at the first place it may have stopped at.
+        outside = {
+            _entry_key(trace[index]): index
+            for index in of_run
+            if shapes is not None
+            and shapes.owner_key(_entry_key(trace[index])) is None
+            and trace[index].status not in {"completed", "failed"}
+        }
+        stops = [index for index in outside.values() if trace[index].kind == "fail"]
+        stops += [outside.get(key, of_run[-1]) for key in stopped_at if key in outside or key == "@run"]
+        stopping_index = [*stops, of_run[-1]][0]
+        stopping = trace[stopping_index]
+        key = _entry_key(stopping)
+        # A step left unfinished by a transaction whose failure was handled didn't stop the run.
+        if stopping.status == "completed" or (shapes is not None and shapes.owner_key(key) in handled):
+            continue
+        update = {"status": "failed"}
+        if frame is None and stopping.handled is None:
+            stopped = _stopping_error(key, stopping.kind, request.errors, uses, reported, held)
+            if stopped is not None:
+                update["error"] = stopped
+        trace[stopping_index] = stopping.model_copy(update=update)
+        if frame is None:
+            stopped_step = stopping.nodeId
     own = [entry for entry in trace if entry.frame is None]
     extra: list[Diagnostic] = []
     if timed_out:
-        at = own[-1] if own and own[-1].status == "failed" else None
-        node = next((n for n in simulator.ir.graph.nodes if at is not None and n.id == at.nodeId), None)
+        node = next((n for n in simulator.ir.graph.nodes if n.id == stopped_step), None)
         if view.status == "cancelled":
             words = "The simulated run was cancelled."
         elif isinstance(node, SignalNode):
@@ -935,8 +1340,14 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
                 message=words,
             )
         )
+    if view.status == "failed" and view.variables.get("incident") == "WV-TXN-ROLLED-BACK":
+        # The run failed because its transaction was undone, and nothing it did stays applied.
+        words = TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"]
+        extra.append(
+            Diagnostic(code="WV-TXN-ROLLED-BACK", severity="error", stage="evaluation", path="", message=words)
+        )
     for code in [*([held] if held is not None else []), *held_frames.values()]:
-        words = _incident_words(code)
+        words = IN_DOUBT if code in IN_DOUBT_CODES else _incident_words(code)
         extra.append(Diagnostic(code=code, severity="error", stage="evaluation", path="", message=words))
     if unsimulated_at is not None:
         extra.append(
@@ -958,17 +1369,32 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             inside, _, last = last.rpartition("/")
             step = node_of(last)
             called = parse_agent_key(last)
-            if inside:
+            named = _phase_name(last)
+            what = f"The {named}" if named is not None else f"Step {step}"
+            workflow = frames[inside].workflow.rpartition("@")[0] if inside in frames else None
+            calling = _called_phase(inside)
+            broken = cast(Any, simulator).broken_phase(inside, last) if calling is None else None
+            if broken is not None:
+                within = f" in {workflow}" if workflow else ""
+                message = f"{what}{within} can't run, because {broken.rpartition('@')[0]} doesn't compile."
+            elif calling is not None:
+                # Inside a called confirm, release or undo: it is answered whole, where it is called.
+                inside, last = calling
+                message = f"The {_phase_name(last)} needs test data: step {step} of {workflow} has none."
+                step = node_of(last)
+            elif inside:
                 # Its test data goes under the called workflow's mocks, which apply wherever that workflow runs.
-                workflow = frames[inside].workflow.rpartition("@")[0] if inside in frames else None
-                message = f"Step {step} {f'in {workflow} ' if workflow else ''}needs test data."
+                message = f"{what} {f'in {workflow} ' if workflow else ''}needs test data."
+            elif named is not None and {"node:" + last, f"node:{step}#{last.partition('#')[2]}"} & misfits:
+                # A confirm, release or undo is answered at its own keys, never at its step's.
+                message = f"The pinned output of the {named} doesn't fit its output fields. Edit it, or unpin it."
             elif "node:" + last in misfits and called is not None and called.call is not None:
                 # A mock of one agent call is a tool's result, so it misfits the agent's tools, not the agent's pin.
                 message = f"The pinned result of call {last} fits none of the tools of {step}. Edit it, or unpin it."
-            elif {"node:" + last, "node:" + step} & misfits:
+            elif named is None and {"node:" + last, "node:" + step} & misfits:
                 message = f"The pinned output of {step} doesn't fit its output fields. Edit it, or unpin it."
             else:
-                message = f"Step {step} needs test data."
+                message = f"{what} needs test data."
             blocked = Blocked(
                 reason="missing_mock",
                 nodeId=step,
@@ -1018,6 +1444,17 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         status = "failed"
     else:
         status = "completed"
+    # Each left out when there are none, so other answers keep their bytes.
+    listed: dict[str, Any] = {}
+    if shown:
+        listed["frames"] = [
+            FrameView(key=key, workflow=frame.workflow, callNode=frame.call_node, status=statuses[key])
+            for key, frame in shown.items()
+        ]
+    if transactions:
+        listed["transactions"] = [TransactionTrace.model_validate(entry) for entry in transactions]
+    if phases:
+        listed["phases"] = [PhaseEntry.model_validate(entry) for entry in phases]
     return ExecuteResponse(
         status=status,
         compile=summary,
@@ -1044,16 +1481,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             else None
         ),
         blocked=blocked,
-        **(
-            {
-                "frames": [
-                    FrameView(key=key, workflow=frame.workflow, callNode=frame.call_node, status=statuses[key])
-                    for key, frame in frames.items()
-                ]
-            }
-            if frames
-            else {}
-        ),
+        **listed,
         # Only what Studio reads: the paths decisions took. The run's values are in the trace already.
         variables={"branches": view.variables["branches"]} if "branches" in view.variables else {},
         diagnostics=[
@@ -1061,6 +1489,187 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             *extra,
         ],
     )
+
+
+# What each phase of a step in a transaction does, as Studio names it.
+_PHASE_NAMES: Mapping[UndoPhase, str] = {"confirm": "confirm", "cancel": "release", "compensate": "undo"}
+IN_DOUBT = "A transaction is in doubt, so the simulated run stopped."
+
+
+def _phase_of(key: str) -> UndoPhase | None:
+    """The phase an instance key names (``hold#confirm``), or None for a step's own key."""
+    from firefly_weave.contracts.instance_keys import InvalidInstanceKey
+    from firefly_weave.contracts.transactions import split_phase
+
+    try:
+        found = split_phase(key)
+    except InvalidInstanceKey:
+        return None
+    return found[1] if found is not None else None
+
+
+def _phase_name(key: str) -> str | None:
+    """What a confirm, release or undo is called ("undo of add"), or None for a step's own key."""
+    from firefly_weave.contracts.instance_keys import node_of
+
+    phase = _phase_of(key)
+    return f"{_PHASE_NAMES[phase]} of {node_of(key)}" if phase is not None else None
+
+
+def _called_phase(frame: str) -> tuple[str, str] | None:
+    """The called confirm, release or undo a frame runs in: the frame that called it ("" for the simulated workflow)
+    and its key there. None for a frame outside of one."""
+    parts = frame.split("/")
+    for index, part in enumerate(parts):
+        if _phase_of(part) is not None:
+            return "/".join(parts[:index]), part
+    return None
+
+
+def _phase_entry(
+    key: str, after: int, status: Literal["completed", "failed", "waiting"], data: DebugState
+) -> JsonObject:
+    """One confirm, release or undo in the answer's words, with what it received and returned."""
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.contracts.transactions import PHASE_SEGMENTS
+
+    entry: JsonObject = {
+        "afterIndex": after,
+        "nodeId": node_of(key),
+        "instanceKey": key,
+        "phase": PHASE_SEGMENTS[cast("UndoPhase", _phase_of(key))],
+        "status": status,
+    }
+    if key in data.inputs:
+        entry["input"] = data.inputs[key]
+    if key in data.outputs:
+        entry["output"] = data.outputs[key]
+    return entry
+
+
+def _unsettled_phases(
+    variables: Mapping[str, Any], data: DebugState, settled: set[str], trace: Sequence[object]
+) -> Iterator[JsonObject]:
+    """The phases no result was recorded for: those that failed before they were sent (their input couldn't be built,
+    so their transaction is in doubt), then those still waiting for one."""
+    after = len(trace) - 1
+    stuck = [cast(str, incident["node_id"]) for incident in variables.get("incidents", {}).values()]
+    for key in stuck:
+        if _phase_of(key) is not None and key not in settled and key not in data.inputs:
+            yield _phase_entry(key, after, "failed", data)
+    for key in data.inputs:
+        if "/" not in key and _phase_of(key) is not None and key not in settled:
+            yield _phase_entry(key, after, "waiting", data)
+
+
+def _spelled_as_code(code: str) -> bool:
+    """Whether an answer may hold a code: a fail step's is any name its author gave it, however long."""
+    from firefly_weave.contracts.studio_documents import ERROR_CODE_PATTERN
+    from firefly_weave.studio.local_contracts import ERROR_CODE_LENGTH
+
+    return len(code) <= ERROR_CODE_LENGTH and re.fullmatch(ERROR_CODE_PATTERN[1:-1], code) is not None
+
+
+def _transaction_entry(record: TransactionDebugView) -> JsonObject:
+    """One transaction in the answer's words: keys, states, codes and counts, never its business key."""
+    entry: JsonObject = {"instanceKey": record.instance_key, "nodeId": record.node_id, "state": record.state}
+    for name, cause in (("cause", record.cause), ("pendingAbort", record.pending_abort)):
+        if cause is not None:
+            code = {"code": cause.code} if _spelled_as_code(cause.code) else {}
+            entry[name] = {**code, "instanceKey": cause.instance_key, "effect": cause.effect}
+    if record.incident_key is not None:
+        entry["incidentKey"] = record.incident_key
+    if record.reconciled_as is not None:
+        entry["reconciledAs"] = record.reconciled_as
+    entry["participants"] = [
+        {
+            "nodeId": item.node_id,
+            "instanceKey": item.instance_key,
+            "mode": item.mode,
+            "status": item.status,
+            "effect": item.effect,
+            **({"attempts": item.attempts} if item.attempts is not None else {}),
+        }
+        for item in record.participants
+    ]
+    return entry
+
+
+def _too_many(transactions: list[JsonObject], phases: list[JsonObject]) -> bool:
+    """Whether a run did more to its transactions than an answer holds: entries of either kind, or bytes of both."""
+    from firefly_weave.contracts.studio_documents import TEST_DATA_MAX_BYTES
+    from firefly_weave.studio import local_contracts
+
+    if max(len(transactions), len(phases)) > local_contracts.MAX_TRANSACTION_ENTRIES:
+        return True
+    written = json.dumps([transactions, phases], ensure_ascii=False, separators=(",", ":"))
+    return len(written.encode()) > TEST_DATA_MAX_BYTES
+
+
+def secret_phases(artifact: JsonObject, phases: Iterable[Mapping[str, Any]]) -> list[str]:
+    """Pointers (``/phases/add#undo/input``) of what a confirm, release or undo received or returned that its own
+    operation marks secret, or that can't be classified, the values of one the workflow doesn't have included. An
+    undo's input derives from what the steps before it returned, so it is checked here too.
+    """
+    from firefly_weave.compiler.api import import_artifact
+    from firefly_weave.compiler.schemas import _Failure
+    from firefly_weave.operations.debug.transactions import phase_target
+    from firefly_weave.operations.redaction import classify
+    from firefly_weave.runtime.kernel import prepare
+
+    prepared = prepare(import_artifact(artifact))
+    bundle = {d.reference: d.document for d in prepared.ir.dependencies if d.kind == "Schema"}
+    found: list[str] = []
+    for entry in phases:
+        key = cast(str, entry["instanceKey"])
+        target = phase_target(prepared, key)
+        for direction in ("input", "output"):
+            if direction not in entry:
+                continue
+            if target is None:
+                found.append(_pointer("phases", key, direction))
+                continue
+            for schema in _phase_schemas(prepared.ir, target, direction):
+                try:
+                    classify(schema, entry[direction], bundle)
+                except (_Failure, RecursionError, ArithmeticError):
+                    found.append(_pointer("phases", key, direction))
+                    break
+    return found
+
+
+def _phase_schemas(ir: WorkflowIR, target: PhaseTarget, direction: Literal["input", "output"]) -> list[JsonObject]:
+    """What a live run checks a phase's input or output with: its action's schemas, or its called workflow's."""
+    from firefly_weave.contracts.definitions import ActionDefinition, load_definition
+    from firefly_weave.runtime.kernel import action_schemas
+
+    kind = "Action" if target.kind == "action" else "Workflow"
+    document = next(d.document for d in ir.dependencies if d.kind == kind and d.reference == target.reference)
+    if kind == "Action":
+        return action_schemas(ir, cast(ActionDefinition, load_definition(document)), direction)
+    return [cast(JsonObject, cast(JsonObject, document["spec"])[direction + "Schema"])]
+
+
+def _refuse_secret_phases(
+    artifact: JsonObject, phases: Sequence[Mapping[str, Any]], variables: Mapping[str, Any]
+) -> None:
+    """Refuses an answer about a confirm, release or undo that received or returned a value marked secret, by pointer.
+
+    The runtime never sends such an input or accepts such an output: it puts the transaction in doubt with that code.
+    """
+    found = secret_phases(artifact, phases) if phases else []
+    entries = {cast(str, entry["instanceKey"]): entry for entry in phases}
+    for incident in variables.get("incidents", {}).values():
+        key = cast(str, incident["node_id"])
+        if incident.get("origin_code") == "WV-SCHEMA-SECRET_VALUE" and _phase_of(key) is not None:
+            found.append(_pointer("phases", key, "output" if "input" in entries.get(key, {}) else "input"))
+    if found:
+        raise SimulationRefused(
+            422,
+            "WV-SCHEMA-SECRET_VALUE",
+            "A confirm, release or undo can't take or return values marked secret; leave them out",
+            dict.fromkeys(found),
+        )
 
 
 def _error_handlers(ir: WorkflowIR) -> dict[str, Any]:
@@ -1114,6 +1723,83 @@ def _error_object(
         )
     except (TypeError, ValueError):
         return None
+
+
+def _entry_key(entry: TraceEntry) -> str:
+    """The instance key of a trace entry in its own run."""
+    return entry.instanceKey or entry.nodeId
+
+
+def _reported(events: Iterable[RuntimeEvent]) -> dict[str, Mapping[str, Any]]:
+    """The failure each step instance of a run reported last."""
+    return {cast(str, event.data.get("node_id")): event.data for event in events if event.type == "step_failed"}
+
+
+def _stopped_at(events: Iterable[RuntimeEvent], variables: Mapping[str, Any]) -> list[str]:
+    """The step instances a run may have stopped at outside its transactions, when they didn't finish, in the order it
+    came to them: those its incidents name, which hold it; without any, the calls whose run failed and the waits whose
+    deadline passed, with ``@run`` where the run's own did."""
+    incidents = [cast(str, incident["node_id"]) for incident in variables.get("incidents", {}).values()]
+    return incidents or [
+        cast(str, event.data.get("node_id"))
+        for event in events
+        if event.type == "timed_out" or (event.type == "call_completed" and event.data.get("status") != "succeeded")
+    ]
+
+
+def _named_failures(records: Mapping[str, TransactionRecord], variables: Mapping[str, Any]) -> dict[str, str]:
+    """The code of each failure a run's transactions name, by the step instance it happened at: what they are undone
+    for, and what put them in doubt."""
+    named: dict[str, str] = {}
+    for incident in variables.get("incidents", {}).values():
+        named[incident["node_id"]] = incident.get("origin_code") or incident["code"]
+    for record in records.values():
+        for cause in (record.pending_abort, record.cause):
+            if cause is not None:
+                named[cause.instance_key] = cause.code
+    return named
+
+
+def _transaction_failures(
+    trace: Sequence[TraceEntry],
+    frame: str | None,
+    shapes: TransactionShapes,
+    named: Mapping[str, str],
+    reported: Mapping[str, Mapping[str, Any]],
+    errors: Mapping[str, Any],
+    uses: Mapping[str, str],
+) -> Iterator[tuple[int, dict[str, Any]]]:
+    """The entries of a run that failed inside its transactions, and the transactions whose reservations expired,
+    with their status and error. The other steps of a transaction settle before it does, so a failed one is often not
+    the last of the trace: it is an entry without an output that reported a failure, or that a transaction names. A
+    transaction names itself when its reservations expire, and when its run ends, which is no failure of its own."""
+    for index, entry in enumerate(trace):
+        key = _entry_key(entry)
+        if entry.frame != frame or entry.status in {"completed", "failed"}:
+            continue
+        inside = shapes.owner_key(key) is not None
+        if not (inside and (key in reported or key in named)) and named.get(key) != "WV-TXN-HOLD-EXPIRED":
+            continue
+        error = _stopping_error(key, entry.kind, errors, uses, reported, None)
+        if error is None and key in named:
+            error = _named_error(key, entry.kind, named[key], sent="input" in entry.model_fields_set)
+        yield index, {"status": "failed"} | ({"error": error} if error is not None else {})
+
+
+def _named_error(key: str, kind: str, code: str, *, sent: bool) -> Any:
+    """The error of a failure a transaction names by its code only; None for a code not spelled as one."""
+    from firefly_weave.contracts.step_errors import HANDLED_KERNEL_CODES
+    from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
+
+    if not _spelled_as_code(code):
+        return None
+    # As the runtime counts them: an action or a call that was never sent made no attempt.
+    tried = kind not in {"action", "callWorkflow"}
+    started = sent or (tried and code not in HANDLED_KERNEL_CODES)
+    attempts = 1 if sent or tried else 0
+    return _error_object(
+        key, code, "failed" if started else "not_started", attempts, message=TRANSACTION_MESSAGES.get(code)
+    )
 
 
 def _stopping_error(
@@ -1171,25 +1857,43 @@ def _incident(status: str, variables: Mapping[str, object]) -> str | None:
     return code if status == "suspended" and isinstance(code, str) else None
 
 
+def _clocks(data: DebugState, terminal: set[str]) -> Iterator[tuple[RunState, list[Deadline]]]:
+    """The runs whose deadlines move the clock: the simulated workflow's, always, and each called run that hasn't ended.
+    Not a called run held on an incident, nor the called runs waiting on it, which stay as they are until a person
+    resolves it. A simulated workflow that waits on such a run still meets its own deadlines: its time limit, or that
+    of a reservation."""
+    if data.state is not None:
+        yield data.state, data.deadlines
+    held = [frame.key for frame in data.frames if frame.state is not None and frame.state.status == "suspended"]
+    for frame in data.frames:
+        if frame.state is None or frame.state.status in terminal:
+            continue
+        if not any(key == frame.key or key.startswith(frame.key + "/") for key in held):
+            yield frame.state, frame.deadlines
+
+
 def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, terminal: set[str]) -> Any:
     """Run until the end, the target, an incident (it waits for a person), or a signal or a person nobody scripted;
-    waits advance by themselves."""
+    waits advance by themselves, those of the called workflows too. Reads the run itself, never a command's answer:
+    inside a drive there is none."""
     from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.operations.debug.transactions import due_deadline
     from firefly_weave.studio.local_contracts import Blocked
 
     nodes = {node.id: node for node in simulator.ir.graph.nodes}
     for _ in range(ROUNDS):
-        view = simulator.continue_until_breakpoint()
+        simulator.continue_until_breakpoint()
         data = simulator.data
+        state = data.cursor.result.state if data.cursor is not None else data.state
         if (
-            view.diagnostics
-            or view.status in terminal
+            data.diagnostics
+            or state.status in terminal
             or data.paused is not None
-            or _incident(view.status, view.variables) is not None
+            or _incident(state.status, {"incident": state.incident}) is not None
         ):
             return None
         moved = False
-        for key in list(view.active_nodes):
+        for key in list(state.active):
             node = nodes.get(node_of(key))
             if isinstance(node, signal_node):
                 script = scripts.signals.get(key) or scripts.signals.get(node.id)
@@ -1241,7 +1945,13 @@ def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, term
                 break
         if moved:
             continue
-        due = [d.deadline for d in data.deadlines if d.deadline >= data.now]
+        # Only a deadline its run would still take: one left behind by a step that ended would hold the clock.
+        due = [
+            deadline.deadline
+            for state, deadlines in _clocks(data, terminal)
+            for deadline in deadlines
+            if deadline.deadline >= data.now and due_deadline(state, deadline)
+        ]
         if not due:
             return None
         simulator.advance_time(max(0, math.ceil((min(due) - data.now).total_seconds())))
@@ -1249,11 +1959,12 @@ def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, term
 
 
 def misfitting_mocks(document: JsonObject, mocks: Mapping[str, JsonValue], catalog: CatalogSnapshot) -> set[str]:
-    """Step mocks that no longer fit their step's output fields: left out, so the step asks for test data instead of
-    the whole run being refused for a pin it may never reach."""
+    """Step mocks that no longer fit their step's output fields, or those of the confirm, cancel or undo they stand
+    for: left out, so the step asks for test data instead of the whole run being refused for a pin it may never
+    reach."""
     from firefly_weave.compiler.platform_catalog import platform_schema_bundle
     from firefly_weave.compiler.schemas import validate_payload
-    from firefly_weave.compiler.test_data import output_target, step_at
+    from firefly_weave.compiler.test_data import pin_target
 
     bundle = platform_schema_bundle() | {name: schema.value for name, schema in catalog.schemas.items()}
     misfits = set()
@@ -1266,7 +1977,7 @@ def misfitting_mocks(document: JsonObject, mocks: Mapping[str, JsonValue], catal
             if not _fits_a_tool(tools, value, bundle):
                 misfits.add(key)
             continue
-        target = output_target(document, step_at(document, key.removeprefix("node:")), catalog)
+        target = pin_target(document, key.removeprefix("node:"), catalog)
         if isinstance(target, dict) and validate_payload(target, value, bundle):
             misfits.add(key)
     return misfits

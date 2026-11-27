@@ -5934,6 +5934,997 @@
           }
         ]
       }
+    },
+    {
+      "name": "a reverse step reads its step's operation key, outcome and transaction, then its step's output, maybe empty",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "add",
+                  "kind": "action",
+                  "uses": "add-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "compensate": {
+                    "kind": "action",
+                    "uses": "remove-quantity@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            },
+            {
+              "id": "notify",
+              "kind": "transform",
+              "value": {
+                "ref": "/steps/move/output"
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "path": "/spec/steps/0/steps/1/compensate/with",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "items"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/items",
+            "source": "input",
+            "path": [
+              "items"
+            ],
+            "label": "items",
+            "breadcrumb": "Workflow input › items",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of text",
+            "optional": false
+          },
+          {
+            "ref": "/participant/operationKey",
+            "source": "undo",
+            "path": [],
+            "label": "Operation key",
+            "breadcrumb": "This step's undo › Operation key",
+            "schema": {
+              "type": "string"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          },
+          {
+            "ref": "/participant/outcome",
+            "source": "undo",
+            "path": [],
+            "label": "Outcome of add",
+            "breadcrumb": "This step's undo › Outcome of add",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "done",
+                "unknown"
+              ]
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Choice",
+            "optional": false
+          },
+          {
+            "ref": "/transaction/id",
+            "source": "undo",
+            "path": [],
+            "label": "Transaction ID",
+            "breadcrumb": "This step's undo › Transaction ID",
+            "schema": {
+              "type": "string"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          },
+          {
+            "ref": "/transaction/businessKey",
+            "source": "undo",
+            "path": [],
+            "label": "Business key",
+            "breadcrumb": "This step's undo › Business key",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "types": [
+              "string",
+              "null"
+            ],
+            "typeLabel": "Text or empty",
+            "optional": false
+          },
+          {
+            "ref": "/steps/hold/output",
+            "source": "step",
+            "stepId": "hold",
+            "stepKind": "action",
+            "path": [],
+            "label": "hold",
+            "breadcrumb": "hold",
+            "schema": {},
+            "types": [],
+            "typeLabel": "Any value",
+            "optional": false
+          },
+          {
+            "ref": "/steps/add/output",
+            "source": "step",
+            "stepId": "add",
+            "stepKind": "action",
+            "path": [],
+            "label": "add",
+            "breadcrumb": "add",
+            "schema": {
+              "anyOf": [
+                {},
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "types": [],
+            "typeLabel": "Any value",
+            "optional": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "a release step never reads its step's output",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "add",
+                  "kind": "action",
+                  "uses": "add-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "compensate": {
+                    "kind": "action",
+                    "uses": "remove-quantity@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            },
+            {
+              "id": "notify",
+              "kind": "transform",
+              "value": {
+                "ref": "/steps/move/output"
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "path": "/spec/steps/0/steps/0/cancel/with",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "items"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/items",
+            "source": "input",
+            "path": [
+              "items"
+            ],
+            "label": "items",
+            "breadcrumb": "Workflow input › items",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of text",
+            "optional": false
+          },
+          {
+            "ref": "/participant/operationKey",
+            "source": "undo",
+            "path": [],
+            "label": "Operation key",
+            "breadcrumb": "This step's undo › Operation key",
+            "schema": {
+              "type": "string"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          },
+          {
+            "ref": "/participant/outcome",
+            "source": "undo",
+            "path": [],
+            "label": "Outcome of hold",
+            "breadcrumb": "This step's undo › Outcome of hold",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "done",
+                "unknown"
+              ]
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Choice",
+            "optional": false
+          },
+          {
+            "ref": "/transaction/id",
+            "source": "undo",
+            "path": [],
+            "label": "Transaction ID",
+            "breadcrumb": "This step's undo › Transaction ID",
+            "schema": {
+              "type": "string"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          },
+          {
+            "ref": "/transaction/businessKey",
+            "source": "undo",
+            "path": [],
+            "label": "Business key",
+            "breadcrumb": "This step's undo › Business key",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "types": [
+              "string",
+              "null"
+            ],
+            "typeLabel": "Text or empty",
+            "optional": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "a confirm step reads its step's output, which is always there",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "add",
+                  "kind": "action",
+                  "uses": "add-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "compensate": {
+                    "kind": "action",
+                    "uses": "remove-quantity@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            },
+            {
+              "id": "notify",
+              "kind": "transform",
+              "value": {
+                "ref": "/steps/move/output"
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "path": "/spec/steps/0/steps/0/confirm/with",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "items"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/items",
+            "source": "input",
+            "path": [
+              "items"
+            ],
+            "label": "items",
+            "breadcrumb": "Workflow input › items",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of text",
+            "optional": false
+          },
+          {
+            "ref": "/participant/operationKey",
+            "source": "undo",
+            "path": [],
+            "label": "Operation key",
+            "breadcrumb": "This step's undo › Operation key",
+            "schema": {
+              "type": "string"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          },
+          {
+            "ref": "/participant/outcome",
+            "source": "undo",
+            "path": [],
+            "label": "Outcome of hold",
+            "breadcrumb": "This step's undo › Outcome of hold",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "done",
+                "unknown"
+              ]
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Choice",
+            "optional": false
+          },
+          {
+            "ref": "/transaction/id",
+            "source": "undo",
+            "path": [],
+            "label": "Transaction ID",
+            "breadcrumb": "This step's undo › Transaction ID",
+            "schema": {
+              "type": "string"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          },
+          {
+            "ref": "/transaction/businessKey",
+            "source": "undo",
+            "path": [],
+            "label": "Business key",
+            "breadcrumb": "This step's undo › Business key",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "types": [
+              "string",
+              "null"
+            ],
+            "typeLabel": "Text or empty",
+            "optional": false
+          },
+          {
+            "ref": "/steps/hold/output",
+            "source": "step",
+            "stepId": "hold",
+            "stepKind": "action",
+            "path": [],
+            "label": "hold",
+            "breadcrumb": "hold",
+            "schema": {},
+            "types": [],
+            "typeLabel": "Any value",
+            "optional": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "a step of a transaction reads no undo values",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "add",
+                  "kind": "action",
+                  "uses": "add-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "compensate": {
+                    "kind": "action",
+                    "uses": "remove-quantity@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            },
+            {
+              "id": "notify",
+              "kind": "transform",
+              "value": {
+                "ref": "/steps/move/output"
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "path": "/spec/steps/0/steps/1/with",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "items"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/items",
+            "source": "input",
+            "path": [
+              "items"
+            ],
+            "label": "items",
+            "breadcrumb": "Workflow input › items",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of text",
+            "optional": false
+          },
+          {
+            "ref": "/steps/hold/output",
+            "source": "step",
+            "stepId": "hold",
+            "stepKind": "action",
+            "path": [],
+            "label": "hold",
+            "breadcrumb": "hold",
+            "schema": {},
+            "types": [],
+            "typeLabel": "Any value",
+            "optional": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "after a transaction only its result is visible",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "add",
+                  "kind": "action",
+                  "uses": "add-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "compensate": {
+                    "kind": "action",
+                    "uses": "remove-quantity@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            },
+            {
+              "id": "notify",
+              "kind": "transform",
+              "value": {
+                "ref": "/steps/move/output"
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "path": "/spec/steps/1/value",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "items"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/items",
+            "source": "input",
+            "path": [
+              "items"
+            ],
+            "label": "items",
+            "breadcrumb": "Workflow input › items",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of text",
+            "optional": false
+          },
+          {
+            "ref": "/steps/move/output",
+            "source": "step",
+            "stepId": "move",
+            "stepKind": "transaction",
+            "path": [],
+            "label": "move",
+            "breadcrumb": "move",
+            "schema": {
+              "type": "null",
+              "const": null
+            },
+            "types": [
+              "null"
+            ],
+            "typeLabel": "Fixed value",
+            "optional": false
+          }
+        ]
+      }
     }
   ]
 }

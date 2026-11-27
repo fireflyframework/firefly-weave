@@ -615,6 +615,16 @@ step a rollback revokes before a worker takes it, because a session treats every
 dispatched step as taken (script `"outcome": "not_started"` to see it skipped);
 and a called step that can't be undone and never started.
 
+**Execute transactions in Studio.** Studio's **Execute workflow** applies these
+rules on Studio's own host. **Simulate a failure…** writes a step's `effect`,
+and an undo step's failure under its own key, such as `add#undo`, into the
+workflow's test data. The answer's `transactions` and `phases` lists draw the
+transaction and each of its undo steps on the canvas and in the run log. Studio
+doesn't resolve a simulated transaction in doubt: the simulated run stops
+there. [Run steps as a transaction](../guides/studio.md#run-steps-as-a-transaction)
+shows how, and [Simulated failures](studio-editor-contracts.md#simulated-failures)
+lists the fields.
+
 ## Simulate AI agents
 
 An AI agent step runs in a simulation without a model and without its tools:

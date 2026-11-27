@@ -140,6 +140,7 @@ describe("what happens next", () => {
       "Decision",
       "Parallel",
       "Loop over items",
+      "Transaction",
       "Call a workflow",
       "Stop with error",
     ]);

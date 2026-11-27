@@ -382,3 +382,19 @@ def test_an_execution_that_takes_too_long_says_so_and_isn_t_busy(tmp_path, monke
         assert answer.status_code == 503
         assert answer.json()["code"] == "WV-STUDIO-TIMEOUT"
         assert "30 seconds" in answer.json()["message"]
+
+
+def test_a_simulation_that_runs_out_of_time_answers_limit_and_frees_its_slot(tmp_path, monkeypatch):
+    with client(tmp_path) as browser:
+        headers = pair(browser)
+        monkeypatch.setattr(host, "SIMULATION_SECONDS", 0)
+        answer = browser.post("/studio/local/debug/execute", json=BODY, headers=headers)
+        assert (answer.status_code, answer.json()["status"]) == (200, "limit")
+        assert host._DEBUG_WORK.running == 0
+        monkeypatch.undo()
+        again = browser.post("/studio/local/debug/execute", json=BODY, headers=headers)
+        assert (again.status_code, again.json()["status"]) == (200, "completed")
+
+
+def test_a_simulation_stops_before_its_request_gives_up():
+    assert 0 < host.SIMULATION_SECONDS < host.LOCAL_WORK_SECONDS

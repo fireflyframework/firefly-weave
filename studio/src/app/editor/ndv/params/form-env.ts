@@ -20,6 +20,9 @@ SPDX-License-Identifier: Apache-2.0
 // and the read-only reason and added options of this session.
 import type { Step, Workflow } from "../../../model";
 import { ERROR_PATH } from "../../step-blocks";
+import { operationInput } from "../../transactions/undo-fields";
+import { UNDO_STEPS } from "../../transactions/undo";
+import { isRecord } from "../kinds/shared";
 import type { Json, KindContext, StepKindDescriptor } from "../registry";
 import type { FormEnv } from "./form-model";
 import { samePath } from "./paths";
@@ -40,15 +43,24 @@ export function stepSubject(
     step[ERROR_PATH] && typeof step[ERROR_PATH] === "object"
       ? [[ERROR_PATH, "output"]]
       : [];
+  // So has each undo step: its input.
+  const undo = UNDO_STEPS.filter((name) => isRecord(step[name]));
   return {
     step,
     workflow: ctx.workflow,
     action,
-    roots: [...fields.map((field) => field.path), ...errorOutput],
+    roots: [
+      ...fields.map((field) => field.path),
+      ...errorOutput,
+      ...undo.map((name) => [name, "with"]),
+    ],
     schemaOf: (root) =>
-      fields
-        .find((field) => samePath(field.path, root))
-        ?.expectedSchema?.(step, ctx) ?? undefined,
+      root.length > 1 && undo.includes(root[0] as (typeof undo)[number])
+        ? operationInput(step[String(root[0])] as Record<string, unknown>, ctx)
+            ?.schema
+        : (fields
+            .find((field) => samePath(field.path, root))
+            ?.expectedSchema?.(step, ctx) ?? undefined),
   };
 }
 

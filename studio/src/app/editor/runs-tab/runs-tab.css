@@ -319,6 +319,22 @@ button.runs-chip-remove {
   flex: none;
   outline: none;
 }
+/* A run in doubt: its caption takes a line of its own between the status and
+   the facts, wrapping whole, and the row grows to hold it. */
+.run-row.has-caption {
+  grid-template-rows: 16px auto 16px;
+  height: auto;
+  min-height: var(--run-row);
+  padding-block: 10px;
+}
+.run-caption-line {
+  grid-column: 2;
+  font: var(--type-small);
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
 .run-row:hover {
   background: var(--hover);
 }

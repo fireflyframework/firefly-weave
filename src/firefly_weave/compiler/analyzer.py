@@ -248,6 +248,9 @@ class ScopeCapture:
     # Steps whose error object may be read, in execution order: step ID, kind, and whether it is always there (inside
     # the step's own error path) rather than only after a failure.
     errors: tuple[tuple[str, str, bool], ...] = ()
+    # Inside a confirm, cancel or compensate: the phase and the ID of the step it settles, whose operation key and
+    # outcome, and whose transaction, the expression may read.
+    undo: tuple[UndoPhase, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -361,7 +364,7 @@ class _Analyzer:
         # The transaction enclosing the position being analyzed: its ID and its default hold; and the undo phase
         # being analyzed, whose expressions may read /participant and /transaction.
         self.transaction: tuple[str, int] | None = None
-        self.undo: str | None = None
+        self.undo: UndoPhase | None = None
         self.undo_step = ""
         self.participants: dict[str, Participant] = {}
         self.pivots: set[str] = set()
@@ -874,6 +877,7 @@ class _Analyzer:
                 self.loops,
                 evaluated,
                 owners + handled,
+                None if self.undo is None else (self.undo, self.undo_step),
             )
 
     def expression(
@@ -1596,7 +1600,7 @@ class _Analyzer:
                         message=RULE_MESSAGES["TXN_CANCEL_OUTPUT"].format(step=identifier),
                     )
                 stack.extend(_children(node, at))
-        self.undo, self.undo_step = name, identifier
+        self.undo, self.undo_step = cast(UndoPhase, name), identifier
         try:
             if undo["kind"] == "action":
                 resource = self.resolve("Action", reference, path + "/uses")

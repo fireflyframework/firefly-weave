@@ -38,6 +38,7 @@ import {
 } from "../../formula/codemirror/json-editor";
 import type { FormSession } from "../params/form-session";
 import type { Json } from "../registry";
+import { pinSubject } from "../step-details-controller";
 
 let sequence = 0;
 
@@ -45,7 +46,10 @@ let sequence = 0;
   selector: "weave-output-editor",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  template: `<div
+  template: `@if (key()) {
+      <p class="output-editor-what">Test output of {{ subject() }}</p>
+    }
+    <div
       class="output-editor-field"
       [class.is-invalid]="!!error()"
       #field
@@ -57,7 +61,11 @@ let sequence = 0;
     }
     <div class="output-editor-actions">
       <p class="output-editor-note" [id]="noteId">
-        Paste data from an earlier run to reuse it.
+        {{
+          key()
+            ? "For Execute only. Real runs ignore it."
+            : "Paste data from an earlier run to reuse it."
+        }}
       </p>
       <div class="output-editor-buttons">
         <button type="button" class="sm" (click)="cancel()">Cancel</button>
@@ -77,6 +85,12 @@ export class OutputEditor {
   session = input.required<FormSession>();
   /** The text the editor starts with: the pinned output as 2-space JSON, or {}. */
   initial = input.required<string>();
+  /** The undo step's key it is kept at (`hold#confirm`); null for the step's own output. */
+  key = input<string | null>(null);
+  /** Whose output it is: the step's, or its undo step's ("hold's confirm"). */
+  subject(): string {
+    return pinSubject(this.key() ?? this.session().target);
+  }
   readonly saved = output<Json>();
   readonly cancelled = output<void>();
 
@@ -98,7 +112,7 @@ export class OutputEditor {
     this.text.set(initial);
     this.editor = createJsonEditor(this.field().nativeElement, {
       text: initial,
-      label: `Output of ${this.session().target}`,
+      label: `Output of ${this.subject()}`,
       describedBy: this.noteId,
       onChange: (text) => {
         this.text.set(text);
@@ -137,7 +151,7 @@ export class OutputEditor {
     try {
       // Inside a loop's body: for the item picked.
       const refused = await controller.pin(
-        controller.pinKey(target),
+        this.key() ?? controller.pinKey(target),
         parsed.value,
         "manual",
       );

@@ -41,12 +41,10 @@ import type {
   KindContext,
   NdvContext,
   ParamSpec,
+  Path,
 } from "../../registry";
 import { isRecord, schemaOf } from "../shared";
-import { wholeMapping } from "./shared";
-
-/** The language's limits on a call's business key (compiler/calls.py BUSINESS_KEY_SCHEMA). */
-const BUSINESS_KEY_SCHEMA = { type: "string", minLength: 1, maxLength: 200 };
+import { BUSINESS_KEY_SCHEMA, wholeMapping } from "./shared";
 
 /** A new call step: it waits for the result and sends an empty input until a workflow is chosen. */
 export const newCallStep = (id: string): Step => ({
@@ -72,23 +70,31 @@ function contractOf(
   const contract = uses ? ctx.workflowContract(uses) : null;
   return isRecord(contract) ? contract : null;
 }
-/**
- * The called workflow's input schema and where its references resolve, or
- * null when Studio can't read it (unknown, or a reference it can't follow).
- */
-function calleeInput(
-  step: Step,
-  ctx: KindContext,
-): { schema: Record<string, unknown>; resolve: ResolveOptions } | null {
-  const contract = contractOf(step, ctx);
-  const schema = schemaOf(contract?.["inputSchema"]);
+/** An input schema and where its references resolve. */
+export interface TargetInput {
+  schema: Record<string, unknown>;
+  resolve: ResolveOptions;
+}
+/** An input schema Studio can read, or null (unknown, or a reference it can't follow). */
+export function readableInput(
+  inputSchema: unknown,
+  schemas: unknown = {},
+): TargetInput | null {
+  const schema = schemaOf(inputSchema);
   if (!schema) return null;
-  const bundle = isRecord(contract?.["schemas"]) ? contract["schemas"] : {};
-  const resolve: ResolveOptions = { root: schema, bundle };
+  const resolve: ResolveOptions = {
+    root: schema,
+    bundle: isRecord(schemas) ? schemas : {},
+  };
   const unresolved =
     resolveSchema(schema, resolve).unresolved.length > 0 ||
     fieldsOf(schema, resolve).some((field) => field.unresolved.length > 0);
   return unresolved ? null : { schema, resolve };
+}
+/** The called workflow's input. */
+function calleeInput(step: Step, ctx: KindContext): TargetInput | null {
+  const contract = contractOf(step, ctx);
+  return readableInput(contract?.["inputSchema"], contract?.["schemas"]);
 }
 
 /** The step's expression fields: its input and its business key. */
@@ -129,68 +135,84 @@ const workflowChoices = (ndv: NdvContext) =>
       ),
     );
 
-/** Input: rows from the called workflow's input, free-form JSON when Studio can't read it. */
-function inputParams(step: Step, ctx: KindContext, name: string): FormSpec {
-  const called = calleeInput(step, ctx);
-  // Read from a run, the Input pane holds what the call received.
-  if (!called && ctx.viewingRun) return { fields: [] };
-  if (!called)
-    return {
-      fields: [
-        {
-          id: "input",
-          path: ["with"],
-          type: "json",
-          label: "Input",
-          mapping: "both",
-          hint: `Studio can't read ${name}'s input.`,
-        },
-      ],
-    };
-  const { schema: input, resolve } = called;
+/** Where an input is, what it holds, and what its field says. */
+interface InputPlace {
+  id: string;
+  path: Path;
+  /** The stored input. */
+  value: unknown;
+  /** What takes the input, for the line while Studio can't read it. */
+  name: string;
+  /** What the group of rows says of itself. */
+  rows: Pick<ParamSpec, "label" | "labelHidden" | "hint">;
+}
+/** Input: rows from the target's input, free-form JSON when Studio can't read it. */
+export function inputParams(
+  { id, path, value, name, rows: group }: InputPlace,
+  target: TargetInput | null,
+): ParamSpec[] {
+  if (!target)
+    return [
+      {
+        id,
+        path,
+        type: "json",
+        label: "Input",
+        mapping: "both",
+        hint: `Studio can't read ${name}'s input.`,
+      },
+    ];
+  const { schema: input, resolve } = target;
   const info = describeField("input", input, { ...resolve, required: true });
-  if (!isShownField(info)) return { fields: [] };
+  if (!isShownField(info)) return [];
   // An input that lists no fields takes any named values, none included.
   if (!fieldsOf(input, resolve).length)
-    return {
-      fields: [
-        {
-          ...paramFromField(info, ["with"], "", 0),
-          label: "Input",
-          required: false,
-        },
-      ],
-    };
-  const rows = paramsFromSchema(input, ["with"], {
-    idPrefix: "input.",
-    resolve,
-  });
-  if (wholeMapping(step["with"]))
-    return {
-      fields: [
+    return [
+      {
+        ...paramFromField(info, path, "", 0),
+        id,
+        label: "Input",
+        required: false,
+      },
+    ];
+  const rows = paramsFromSchema(input, path, { idPrefix: `${id}.`, resolve });
+  if (wholeMapping(value))
+    return [
+      {
+        id,
+        path,
+        type: "fields",
+        label: "Input",
+        mapping: "both",
+        hint: "The whole input is mapped. Switch to Fixed to fill it field by field.",
+        children: () => rows.fields,
+      },
+    ];
+  return [
+    {
+      id,
+      path,
+      type: "fields",
+      ...group,
+      children: () => [...rows.fields, ...(rows.options ?? [])],
+    },
+  ];
+}
+/** The call's input; read from a run, the Input pane holds what the call received. */
+function callInput(step: Step, ctx: KindContext, name: string): ParamSpec[] {
+  const target = calleeInput(step, ctx);
+  return !target && ctx.viewingRun
+    ? []
+    : inputParams(
         {
           id: "input",
           path: ["with"],
-          type: "fields",
-          label: "Input",
-          mapping: "both",
-          hint: "The whole input is mapped. Switch to Fixed to fill it field by field.",
-          children: () => rows.fields,
+          value: step["with"],
+          name,
+          rows: { label: "Input", hint: `From ${name}'s input` },
         },
-      ],
-    };
-  return {
-    fields: [
-      {
-        id: "input",
-        path: ["with"],
-        type: "fields",
-        label: "Input",
-        hint: `From ${name}'s input`,
-        children: () => [...rows.fields, ...(rows.options ?? [])],
-      },
-    ],
-  };
+        target,
+      );
 }
 
 /**
@@ -308,7 +330,7 @@ export function callForm(step: Step, ctx: KindContext): FormSpec {
   return {
     fields: [
       workflow,
-      ...(uses && name ? inputParams(step, ctx, name).fields : []),
+      ...(uses && name ? callInput(step, ctx, name) : []),
       mode,
       onFailure,
     ],

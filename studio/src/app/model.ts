@@ -264,10 +264,12 @@ function preserveYamlComments(old: unknown, replacement: unknown): void {
     }
   }
 }
+/** A transaction comes from its own descriptor, not the palette's kinds. */
+const isTransaction = (step: Step) => (step.kind as string) === "transaction";
 /**
  * Plain name of a branch: "Case 1", "Otherwise", a loop's "For each item",
- * a step's error path "On error" (as Outline lists it), or a parallel
- * branch's own name.
+ * a transaction's own steps "Transaction", a step's error path "On error"
+ * (as Outline lists it), or a parallel branch's own name.
  */
 export function branchTitle(step: Step, name: string) {
   if (blocksOf(step).some((b) => b.name === name && b.kind === "errorPath"))
@@ -275,27 +277,33 @@ export function branchTitle(step: Step, name: string) {
   if (step.kind === "switch")
     return name === "default" ? "Otherwise" : `Case ${name.slice(5)}`;
   if (step.kind === "forEach") return "For each item";
-  return name;
+  return isTransaction(step) ? "Transaction" : name;
 }
 /**
  * Where a step sits, in words: "Main sequence", "Case 1 of route",
- * "Otherwise of route", "For each item of orders", "On error of submit"
- * or "first of fulfil".
+ * "Otherwise of route", "For each item of orders", "Transaction move",
+ * "On error of submit" or "first of fulfil".
  */
 export function ownerLabel(owner: string, steps?: ReadonlyMap<string, Step>) {
   if (owner === "root") return "Main sequence";
   const split = owner.indexOf("/");
   const parent = owner.slice(0, split);
   const name = owner.slice(split + 1);
-  // Without the step, a decision's paths and Otherwise are told by their
-  // names, and a block named errorPath is the step's error path.
+  // Without the step, a decision's paths, Otherwise and a transaction's own
+  // steps are told by their names, and a block named errorPath is the step's
+  // error path.
   const step =
     steps?.get(parent) ??
     ({
-      kind: /^(case |default$)/.test(name) ? "switch" : "",
+      kind: /^(case |default$)/.test(name)
+        ? "switch"
+        : name === "steps"
+          ? "transaction"
+          : "",
       [name]: 0,
     } as unknown as Step);
-  return `${branchTitle(step, name)} of ${parent}`;
+  const of = isTransaction(step) && name !== ERROR_PATH ? " " : " of ";
+  return branchTitle(step, name) + of + parent;
 }
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -384,12 +392,6 @@ function expressionRefs(
 /** The expression fields of a step, as paths relative to the step. */
 function expressionPaths(step: Step): (string | number)[][] {
   switch (step.kind) {
-    case "llm":
-      return [["prompt"], ["context"]];
-    case "transform":
-      return [["value"]];
-    case "humanTask":
-      return [["title"], ["context"]];
     case "switch":
       return [
         ...(Array.isArray(step["cases"]) ? step["cases"] : []).flatMap(
@@ -407,9 +409,22 @@ function expressionPaths(step: Step): (string | number)[][] {
     case "forEach":
       return [["items"], ["body", "output"]];
     default:
-      // An action's, a decision table's or a call's input, and a call's
-      // business key; a step without them reads nothing there.
-      return [["with"], ["businessKey"]];
+      // An AI task's prompt, a human task's title, the context of both, a
+      // transform's value, the input of an action, a decision table or a call
+      // and those of its undo, a call's or a transaction's business key, and
+      // a transaction's result; a step without one reads nothing there.
+      return [
+        ["prompt"],
+        ["title"],
+        ["context"],
+        ["value"],
+        ["with"],
+        ["businessKey"],
+        ["output"],
+        ["confirm", "with"],
+        ["cancel", "with"],
+        ["compensate", "with"],
+      ];
   }
 }
 const readPath = (root: unknown, path: (string | number)[]) =>
@@ -650,8 +665,12 @@ export class StructuredCanvasAdapter {
       for (const s of steps) {
         if (!s.id || ids.has(s.id)) throw Error("Steps must have unique IDs.");
         ids.add(s.id);
-        // A call step comes from its own descriptor, not the palette's kinds.
-        if (!kinds.includes(s.kind) && (s.kind as string) !== "callWorkflow")
+        // A call step comes from its own descriptor too.
+        if (
+          !kinds.includes(s.kind) &&
+          !isTransaction(s) &&
+          (s.kind as string) !== "callWorkflow"
+        )
           throw Error(
             `Unsupported step ${s.kind}; source is preserved. The last valid graph is read-only.`,
           );
