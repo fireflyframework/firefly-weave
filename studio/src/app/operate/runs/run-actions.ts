@@ -204,19 +204,22 @@ export const IN_DOUBT_LINE =
 /** Why neither cancel can be sent for a run held whole. */
 export const HELD_LINE =
   "This run is held, so it can't be canceled. Force end it from its incident.";
+/** Why the platform can't read a run: too large to read, or withheld. */
+export type CantRead = "too_large" | "withheld";
 /**
- * Whether a read of the run answers that the platform can't read it: too
- * large to read (HTTP 429 WV-RUNTIME-LIMIT), or withheld (HTTP 409
+ * Why a read of the run answers that the platform can't read it: too large
+ * to read (HTTP 429 WV-RUNTIME-LIMIT), or withheld (HTTP 409
  * WV-LEGACY-UNAVAILABLE). Its incidents then take no decision, so the
- * platform lets Cancel without undoing end it.
+ * platform lets Cancel without undoing end it. Null for any other answer.
  */
 export function platformCantRead(
   problem: Pick<PlainError, "status" | "code">,
-): boolean {
-  return (
-    (problem.status === 429 && problem.code === "WV-RUNTIME-LIMIT") ||
-    (problem.status === 409 && problem.code === "WV-LEGACY-UNAVAILABLE")
-  );
+): CantRead | null {
+  if (problem.status === 429 && problem.code === "WV-RUNTIME-LIMIT")
+    return "too_large";
+  if (problem.status === 409 && problem.code === "WV-LEGACY-UNAVAILABLE")
+    return "withheld";
+  return null;
 }
 /** Why a cancel waits, and the incident to resolve first when one is known. */
 export interface CancelWait {
@@ -236,8 +239,8 @@ export interface CancelDialog {
   incidentId: string | null;
   /** What stays done in other systems, from the transactions just read. */
   lines: StaysDoneLine[];
-  /** The platform can't read the run, so nothing can be listed. */
-  unlisted: boolean;
+  /** Why the platform can't read the run, so nothing can be listed; null when it can. */
+  unlisted: CantRead | null;
   sending: boolean;
 }
 
@@ -272,8 +275,8 @@ export class RunActions {
      */
     base: boolean;
   } | null = null;
-  /** The run whose last read answered that the platform can't read it. */
-  private unreadRun = "";
+  /** The run whose last read answered that the platform can't read it, and why. */
+  private unreadRun: { runId: string; why: CantRead } | null = null;
 
   constructor(
     private readonly host: () => App,
@@ -309,7 +312,7 @@ export class RunActions {
       return;
     }
     // Read now, it says what is offered.
-    if (this.unreadRun === runId) this.unreadRun = "";
+    if (this.unreadRun?.runId === runId) this.unreadRun = null;
     if (base || !held?.base || held.runId !== runId) {
       this.known = { runId, views, complete, base };
       return;
@@ -333,8 +336,9 @@ export class RunActions {
    * can be listed. Any other failure says nothing of what is offered.
    */
   unreadable(runId: string, problem: PlainError) {
-    if (platformCantRead(problem)) this.unreadRun = runId;
-    else if (this.unreadRun === runId) this.unreadRun = "";
+    const why = platformCantRead(problem);
+    if (why) this.unreadRun = { runId, why };
+    else if (this.unreadRun?.runId === runId) this.unreadRun = null;
   }
   /** The detail is gone; answers still say what happened, but draw nothing. */
   destroy() {
@@ -440,7 +444,7 @@ export class RunActions {
         target,
         incidentId: doubt.incident_id ?? null,
         lines: [],
-        unlisted: false,
+        unlisted: null,
         sending: false,
       };
       this.changed();
@@ -546,7 +550,7 @@ export class RunActions {
     if (!id || isTerminal(run)) return null;
     if (!host.can("run.cancel", id) || !host.can("transaction.reconcile", id))
       return null;
-    if (this.unreadRun === id) return { blocked: null };
+    if (this.unreadRun?.runId === id) return { blocked: null };
     if (known?.runId !== id) return null;
     if (
       known.complete &&
@@ -588,14 +592,14 @@ export class RunActions {
         undefined,
         "danger",
       );
-    if (!read && this.unreadRun === target.id) {
+    if (!read && this.unreadRun?.runId === target.id) {
       // The platform can't read the run: this cancel is its way out.
       this.cancelDialog = {
         mode: "without_undo",
         target,
         incidentId: null,
         lines: [],
-        unlisted: true,
+        unlisted: this.unreadRun.why,
         sending: false,
       };
       this.changed();
@@ -619,7 +623,7 @@ export class RunActions {
       target,
       incidentId: null,
       lines: staysDone(unsettled),
-      unlisted: false,
+      unlisted: null,
       sending: false,
     };
     this.changed();

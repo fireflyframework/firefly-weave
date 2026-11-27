@@ -32,7 +32,7 @@ import { Modal } from "../../dialog";
 import { shortId } from "../../format";
 import { Icon } from "../../icon";
 import { REASON_LIMIT } from "../operate-limits";
-import { reasonProblem } from "../runs/run-actions";
+import { reasonProblem, type CantRead } from "../runs/run-actions";
 import { typedConfirmation, type StaysDoneLine } from "./transaction-record";
 
 @Component({
@@ -64,12 +64,21 @@ import { typedConfirmation, type StaysDoneLine } from "./transaction-record";
               </button>
             }
           </div>
+        } @else if (unlisted() === "withheld") {
+          <p class="dialog-message" [id]="messageId">
+            Steps already done stay done in other systems: Weave won't undo
+            them.
+          </p>
+          <p class="dialog-message">
+            Studio can't read this run's transactions, so it can't list what
+            stays done. Check the other systems after it ends.
+          </p>
         } @else {
           <p class="dialog-message" [id]="messageId">
             Steps already done stay done in other systems: Weave won't undo
             them, and the run's transactions end Force ended.
           </p>
-          @if (unlisted()) {
+          @if (unlisted() === "too_large") {
             <p class="dialog-message">
               The platform can't read this run, so Studio can't list what stays
               done. Check the other systems after it ends.
@@ -145,8 +154,8 @@ export class RunCancelDialog {
   mode = input.required<"in_doubt" | "without_undo">();
   runId = input.required<string>();
   lines = input<StaysDoneLine[]>([]);
-  /** The platform can't read the run: nothing it did can be listed. */
-  unlisted = input(false);
+  /** Why the platform can't read the run, so nothing it did can be listed. */
+  unlisted = input<CantRead | null>(null);
   incidentId = input<string | null>(null);
   sending = input(false);
   confirm = output<string>();

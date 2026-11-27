@@ -420,8 +420,11 @@ neither is sent: **Open incident** takes you to the decision it waits for. A run
 held because it grew too large to undo its transactions can't be canceled either
 way: force end it from its incident. When the platform can't read the run,
 because it is too large or withheld, its incidents take no decision, so
-**Cancel without undoing** is offered as the way out; Studio can't list what
-stays done then.
+**Cancel without undoing** is offered as the way out, without a list of what
+stays done. For a run too large to read, its dialog says Weave won't undo the
+steps already done and the run's transactions end Force ended. For a withheld
+run, it says only that Weave won't undo them and Studio can't read the run's
+transactions.
 
 ### Know when a transaction is in doubt
 

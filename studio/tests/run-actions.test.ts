@@ -1041,11 +1041,16 @@ describe("Cancel without undoing", () => {
   });
 
   it.each([
-    [429, "WV-RUNTIME-LIMIT", "Retained run exceeds the bounded fetch budget"],
-    [409, "WV-LEGACY-UNAVAILABLE", "Run state is unavailable"],
+    [
+      429,
+      "WV-RUNTIME-LIMIT",
+      "Retained run exceeds the bounded fetch budget",
+      "too_large",
+    ],
+    [409, "WV-LEGACY-UNAVAILABLE", "Run state is unavailable", "withheld"],
   ])(
-    "of a run whose read answers %s %s is the way out: offered, with nothing listed, and sends skip_undo",
-    async (status, code, message) => {
+    "of a run whose read answers %s %s is the way out: offered, with nothing listed and why, and sends skip_undo",
+    async (status, code, message, why) => {
       const s = shell();
       const refusal = refused(status, code, message);
       // The run's page couldn't list its transactions: the platform takes no decision on its incidents.
@@ -1057,7 +1062,7 @@ describe("Cancel without undoing", () => {
       expect(s.actions.cancelDialog).toMatchObject({
         mode: "without_undo",
         lines: [],
-        unlisted: true,
+        unlisted: why,
       });
       void s.actions.confirmWithoutUndoing("Too large to decide");
       await s.settle();

@@ -443,11 +443,19 @@ for (const unreadable of [
     status: 429,
     code: "WV-RUNTIME-LIMIT",
     message: "Retained run exceeds the bounded fetch budget",
+    says: [
+      "Steps already done stay done in other systems: Weave won't undo them, and the run's transactions end Force ended.",
+      "The platform can't read this run, so Studio can't list what stays done. Check the other systems after it ends.",
+    ],
   },
   {
     status: 409,
     code: "WV-LEGACY-UNAVAILABLE",
     message: "Run state is unavailable",
+    says: [
+      "Steps already done stay done in other systems: Weave won't undo them.",
+      "Studio can't read this run's transactions, so it can't list what stays done. Check the other systems after it ends.",
+    ],
   },
 ])
   test(`Cancel without undoing is the way out of a run whose reads answer ${unreadable.code}`, async ({
@@ -460,9 +468,8 @@ for (const unreadable of [
     await expect(button).not.toHaveAttribute("aria-disabled", "true");
     await button.click();
     const cancel = dialog(page, "Cancel without undoing?");
-    await expect(cancel).toContainText(
-      "The platform can't read this run, so Studio can't list what stays done.",
-    );
+    await expect(cancel.locator(".dialog-message")).toHaveText(unreadable.says);
+    await expect(cancel).toHaveAccessibleDescription(unreadable.says[0]!);
     await expect(cancel.locator(".stays-done")).toHaveCount(0);
     await cancel.getByLabel("Reason").fill("Too large to decide");
     await cancel.getByLabel(`Type ${short} to confirm`).fill(short);
