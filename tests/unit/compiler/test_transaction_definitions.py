@@ -219,7 +219,7 @@ def test_the_manifest_lists_the_transaction_block_the_undo_setting_and_the_trigg
         "label": "Transaction",
         "blocks": [{"name": "body", "path": "", "label": "Transaction"}],
         "scope_roots": [],
-        "studio": "pending",
+        "studio": "ready",
     }
     assert [field.model_dump(mode="json") for field in manifest.step_fields] == [
         {
@@ -233,7 +233,7 @@ def test_the_manifest_lists_the_transaction_block_the_undo_setting_and_the_trigg
                 "irreversible": ["/irreversible"],
             },
             "only_inside": "transaction",
-            "studio": "pending",
+            "studio": "ready",
         },
         {
             "name": "onError",

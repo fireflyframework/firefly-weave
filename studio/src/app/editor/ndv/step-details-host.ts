@@ -153,7 +153,10 @@ export interface StepDetailsHost {
   removeTrigger?(id: string): Promise<void>;
   /** Opens a workflow by its draft's ID (Open run reaches a called workflow's draft this way). */
   restoreWorkflow?(id: string): Promise<boolean>;
-  navigate?(view: "designer"): Promise<unknown>;
+  /** Shows another page: the designer, or Operate's incidents (a transaction in doubt opens its incident). */
+  navigate?(view: "designer" | "incidents"): Promise<unknown>;
+  /** The page shown. */
+  readonly view?: string;
   /** The open workflow is kept on this computer (opened from this computer's drafts). */
   readonly keptLocally?: boolean;
   /** The connected environment's name ("local"), or null before it's known. */

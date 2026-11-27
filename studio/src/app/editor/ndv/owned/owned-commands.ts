@@ -30,6 +30,14 @@ import type {
   OwnedPublishRequest,
   StepDetailsService,
 } from "../step-details-service";
+import type { DiagnosticInput } from "../../../designer/diagnostics-list";
+import {
+  countDiagnostics,
+  countLine,
+  type ValidationResult,
+} from "../../../designer/validation";
+import { aboutNow } from "../../transactions/fixes";
+import { showTransactionProblems } from "../../transactions/publish-summary";
 import {
   canvasExtras,
   driftedOwned,
@@ -51,6 +59,9 @@ export interface OwnedCommandHost {
   readonly stepDetails: Pick<StepDetailsService, "ownedPublish" | "mounted">;
   /** "Use the new editor": the publish dialog is part of it. */
   readonly editorNext?: boolean;
+  /** What the last check found, and the workflow it was made for. */
+  readonly diagnostics?: { diagnostics?: readonly DiagnosticInput[] } | null;
+  readonly diagnosticsDefinition?: unknown;
   error: string;
   errorCode: string;
   busy: string;
@@ -59,6 +70,22 @@ export interface OwnedCommandHost {
   perform(edit: () => void): void;
   notify(text: string): void;
   refreshView(): void;
+}
+/**
+ * The platform refused to publish the workflow it checked: how many problems
+ * it found ("2 errors, 1 warning"), and the summary of those about its
+ * transactions.
+ */
+export function publishRefused(
+  host: Pick<OwnedCommandHost, "model" | "diagnosticsDefinition">,
+  result: { diagnostics: ValidationResult["diagnostics"]; errorCount: number },
+): string {
+  showTransactionProblems(host, result);
+  const counts = countDiagnostics(result.diagnostics);
+  return countLine({
+    ...counts,
+    errors: Math.max(1, result.errorCount, counts.errors),
+  });
 }
 export type OwnedFirst = "none" | "published" | "stopped";
 
@@ -142,8 +169,15 @@ export async function publishOwnedFirst(
   purpose: OwnedPublishPurpose,
   check: () => Promise<boolean>,
 ): Promise<{ result: OwnedFirst; published: number }> {
-  if (!versionChangedOwned(host) || !(await check()))
+  if (!versionChangedOwned(host)) return { result: "stopped", published: 0 };
+  const before = host.diagnostics;
+  if (!(await check())) {
+    // A transaction that isn't safe says so before Publish… goes on, when the
+    // check answered about this workflow; one that couldn't run says so itself.
+    if (purpose === "publish" && host.diagnostics !== before && aboutNow(host))
+      showTransactionProblems(host, host.diagnostics ?? null);
     return { result: "stopped", published: 0 };
+  }
   if (!pendingOwned(host.model).length) return { result: "none", published: 0 };
   if (!host.can("definition.publish")) {
     stop(host, publishRefusal(purpose));

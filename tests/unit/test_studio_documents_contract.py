@@ -300,6 +300,12 @@ FAILURE_LIMITS = [
     ),
     ("more than 1000 attempts", {"submit": {**FAILURE, "attempts": 1000}}, {"submit": {**FAILURE, "attempts": 1001}}),
     ("fewer than no attempts", {"submit": {**FAILURE, "attempts": 0}}, {"submit": {**FAILURE, "attempts": -1}}),
+    (
+        "an effect outside the list",
+        {"submit": {**FAILURE, "effect": "unknown"}},
+        {"submit": {**FAILURE, "effect": "maybe"}},
+    ),
+    ("a null effect", {"submit": FAILURE}, {"submit": {**FAILURE, "effect": None}}),
     ("a boolean attempt count", {"submit": {**FAILURE, "attempts": 1}}, {"submit": {**FAILURE, "attempts": True}}),
     (
         "a run ID without its source",
@@ -348,6 +354,42 @@ def test_a_document_without_errors_keeps_its_bytes():
     assert json.dumps(written, sort_keys=True).encode() == json.dumps(without, sort_keys=True).encode()
 
 
+def test_test_data_accepts_an_effect_and_phase_keys():
+    errors = {
+        "add": {**FAILURE, "effect": "none"},
+        "submit": {**FAILURE, "outcome": "unknown", "effect": "unknown"},
+        "add#undo": {**FAILURE, "attempts": 10},
+        "hold[2]#cancel": FAILURE,
+        "hold#confirm": FAILURE,
+        # An AI agent's activations start with a digit; they keep their keys.
+        "support#1.2": FAILURE,
+    }
+    document = doc(errors=errors)
+    assert schema_accepts(document)
+    parsed = documents.parse_test_data(json.dumps(document).encode())
+    assert parsed.model_dump(mode="json", by_alias=True) == document
+    # A failure without an effect keeps its bytes: the effect is the platform's to derive, never written back.
+    assert parsed.errors is not None and parsed.errors["add#undo"].effect is None
+
+
+@pytest.mark.parametrize("key", ["add#other", "add#Undo", "add#undo.1", "add#undo~2", "hold[2]#confirmed"])
+def test_a_failure_of_a_phase_no_step_has_is_refused(key):
+    # A pin may have the key, so the key itself is sound: only a failure must name a confirm, a release or an undo.
+    assert schema_accepts(doc(pins={key: PIN}))
+    assert model_accepts(doc(pins={key: PIN}))
+    assert not schema_accepts(doc(errors={key: FAILURE}))
+    assert not model_accepts(doc(errors={key: FAILURE}))
+
+
+def test_a_failure_with_no_effect_and_an_unknown_outcome_is_refused():
+    refused = doc(errors={"submit": {**FAILURE, "outcome": "unknown", "effect": "none"}})
+    assert not schema_accepts(refused)
+    assert not model_accepts(refused)
+    for kept in ({"effect": "none"}, {"effect": "none", "outcome": "not_started"}, {"outcome": "unknown"}):
+        document = doc(errors={"submit": {**FAILURE, **kept}})
+        assert schema_accepts(document) and model_accepts(document), kept
+
+
 def test_python_code_may_build_a_model_by_field_name_but_json_may_not():
     built = documents.StudioTestData(
         schema_version=1, kind="weave.studio/testData", updated_at=datetime(2026, 10, 7, 10, tzinfo=UTC)
@@ -366,6 +408,7 @@ def test_schema_patterns_are_the_module_patterns():
     assert schema["$defs"]["reference"]["pattern"] == documents.REFERENCE_PATTERN
     assert schema["$defs"]["hash"]["pattern"] == documents.HASH_PATTERN
     assert schema["$defs"]["error"]["properties"]["code"]["pattern"] == documents.ERROR_CODE_PATTERN
+    assert schema["$defs"]["errorKey"]["pattern"] == documents.ERROR_KEY_PATTERN
 
 
 @pytest.mark.parametrize(

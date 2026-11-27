@@ -91,32 +91,117 @@ SPDX-License-Identifier: Apache-2.0
   min-width: 0;
 }
 @container (min-width: 480px) {
-  .settings-form > weave-param-field:has(.param-duration) > .param {
+  :is(.settings-form, .settings-undo-fields)
+    > weave-param-field:has(> .param > .param-control > .param-duration)
+    > .param {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr);
     align-items: center;
     gap: var(--sd-field-inner) var(--space-3);
   }
-  .settings-form
-    > weave-param-field:has(.param-duration)
+  :is(.settings-form, .settings-undo-fields)
+    > weave-param-field:has(> .param > .param-control > .param-duration)
     > .param
     > .param-label-row {
     grid-column: 1 / -1;
   }
 }
 
-/* On error: the choice, what it does under it, then what the step's kind
-   adds, each line with its info icon. Result on error sits under it,
-   indented on a rule, while the step continues with error output. */
-/* The choice is as wide as the form: its values are long and alike. */
-.step-details .settings-on-error weave-select.param-select {
+/* A transaction's undo retries: the tries and the two waits, one under the
+   other; side by side while there is room, with one hint under them. Its
+   durations end where the widest unit needs them to. */
+.settings-form [data-param="undoRetry"] .param-group {
+  display: grid;
+  gap: var(--sd-field-gap) var(--space-3);
+}
+.settings-form [data-param="undoRetry"] .param-group .param-label {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.settings-form
+  :is(
+    [data-param="undoRetry"],
+    [data-param="holdSeconds"],
+    [data-param="undoTimeout"]
+  )
+  .param-duration {
   width: 100%;
 }
-.step-details .settings-on-error weave-select.param-select .choice-field input {
+@container (min-width: 480px) {
+  .settings-form [data-param="undoRetry"] .param-group {
+    grid-template-columns: 96px repeat(2, minmax(0, 176px));
+  }
+  .settings-form
+    :is([data-param="holdSeconds"], [data-param="undoTimeout"])
+    .param-duration {
+    width: 168px;
+  }
+}
+
+/* How it's undone: the choice as wide as the form and what it does under
+   it, then the fields of the way chosen, indented on a rule. */
+.step-details
+  :is(.settings-undo, .settings-on-error)
+  weave-select.param-select {
+  width: 100%;
+}
+.step-details
+  :is(.settings-undo, .settings-on-error)
+  weave-select.param-select
+  .choice-field
+  input {
   flex: 1;
   width: 100%;
   field-sizing: fixed;
 }
+/* Nothing chosen on a step that changes data: the whole control says so. */
+.settings-undo .choice-field:has(input[aria-invalid="true"]) {
+  border-color: var(--danger);
+}
+.settings-undo .choice-field input[aria-invalid="true"] {
+  box-shadow: none;
+}
+.settings-undo-description {
+  margin-top: var(--space-1);
+}
+.settings-undo-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--line);
+}
+/* An operation's input rows follow it: what introduces them is their hint. */
+.settings-undo-fields > [data-param$=".input"] > .param > .param-label-row {
+  min-height: 0;
+}
+.settings-undo-fields
+  > [data-param$=".input"]
+  > .param
+  > .param-label-row
+  > .param-tools {
+  display: none;
+}
+/* What can't be chosen: a step that only reads, a way kept outside a transaction. */
+.settings-undo-fact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+}
+.settings-undo-fact > weave-icon {
+  flex: none;
+  color: var(--info-ink);
+}
+
+/* On error: the choice, what it does under it, then what the step's kind
+   adds, each line with its info icon. Result on error sits under it,
+   indented on a rule, while the step continues with error output. */
 .settings-on-error-description {
   margin-top: var(--space-1);
 }

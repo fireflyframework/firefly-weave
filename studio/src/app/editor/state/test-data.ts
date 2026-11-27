@@ -109,6 +109,11 @@ export interface ErrorEntry extends Provenance {
   code: string;
   outcome?: "not_started" | "failed" | "unknown";
   attempts?: number;
+  /**
+   * Whether a step inside a transaction may have changed anything; left out,
+   * it follows from the code and the outcome, as on a platform.
+   */
+  effect?: "none" | "unknown";
   source?: "manual" | "run";
 }
 export interface CalleeMocks {
@@ -131,7 +136,10 @@ export interface StudioTestData {
   /** Mocks for steps inside called workflows, by callee reference (`notify-customer@1.0.0`). */
   workflows?: Record<string, CalleeMocks>;
   waits?: WaitScripts;
-  /** Simulated failures, by step ID (every item) or instance key (one item). */
+  /**
+   * Simulated failures, by step ID (every item) or instance key (one item);
+   * of a step's undo, release or confirm, by its key (`add#undo`).
+   */
   errors?: Record<InstanceKey, ErrorEntry>;
 }
 

@@ -688,6 +688,9 @@ weave-input-pane.is-compact .pane-source-field::before {
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }
+.failure-banner .failure-undo {
+  color: var(--muted);
+}
 /* A step that failed and went on: what happened, then (under a rule) that
    the failure was simulated. The code is whole, never cut by the layout. */
 .error-banner .error-banner-failed {
@@ -799,6 +802,11 @@ weave-input-pane.is-compact .pane-source-field::before {
   flex-direction: column;
   gap: var(--space-2);
   min-height: 0;
+}
+/* Whose output is edited, where it isn't the step's own. */
+.output-editor-what {
+  margin: 0;
+  font: var(--type-label);
 }
 .output-editor-field {
   flex: 1;
@@ -1045,6 +1053,19 @@ weave-input-pane.is-compact .pane-source-field::before {
 .pane-run-notice p {
   margin: 0;
 }
+/* A real transaction in doubt: what failed, then the way to Operate. */
+.pane-in-doubt > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+.pane-in-doubt-title {
+  font-weight: 600;
+}
+.pane-in-doubt button {
+  margin-top: var(--space-1);
+}
 .pane-omitted {
   display: flex;
   flex-direction: column;
@@ -1156,6 +1177,14 @@ dialog.simulate-failure {
   border: 0;
   color: var(--text);
 }
+/* A group's name starts where the fields' names do. */
+.simulate-failure legend {
+  padding: 0;
+}
+/* Room for a transaction's three parts of What fails. */
+dialog.simulate-failure.in-transaction {
+  width: min(560px, 100%);
+}
 dialog.simulate-failure:modal {
   overscroll-behavior: contain;
 }
@@ -1239,6 +1268,97 @@ dialog.simulate-failure::backdrop {
 .simulate-failure .failure-warning {
   margin: var(--space-2) 0 0;
   color: var(--warning-ink);
+}
+/* An answer the outcome rules out: its reason takes its description's place. */
+.simulate-failure .failure-choice label:has(:disabled) {
+  border-style: dashed;
+}
+.simulate-failure .failure-choice label:has(:disabled) :is(span, b) {
+  color: var(--disabled-ink);
+}
+/* What fails: radios drawn as one row of equal parts, the look of a field's
+   segmented choices; each radio covers its part, so it is the target. */
+.simulate-failure .failure-what-field {
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  border: 0;
+}
+.simulate-failure .failure-what-field legend {
+  margin-bottom: var(--space-2);
+}
+.failure-what {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+}
+.simulate-failure .failure-what label {
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  font: var(--type-label);
+  text-align: center;
+}
+.simulate-failure .failure-what label:is(:hover, :has(:checked)) {
+  color: var(--text);
+}
+.simulate-failure .failure-what label:has(:checked) {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+.simulate-failure .failure-what label:has(:focus-visible) {
+  outline: 2px solid var(--focus);
+}
+.simulate-failure .failure-what input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+@media (forced-colors: active) {
+  .simulate-failure .failure-what label:has(:checked) {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+}
+/* What an undo step's failure leads to, and why an answer was chosen. */
+.simulate-failure .failure-note {
+  display: flex;
+  gap: var(--space-1);
+  margin: var(--space-3) 0 0;
+  color: var(--muted);
+  font: var(--type-small);
+}
+.simulate-failure .failure-note > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.simulate-failure .failure-note > weave-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--info-ink);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .failure-what {
+    height: 48px;
+  }
+  .simulate-failure .failure-what label {
+    /* 44 px inside the control's border and padding. */
+    min-height: 44px;
+  }
 }
 @media (max-width: 767px) {
   dialog.simulate-failure:modal {

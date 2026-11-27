@@ -22,8 +22,11 @@ SPDX-License-Identifier: Apache-2.0
 import { parse } from "yaml";
 import { isJsonObject, type JsonObject } from "../../forms/core/json";
 import type { LocalDrafts } from "../../local-drafts";
+import type { Step } from "../../model";
 import { calledReferenceSites } from "../activation/callee-pins";
+import { allSteps } from "../ndv/step-walk";
 import type { CalledWorkflows, LocalSource } from "../state/execute-request";
+import { phaseOperation, phasesOf } from "../transactions/phases";
 import {
   CALLERS_WAIT_MS,
   callSources,
@@ -138,4 +141,37 @@ export async function calleeDefinitions(
     if (isJsonObject(document)) documents.push(document);
   }
   return documents;
+}
+
+/**
+ * The documents of the published actions that confirm, release or reverse a
+ * step, as far as Studio has read them: an undo step's output then has
+ * fields, so its test output can be checked. `known` go to the host already.
+ */
+export function undoDefinitions(
+  host: CalleesHost,
+  known: readonly JsonObject[],
+): JsonObject[] {
+  const state = callSources(host).lock.current();
+  if (state.kind !== "ready") return [];
+  const sent = new Set(
+    known
+      .filter((document) => document["kind"] === "Action")
+      .map(({ metadata }) => {
+        const { name, version } = (metadata ?? {}) as JsonObject;
+        return `${String(name)}@${String(version)}`;
+      }),
+  );
+  const spec = isJsonObject(host.model.definition)
+    ? host.model.definition["spec"]
+    : null;
+  const steps = isJsonObject(spec) ? spec["steps"] : null;
+  return allSteps((Array.isArray(steps) ? steps : []) as unknown as Step[])
+    .flatMap((step) => phasesOf(step).map((name) => phaseOperation(step, name)))
+    .flatMap((operation) => {
+      if (operation?.kind !== "action" || sent.has(operation.uses)) return [];
+      sent.add(operation.uses);
+      const found = state.lock.actions.get(operation.uses);
+      return found ? [found.document] : [];
+    });
 }

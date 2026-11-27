@@ -23,6 +23,8 @@ import { formatDuration } from "../../designer/canvas-summary";
 import { conditionSummary, shortLabel } from "../../designer/conditions";
 import type { Step } from "../../model";
 import type { Json } from "../ndv/registry";
+import { TRANSACTION_CODE_TEXT } from "../transactions/transaction-words";
+import type { ExecuteResponse } from "./execution";
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -83,6 +85,50 @@ export function pathRows(
   return rows;
 }
 
+/** How a simulated run ended because of a transaction: it was undone, or is in doubt and why; null otherwise. */
+export function transactionSummary({
+  status,
+  trace,
+  transactions = [],
+  diagnostics = [],
+}: Pick<
+  ExecuteResponse,
+  "status" | "trace" | "transactions" | "diagnostics"
+>): { text: string; detail: string | null; inDoubt: boolean } | null {
+  if (status !== "failed") return null;
+  const doubt = transactions.find(({ state }) => state === "in_doubt");
+  if (doubt) {
+    const code = diagnostics.find(
+      ({ code }) => TRANSACTION_CODE_TEXT[code ?? ""],
+    )?.code;
+    return {
+      text: `The transaction ${doubt.nodeId} is in doubt, so the simulated run stopped.`,
+      detail: code ? `${code}: ${TRANSACTION_CODE_TEXT[code]}` : null,
+      inDoubt: true,
+    };
+  }
+  // One whose On error handled its failure stopped nothing.
+  const handled = new Set(
+    trace.flatMap((entry) =>
+      entry.handled && !entry.frame ? [entry.instanceKey || entry.nodeId] : [],
+    ),
+  );
+  const undone = transactions.find(
+    ({ state, instanceKey }) =>
+      (state === "compensated" || state === "cancelled") &&
+      !handled.has(instanceKey),
+  );
+  return (
+    (undone && {
+      // A failure that changed nothing: the frame and the run log say Canceled.
+      text: `The simulated run failed: the transaction ${undone.nodeId} was ${undone.state === "cancelled" ? "canceled" : "undone"}.`,
+      detail: null,
+      inDoubt: false,
+    }) ??
+    null
+  );
+}
+
 /** The line under a step that ran, or null when it has nothing to say. */
 export function summaryLine(
   step: Step,
@@ -111,6 +157,8 @@ export function summaryLine(
     }
   }
   if (output === undefined) return null;
+  // A transaction without a result, as a new one is.
+  if (output === null && (step.kind as string) === "transaction") return null;
   if (Array.isArray(output)) return plural(output.length, "item");
   if (isObject(output)) return plural(Object.keys(output).length, "field");
   return shortLabel(JSON.stringify(output));

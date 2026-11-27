@@ -272,6 +272,7 @@ describe("a run as a list row", () => {
       link: null,
       failedAt: null,
       at: null,
+      transaction: null,
       unavailable: true,
     });
   });

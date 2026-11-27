@@ -385,6 +385,11 @@ SPDX-License-Identifier: Apache-2.0
   flex: none;
   width: auto;
 }
+/* Read only (a run, a locked setting), the unit reads as text, as a read-only
+   choice does: no arrow. */
+.param.is-readonly select.param-unit {
+  appearance: none;
+}
 /* A number or a duration in one unit names it inside its box, at the end. */
 :is(.param-control, .param-duration):has(> .param-unit-suffix) {
   position: relative;

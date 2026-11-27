@@ -25,7 +25,7 @@ from starlette.testclient import TestClient
 from test_studio_simulation_execute import ACTION, CALL, CHECK, SHAPE, callee_definition, run, workflow
 
 from firefly_weave.operations.debug.models import DebugCommand
-from firefly_weave.studio import debug_sessions
+from firefly_weave.studio import debug_sessions, host
 from firefly_weave.studio.debug_sessions import HostSessions
 from firefly_weave.studio.local_contracts import SimulationRequest
 from firefly_weave.studio.simulation import SimulationRefused
@@ -349,3 +349,69 @@ def test_continue_lets_waits_pass_and_uses_test_answers_up_to_a_breakpoint():
     paused = sessions.command(session.id, marked.revision, DebugCommand(kind="continue"), now=2)
     assert paused.view.status == "paused"
     assert "shape" in paused.view.current_nodes
+
+
+def test_continue_never_has_the_whole_run_checked_for_each_wait(monkeypatch):
+    from firefly_weave.operations.debug.simulator import Simulator
+
+    checked: list[int] = []
+    bounded = Simulator._bounded
+    monkeypatch.setattr(Simulator, "_bounded", lambda self: (checked.append(1), bounded(self))[1])
+    counts = []
+    for waits in (1, 4):
+        sessions = HostSessions()
+        steps = [{**PAUSE, "id": f"pause-{index}"} for index in range(waits)]
+        session = sessions.create(request(workflow(*steps), scripts={"autoAdvanceWaits": True}), None, now=0)
+        checked.clear()
+        finished = sessions.command(session.id, 1, DebugCommand(kind="continue"), now=1)
+        assert finished.view.status == "succeeded"
+        counts.append(len(checked))
+    assert counts[0] == counts[1]
+
+
+@pytest.mark.parametrize("scripted", [True, False], ids=["with test answers", "by hand"])
+def test_a_command_out_of_time_is_refused_and_the_session_stays_as_it_was(scripted):
+    sessions = HostSessions()
+    session = sessions.create(
+        request(workflow(CHECK, SHAPE), mocks=PIN, scripts={"autoAdvanceWaits": scripted}), None, now=0
+    )
+    asked = iter([False, False, True])
+    late = refusal(
+        lambda: sessions.command(session.id, 1, DebugCommand(kind="continue"), now=1, out_of_time=lambda: next(asked))
+    )
+    assert (late.status, late.code) == (503, "WV-STUDIO-TIMEOUT")
+    assert late.message == "The run log took longer than 30 seconds; execute fewer steps"
+    assert sessions.read(session.id, now=2).revision == 1
+    finished = sessions.command(session.id, 1, DebugCommand(kind="continue"), now=3, out_of_time=lambda: False)
+    assert finished.view.status == "succeeded"
+
+
+def test_a_command_out_of_time_while_it_looks_for_where_it_stopped_is_refused_as_out_of_time(monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    stopped: list[bool] = []
+
+    def defect(*_: object) -> None:
+        stopped.append(True)
+        raise TypeError("a defect in the runtime")
+
+    monkeypatch.setattr(kernel, "call_result", defect)
+    sessions = HostSessions()
+    session = calling_session(sessions, callee_definition())
+    command = DebugCommand(kind="continue")
+    late = refusal(lambda: sessions.command(session.id, 1, command, now=1, out_of_time=lambda: bool(stopped)))
+    assert (late.status, late.code, len(stopped)) == (503, "WV-STUDIO-TIMEOUT", 1)
+
+
+def test_the_route_of_a_session_gives_its_commands_the_time_of_the_request(tmp_path, monkeypatch):
+    with client(tmp_path) as browser:
+        headers = pair(browser)
+        made = browser.post("/studio/local/debug/sessions", json=body(workflow(CHECK), mocks=PIN), headers=headers)
+        path = f"/studio/local/debug/sessions/{made.json()['id']}/commands"
+        monkeypatch.setattr(host, "SIMULATION_SECONDS", 0)
+        late = browser.post(path, json={"kind": "continue"}, headers={**headers, "If-Match": '"1"'})
+        assert (late.status_code, late.json()["code"]) == (503, "WV-STUDIO-TIMEOUT")
+        assert host._DEBUG_WORK.running == 0
+        monkeypatch.undo()
+        moved = browser.post(path, json={"kind": "continue"}, headers={**headers, "If-Match": '"1"'})
+        assert (moved.status_code, moved.json()["view"]["status"]) == (200, "succeeded")

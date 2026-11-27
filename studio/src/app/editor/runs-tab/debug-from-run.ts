@@ -18,11 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 // A run's recorded data as test data, for Debug in editor and Copy to
 // editor: the run's input, the outputs of the steps a simulation can't work
 // out (actions, AI steps and calls that wait) as pins, people's answers and
-// signals as scripts, and the failures steps' On error handled as simulated
-// failures. Every entry is marked as run data (its run and that run's
-// environment), only typed values are copied (never people's or workers'
-// IDs, never a failure's message), and the step that failed gets nothing,
-// so the simulation stops there. Pure.
+// signals as scripts, and the failures steps' On error handled, and those
+// that undid a transaction, as simulated failures. Every entry is marked as
+// run data (its run and that run's environment), only typed values are
+// copied (never people's or workers' IDs, never a failure's message), and
+// the step that failed gets no output, so the simulation stops there. Pure.
 import type { Step, Workflow } from "../../model";
 import {
   OMISSION_WORDS,
@@ -43,8 +43,11 @@ import type {
   StudioTestData,
 } from "../state/test-data";
 import { emptyTestData, fitsTestData } from "../state/test-data-ops";
+import { phaseKey, splitPhase, type Phase } from "../transactions/phase-keys";
+import { undoChoiceOf } from "../transactions/points";
 import { handledFailures, OVERLAY_FACTS_LIMIT } from "./run-overlay";
 import type { RunRecord } from "./run-record";
+import type { RunTransactionView } from "./run-transactions";
 
 /** Everything about one run that test data is made from. */
 export interface RunSource {
@@ -58,6 +61,8 @@ export interface RunSource {
   /** The version the run used. */
   definition: Workflow;
   failedStep: { key: string; code: string | null } | null;
+  /** Its transactions (runs.transactions), when read: what undid them is copied too. */
+  transactions?: readonly RunTransactionView[];
 }
 export type LeftOutReason =
   | "not-in-draft"
@@ -67,7 +72,9 @@ export type LeftOutReason =
   /** A handled failure whose code isn't one a simulation takes. */
   | "code"
   /** A handled failure after more attempts than a simulation takes. */
-  | "attempts";
+  | "attempts"
+  /** An undo, release or confirm that got stuck: Simulate a failure simulates it. */
+  | "undo";
 export interface LeftOut {
   key: string;
   reason: LeftOutReason;
@@ -106,8 +113,34 @@ const WAIT_TIMEOUTS: Readonly<Record<string, string>> = {
   humanTask: "WV-HUMAN-EXPIRED",
 };
 export const CODE_LEFT_OUT = "Studio can't simulate this failure's code.";
+/** Why an undo, release or confirm that got stuck is left out, and where to simulate it instead. */
+const UNDO_LEFT_OUT: Readonly<Record<Phase, string>> = {
+  undo: "Studio can't copy an undo's failure from a run. Use Simulate a failure… › Its undo.",
+  cancel:
+    "Studio can't copy a release's failure from a run. Use Simulate a failure… › Its release.",
+  confirm:
+    "Studio can't copy a confirm's failure from a run. Use Simulate a failure… › Its confirm.",
+};
+/** The same, in the list of what was left out. */
+const UNDO_LEFT_OUT_SHORT: Readonly<Record<Phase, string>> = {
+  undo: "use Simulate a failure… › Its undo",
+  cancel: "use Simulate a failure… › Its release",
+  confirm: "use Simulate a failure… › Its confirm",
+};
+/** The undo step a stuck status names. */
+const STUCK_PHASES: Readonly<Partial<Record<string, Phase>>> = {
+  undo_stuck: "undo",
+  cancel_stuck: "cancel",
+  confirm_stuck: "confirm",
+};
 export const ATTEMPTS_LEFT_OUT =
   "Studio can't simulate a failure after more than 1,000 attempts.";
+const NOT_RECORDED = "the platform didn't record it";
+/** The undo step a step's finished status ran: undone, or released. */
+const RAN_PHASES: Readonly<Partial<Record<string, Phase>>> = {
+  undone: "undo",
+  cancelled: "cancel",
+};
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const TOO_LARGE_FOR_TEST_DATA =
   "This run's data is larger than test data holds (1 MB, 1,000 entries a section), so Studio kept nothing.";
@@ -181,7 +214,7 @@ export function testDataFromRun(
       leftOut.push({
         key,
         reason: "not-recorded",
-        detail: "the platform didn't record it",
+        detail: NOT_RECORDED,
       });
       continue;
     }
@@ -192,7 +225,7 @@ export function testDataFromRun(
         leftOut.push({
           key,
           reason: "not-recorded",
-          detail: "the platform didn't record it",
+          detail: NOT_RECORDED,
         });
         continue;
       }
@@ -237,8 +270,17 @@ export function testDataFromRun(
   // platform's copy for the code applies). What a simulation can't take
   // is left out, so the result is always test data Studio can keep.
   const errors: Record<string, ErrorEntry> = {};
+  // A transaction's own failure follows from its steps', copied below.
+  const transactions = new Set(
+    (source.transactions ?? []).map(({ instance_key }) => instance_key),
+  );
   for (const failure of handledFailures(source.record, source.facts)) {
     const step = inDraft.get(failure.step);
+    if (
+      (step?.kind as string) === "transaction" &&
+      transactions.has(failure.key)
+    )
+      continue;
     if (!step) {
       leftOut.push({
         key: failure.key,
@@ -282,6 +324,86 @@ export function testDataFromRun(
       source: "run",
       ...provenance,
     };
+  }
+  // What undid a transaction, or left it in doubt: the failure of each of
+  // its steps, with what it may have changed, so Execute undoes the same
+  // steps. Never a message. An undo that got stuck can't be copied yet.
+  const facts = new Map(
+    source.facts.map((fact) => [fact.instance_key || fact.node_id, fact]),
+  );
+  for (const view of source.transactions ?? []) {
+    const failed = new Map<
+      string,
+      { effect: "none" | "unknown"; unknown: boolean }
+    >();
+    if (view.cause)
+      failed.set(view.cause.instance_key, {
+        effect: view.cause.effect,
+        unknown: false,
+      });
+    for (const one of view.participants) {
+      if (one.status === "failed" || one.status === "unknown")
+        failed.set(one.instance_key, {
+          effect: one.effect,
+          unknown: one.status === "unknown",
+        });
+      const phase = STUCK_PHASES[one.status];
+      if (phase)
+        leftOut.push({
+          key: phaseKey(one.instance_key, phase),
+          reason: "undo",
+          detail: UNDO_LEFT_OUT[phase],
+        });
+      // An undo step that ran without a fact of its own: Execute asks for
+      // its test output, and the list says why it wasn't copied.
+      const ran = RAN_PHASES[one.status];
+      const ranKey = ran ? phaseKey(one.instance_key, ran) : null;
+      if (
+        ranKey &&
+        !facts.has(ranKey) &&
+        inDraft.has(instanceStep(one.instance_key))
+      )
+        leftOut.push({
+          key: ranKey,
+          reason: "not-recorded",
+          detail: NOT_RECORDED,
+        });
+    }
+    for (const [key, { effect, unknown }] of failed) {
+      if (Object.hasOwn(errors, key)) continue;
+      const step = inDraft.get(instanceStep(key));
+      if (!step) {
+        leftOut.push({
+          key,
+          reason: "not-in-draft",
+          detail: "not in this draft",
+        });
+        continue;
+      }
+      const fact = facts.get(key);
+      const code =
+        fact?.error_code ??
+        (view.cause?.instance_key === key ? view.cause.code : null);
+      if (!code || !ERROR_CODE.test(code) || code.length > 128) {
+        leftOut.push({ key, reason: "code", detail: CODE_LEFT_OUT });
+        continue;
+      }
+      const attempts = fact?.attempts ?? 1;
+      if (attempts > MAX_ATTEMPTS) {
+        leftOut.push({ key, reason: "attempts", detail: ATTEMPTS_LEFT_OUT });
+        continue;
+      }
+      errors[key] = {
+        code,
+        ...(unknown ? { outcome: "unknown" } : {}),
+        attempts: Math.max(0, attempts),
+        // What it may have changed is for a step with something to undo; an
+        // unknown outcome may always have changed something.
+        ...(undoChoiceOf(step) ? { effect: unknown ? "unknown" : effect } : {}),
+        source: "run",
+        ...provenance,
+      };
+    }
   }
   if (
     [pins, humans, signals, errors].some(
@@ -425,7 +547,9 @@ const phraseOf = (item: LeftOut) =>
       ? "a code Studio can't simulate"
       : item.reason === "attempts"
         ? "more than 1,000 attempts"
-        : item.detail;
+        : item.reason === "undo"
+          ? UNDO_LEFT_OUT_SHORT[splitPhase(item.key)?.phase ?? "undo"]
+          : item.detail;
 
 /** "Left out 2 values: send (marked secret), log (not in this draft)."; "" when nothing was. */
 export function leftOutText(

@@ -152,8 +152,10 @@ SPDX-License-Identifier: Apache-2.0
 .add-step-entry[aria-disabled="true"] {
   cursor: default;
 }
-.add-step-entry[aria-disabled="true"] .entry-tile {
-  color: var(--subtle);
+/* An entry that can't be added dims its title and icon, so it doesn't read
+   like the rows that can; its reason stays in --muted, to be read. */
+.add-step-entry[aria-disabled="true"] :is(.entry-tile, .entry-label) {
+  color: var(--disabled-ink);
 }
 .entry-tile {
   flex: none;

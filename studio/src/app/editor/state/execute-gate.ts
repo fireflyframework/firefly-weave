@@ -19,8 +19,11 @@ SPDX-License-Identifier: Apache-2.0
 // inside an error path its step won't take asks for a simulated failure of
 // that step, and a pinned target asks whether to unpin it. Warnings never
 // block. DOM-free.
-import type { Step } from "../../model";
+import type { Step, Workflow } from "../../model";
 import { blocksOf } from "../step-blocks";
+import { everyItem, splitPhase, type Phase } from "../transactions/phase-keys";
+import { phaseOperation } from "../transactions/phases";
+import type { Blocked } from "./execution";
 
 export interface BlockingIssue {
   stepId: string;
@@ -102,6 +105,46 @@ export function untakenPath(
   if (owner === undefined) return null;
   const found = findStep(steps, owner);
   return found && canFail(found) ? { owner, stepId } : null;
+}
+
+/** What Execute stopped for: an undo step whose result needs test output. */
+export interface PhaseBlock {
+  stepId: string;
+  phase: Phase;
+  /** Where its test output is kept, for every item of a loop (`hold#confirm`). */
+  key: string;
+  /** The step's field that names what runs it ("Confirm with"). */
+  label: string;
+  kind: "action" | "callWorkflow";
+  uses: string;
+  message: string;
+}
+/** The host's sentence when a result needs fields Studio can't make up, and nothing else is wrong. */
+const NEEDS_OUTPUT = /^The (?:confirm|release|undo) of \S+ needs test data\.$/;
+
+/**
+ * The undo step of this workflow the simulated run stopped at for want of
+ * test output; null when it stopped for anything else.
+ */
+export function phaseBlock(
+  workflow: Workflow,
+  blocked: Blocked | null | undefined,
+): PhaseBlock | null {
+  if (blocked?.reason !== "missing_mock" || blocked.frame) return null;
+  const named = splitPhase(blocked.instanceKey);
+  const step = named && findStep(workflow.spec.steps ?? [], blocked.nodeId);
+  const operation = step && phaseOperation(step, named.phase);
+  if (!operation) return null;
+  const name = operation.uses.slice(0, operation.uses.lastIndexOf("@"));
+  return {
+    stepId: step.id,
+    phase: named.phase,
+    key: everyItem(blocked.instanceKey),
+    ...operation,
+    message: NEEDS_OUTPUT.test(blocked.message)
+      ? `${step.id}'s ${operation.label} needs test output: ${name} returns fields Studio can't make up.`
+      : blocked.message,
+  };
 }
 
 /** A step of the workflow, however deep. */

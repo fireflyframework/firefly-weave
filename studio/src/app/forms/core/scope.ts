@@ -28,7 +28,12 @@ SPDX-License-Identifier: Apache-2.0
 // - a step that handles its failures (On error Continue or Continue with
 //   error output) may hold an error after it, `/steps/<id>/error`; inside
 //   its error path the error is always there and the step has no output
-//   (compiler/step_errors.py, analyzer `error_handling`).
+//   (compiler/step_errors.py, analyzer `error_handling`);
+// - a transaction's steps see what it sees and the earlier ones among them;
+//   after it, only its result is visible (analyzer `transaction_block`);
+// - a step's undo sees what the step saw, its operation key, its outcome and
+//   its transaction, and the step's own output: always there in a confirm,
+//   maybe empty in a reverse, never in a release (analyzer `undo_phase`).
 // The compiler stays authoritative; this module only drives suggestions.
 
 import { callOutputSchema } from "./call-output";
@@ -50,8 +55,8 @@ export interface VisibleStep {
 export interface ScopeEntry {
   /** RFC 6901 pointer usable as `{ref}`, e.g. `/steps/check/output/eligible`. */
   ref: string;
-  /** "error": a failed step's error, `/steps/<id>/error`. */
-  source: "input" | "step" | "error";
+  /** "error": a failed step's error, `/steps/<id>/error`; "undo": what only a step's undo reads. */
+  source: "input" | "step" | "error" | "undo";
   stepId?: string;
   stepKind?: string;
   /** Property path below `/input` or `/steps/<id>/output` (unescaped keys). */
@@ -112,8 +117,18 @@ function segmentsOf(pointer: string): string[] {
   return trimmed === "" ? [] : trimmed.split("/").map(unescapeSegment);
 }
 
+/** The steps of a step's undo, as the language names them. */
+export type UndoPhase = "confirm" | "cancel" | "compensate";
+const UNDO_PHASES: readonly string[] = ["confirm", "cancel", "compensate"];
+/** A step's undo around a field: the step, and which of its steps the field is in. */
+export interface UndoPlace {
+  step: string;
+  phase: UndoPhase;
+}
+
 type Target =
   | { stepId: string; kind: "step" }
+  | { stepId: string; kind: "undo"; phase: UndoPhase }
   | { stepId: string; kind: "branch"; branch: string }
   | { stepId: typeof WORKFLOW; kind: "workflow" };
 
@@ -135,6 +150,11 @@ function targetOf(stepId: string, fieldPath: string): Target | null {
     return { stepId, kind: "branch", branch: "body" };
   if (segments[0] === "errorPath" && segments[1] === "output")
     return { stepId, kind: "branch", branch: "errorPath" };
+  // Only a transaction has a result of its own steps.
+  if (segments[0] === "output")
+    return { stepId, kind: "branch", branch: "steps" };
+  if (UNDO_PHASES.includes(segments[0]) && segments[1] === "with")
+    return { stepId, kind: "undo", phase: segments[0] as UndoPhase };
   return { stepId, kind: "step" };
 }
 
@@ -149,6 +169,8 @@ interface Capture {
   evaluated: boolean;
   /** Inside error paths first (outermost first), then handled steps in the order they run. */
   errors: ErrorRoot[];
+  /** Inside a step's undo. */
+  undo: UndoPlace | null;
 }
 
 /** The error object of a step that handled its failure (contracts/step_errors.py). */
@@ -166,11 +188,22 @@ export const STEP_ERROR_SCHEMA: Schema = {
   additionalProperties: false,
 };
 const NULL_SCHEMA: Schema = { type: "null" };
+/** What only a step's undo reads (analyzer PARTICIPANT_SCHEMA and TRANSACTION_SCHEMA). */
+const undoRoots = (step: string): [string, string, Schema][] => [
+  ["/participant/operationKey", "Operation key", { type: "string" }],
+  [
+    "/participant/outcome",
+    `Outcome of ${step}`,
+    { type: "string", enum: ["done", "unknown"] },
+  ],
+  ["/transaction/id", "Transaction ID", { type: "string" }],
+  ["/transaction/businessKey", "Business key", { type: ["string", "null"] }],
+];
 const empty = (schema: Schema) => Object.keys(schema).length === 0;
 
 /** Literal JSON → the schema the compiler would infer for its shape. */
 function literalSchema(value: unknown, depth = 0): Schema {
-  if (value === null) return { type: "null" };
+  if (value === null) return { type: "null", const: null };
   if (typeof value === "boolean") return { type: "boolean" };
   if (typeof value === "number")
     return { type: Number.isInteger(value) ? "integer" : "number" };
@@ -507,11 +540,16 @@ class Walker {
   private readonly handled = new Set<string>();
 
   /** Mirrors `_Analyzer.observe`: the scope here, with the errors it may read. */
-  take(visible: Map<string, VisibleStep>, evaluated: boolean) {
+  take(
+    visible: Map<string, VisibleStep>,
+    evaluated: boolean,
+    undo: UndoPlace | null = null,
+  ) {
     if (this.capture) return;
     this.capture = {
       visible: new Map(visible),
       evaluated,
+      undo,
       errors: [
         ...this.errorOwners
           .filter(({ id }) => !visible.has(id))
@@ -568,6 +606,27 @@ class Walker {
         compatibility(result, output) === "compatible");
     if (contained || empty(output)) return output;
     return empty(result) ? {} : { anyOf: [output, result] };
+  }
+
+  /**
+   * Mirrors `_Analyzer.undo_phase`: the scope inside a step's undo, with the
+   * step's own output where it may be read. A release runs without it.
+   */
+  private takeUndo(
+    own: VisibleStep,
+    phase: UndoPhase,
+    visible: Map<string, VisibleStep>,
+  ) {
+    const scope = new Map(visible);
+    if (phase !== "cancel")
+      scope.set(own.id, {
+        ...own,
+        schema:
+          phase === "compensate"
+            ? { anyOf: [own.schema, NULL_SCHEMA] }
+            : own.schema,
+      });
+    this.take(scope, true, { step: own.id, phase });
   }
 
   /** Whether `/steps/<id>/error` may be read here: inside its error path, or after a step that handles failures. */
@@ -656,6 +715,20 @@ class Walker {
           step["maxItems"],
           step["collect"],
         );
+      } else if (kind === "transaction") {
+        // Mirrors `_Analyzer.transaction_block`: its result reads its own
+        // steps, which nothing after it does.
+        const result = this.block(step["steps"], visible);
+        if (
+          this.target.kind === "branch" &&
+          this.target.stepId === id &&
+          this.target.branch === "steps"
+        )
+          this.take(result.visible, result.completes);
+        schema = result.completes
+          ? this.infer(step["output"], result.visible)
+          : {};
+        completes = result.completes;
       } else if (kind === "switch" || kind === "parallel") {
         const outputs: { name: string; schema: Schema; completes: boolean }[] =
           [];
@@ -693,6 +766,8 @@ class Walker {
           completes = alternatives.length > 0;
         }
       }
+      if (this.target.kind === "undo" && this.target.stepId === id)
+        this.takeUndo({ id, kind, schema }, this.target.phase, visible);
       schema = this.handle(step, kind, schema, visible);
       this.outputs.set(id, schema);
       if (reachable && completes) visible.set(id, { id, kind, schema });
@@ -900,7 +975,13 @@ export function referenceScope(
       truncated: false,
     };
   const steps = [...capture.visible.values()];
-  const { entries, truncated } = expand(input, steps, options, capture.errors);
+  const { entries, truncated } = expand(
+    input,
+    steps,
+    options,
+    capture.errors,
+    capture.undo,
+  );
   return {
     found: true,
     evaluated: capture.evaluated,
@@ -931,6 +1012,7 @@ function expand(
   steps: VisibleStep[],
   options: ScopeOptions,
   errors: readonly ErrorRoot[] = [],
+  undo: UndoPlace | null = null,
 ): { entries: ScopeEntry[]; truncated: boolean } {
   const maxDepth = Math.max(0, options.maxDepth ?? 4);
   const maxEntries = Math.max(1, options.maxEntries ?? 200);
@@ -977,6 +1059,22 @@ function expand(
         input,
       ),
     },
+    // Inside a step's undo, its operation key, its outcome and its transaction.
+    ...(undo ? undoRoots(undo.step) : []).map(([ref, label, schema]) => ({
+      root: schema,
+      entry: make(
+        {
+          ref,
+          source: "undo" as const,
+          path: [],
+          label,
+          breadcrumb: `This step's undo › ${label}`,
+          schema,
+          optional: false,
+        },
+        schema,
+      ),
+    })),
     // Inside an error path, the failed step's error comes first: the step has no output there.
     ...errors
       .filter(({ always }) => always)
@@ -996,7 +1094,8 @@ function expand(
               label: step.id,
               breadcrumb: step.id,
               schema: step.schema,
-              optional: false,
+              // A reverse also runs when its step's outcome is unknown.
+              optional: undo?.phase === "compensate" && undo.step === step.id,
             },
             step.schema,
           ),

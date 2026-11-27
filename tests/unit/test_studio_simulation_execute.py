@@ -26,7 +26,7 @@ from pydantic import ValidationError
 
 from firefly_weave.contracts.step_errors import step_error_message
 from firefly_weave.studio.local_contracts import ExecuteRequest
-from firefly_weave.studio.simulation import CatalogConflict, SimulationRefused, execute
+from firefly_weave.studio.simulation import CatalogConflict, SimulationRefused, execute, simulator_for
 
 ACTION = yaml.safe_load(Path("examples/definitions/check-customer.action.yaml").read_text("utf-8"))
 CHECK = {
@@ -512,6 +512,91 @@ def test_after_a_signal_a_step_the_simulator_cant_carry_on_with_is_named_and_wha
     logged = " ".join(record.getMessage() for record in caplog.records)
     assert "TypeError" in logged and "enrich" in logged
     assert "v-123" not in logged and "a defect in the runtime" not in logged
+
+
+def after(steps: int) -> Any:
+    """The end of a request's time, after the simulation asked that many times; ``asked`` counts."""
+
+    def out_of_time() -> bool:
+        out_of_time.asked += 1
+        return out_of_time.asked > steps
+
+    out_of_time.asked = 0
+    return out_of_time
+
+
+@pytest.mark.parametrize("step", [PAUSE, {"id": "note", "kind": "transform", "value": {"literal": 1}}])
+def test_a_simulation_out_of_time_stops_at_its_next_step_and_answers_limit(step):
+    loop = {**loop_over([1, 2]), "body": {"steps": [step], "output": {"literal": None}}}
+    time = after(4)
+    answer = execute(request(workflow(loop)), None, out_of_time=time)
+    assert (answer.status, answer.trace, answer.compile.ok) == ("limit", [], True)
+    assert time.asked == 5
+    in_time = after(1000)
+    assert execute(request(workflow(loop)), None, out_of_time=in_time).status == "completed"
+    assert in_time.asked > 5
+
+
+def test_a_simulation_out_of_time_while_it_looks_for_where_it_stopped_answers_limit(monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    stopped: list[bool] = []
+
+    def defect(*_: object) -> None:
+        stopped.append(True)
+        raise TypeError("a defect in the runtime")
+
+    monkeypatch.setattr(kernel, "call_result", defect)
+    body = request(
+        workflow(CALL),
+        definitions=[ACTION, callee_definition()],
+        workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
+    )
+    answer = execute(body, None, out_of_time=lambda: bool(stopped))
+    assert (answer.status, answer.diagnostics, len(stopped)) == ("limit", [], 1)
+
+
+def test_the_waits_of_a_loop_never_have_the_whole_run_checked_for_each(monkeypatch):
+    # Copying, checking and viewing a run takes longer the further it is.
+    from firefly_weave.operations.debug.simulator import Simulator
+
+    checked: list[int] = []
+    bounded = Simulator._bounded
+    monkeypatch.setattr(Simulator, "_bounded", lambda self: (checked.append(1), bounded(self))[1])
+    counts = []
+    for items in ([1], [1, 2, 3, 4]):
+        checked.clear()
+        loop = {**loop_over(items), "maxItems": 4, "body": {"steps": [PAUSE], "output": {"literal": None}}}
+        assert run(workflow(loop))["status"] == "completed"
+        counts.append(len(checked))
+    assert counts[0] == counts[1]
+
+
+def test_a_drive_is_one_command_and_one_that_fails_changes_nothing():
+    from firefly_weave.operations.debug.models import DebugError
+
+    body = request(workflow(PAUSE))
+    document = json.loads(body.source)
+    _, simulator, _ = simulator_for(body, None, document, whole=document, sliced=False)
+
+    def waited() -> str:
+        simulator.continue_until_breakpoint()
+        simulator.advance_time(300)
+        simulator.continue_until_breakpoint()
+        return "waited"
+
+    assert simulator.drive(waited) == "waited"
+    assert (simulator.data.command_count, simulator.inspect().status) == (1, "succeeded")
+
+    def refused() -> None:
+        simulator.advance_time(60)
+        simulator.advance_time(-1)
+
+    with pytest.raises(DebugError):
+        simulator.drive(refused)
+    assert simulator.data.virtual_seconds == 300
+    # The commands after it answer again.
+    assert simulator.advance_time(60).status == "succeeded"
 
 
 def loop_over(items: list[int]) -> dict[str, Any]:

@@ -41,8 +41,9 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-    # Slowest recent green run: 46 minutes, most of it the unit and contract tests.
-    timeout-minutes: 70
+    # Slowest recent green run: 50 minutes, most of it the unit and contract tests, whose own stage may take up to
+    # 90; the job leaves room for the stages around it.
+    timeout-minutes: 105
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

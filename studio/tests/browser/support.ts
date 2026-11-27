@@ -608,6 +608,14 @@ export async function insertStep(page: Page, label: string) {
  * Closes a side panel that covers the page as a modal sheet (narrow layouts,
  * zoom) with a real click on the dimmed page around it.
  */
+/** Waits until the page has drawn what the last key or press changed. */
+export const drawn = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<void>((done) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => done())),
+      ),
+  );
 export async function closeSheet(page: Page) {
   const sheet = page.locator('.sheet-modal[aria-modal="true"]');
   if (!(await sheet.count())) return;

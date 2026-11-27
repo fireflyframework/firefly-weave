@@ -25,7 +25,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, IRNode, Participation
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
-from firefly_weave.contracts.run_views import RunTransactionCause, TransactionParticipantView
+from firefly_weave.contracts.run_views import TransactionParticipantView
 from firefly_weave.contracts.transactions import (
     IN_DOUBT_CODES,
     PHASE_SEGMENTS,
@@ -36,7 +36,7 @@ from firefly_weave.contracts.transactions import (
     split_phase,
 )
 from firefly_weave.contracts.values import JsonObject, JsonValue
-from firefly_weave.operations.debug.models import ScriptedError, TransactionDebugView
+from firefly_weave.operations.debug.models import ScriptedError, TransactionDebugCause, TransactionDebugView
 from firefly_weave.runtime.control import enclosing_loops
 from firefly_weave.runtime.kernel import PreparedWorkflow, unsettled
 from firefly_weave.runtime.models import Deadline, IncidentState, RunState, TransactionCause, TransactionRecord
@@ -107,10 +107,10 @@ def past_doubt(state: RunState) -> bool:
     return unsettled(state) and (doubted or any(item.status == "in_doubt" for item in state.transactions.values()))
 
 
-def _cause(cause: TransactionCause | None) -> RunTransactionCause | None:
+def _cause(cause: TransactionCause | None) -> TransactionDebugCause | None:
     if cause is None:
         return None
-    return RunTransactionCause(code=cause.code, instance_key=cause.instance_key, effect=cause.effect or "unknown")
+    return TransactionDebugCause(code=cause.code, instance_key=cause.instance_key, effect=cause.effect or "unknown")
 
 
 def transaction_view(key: str, record: TransactionRecord) -> TransactionDebugView:

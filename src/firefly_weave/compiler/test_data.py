@@ -37,6 +37,7 @@ from firefly_weave.compiler.schema_profile import schema_children
 from firefly_weave.compiler.schemas import _Failure, validate_payload
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
 from firefly_weave.contracts.studio_documents import StudioTestData
+from firefly_weave.contracts.transactions import split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.redaction import classify
 
@@ -51,8 +52,8 @@ UNRESOLVED: CheckCode = "WV-STUDIO-TESTDATA-UNRESOLVED"
 type Target = JsonObject | CheckCode
 
 _NOTHING: JsonObject = {"type": "null"}
-# The phases a step inside a transaction may be undone or confirmed with (`hold#confirm`, `add#undo`). Each runs
-# another action, so its output is never checked against the schema of the step it belongs to.
+# The phases a step inside a transaction may be undone or confirmed with (`hold#confirm`, `add#undo`). Each runs an
+# operation of its own, so its output is never checked against the schema of the step it belongs to (``pin_target``).
 _PHASES = frozenset({"confirm", "cancel", "undo"})
 
 
@@ -82,6 +83,8 @@ def _steps(steps: object) -> Iterator[JsonObject]:
             branches = list(cast(dict[str, object], step.get("branches") or {}).values())
         elif kind == "forEach":
             branches = [step.get("body")]
+        elif kind == "transaction":
+            branches = [step]
         # A step's error path holds steps of its own, whatever the step's kind.
         branches.append(step.get("errorPath"))
         for branch in branches:
@@ -137,6 +140,28 @@ def output_target(workflow: JsonObject, step: JsonObject | None, catalog: Catalo
         return agent_output_schema(profile) if profile is not None else UNRESOLVED
     # Other kinds compute their output from their input: nothing to pin.
     return SCHEMA
+
+
+def pin_target(workflow: JsonObject, key: str, catalog: CatalogSnapshot) -> Target:
+    """The schema a pin or a mock at this instance key is checked against.
+
+    A confirm, cancel or undo (`hold#confirm`, `add[2]#undo`) returns what its own operation returns: the output of the
+    action or of the called workflow the step declares for it. A phase its step doesn't declare has no schema. Any
+    other key is its step's output.
+    """
+    step = step_at(workflow, key)
+    if not _phase(key):
+        return output_target(workflow, step, catalog)
+    try:
+        phase = split_phase(key)
+    except InvalidInstanceKey:
+        phase = None
+    operation = step.get(phase[1]) if step is not None and phase is not None else None
+    if not isinstance(operation, dict):
+        return UNRESOLVED
+    kind: Literal["Action", "Workflow"] = "Workflow" if operation.get("kind") == "callWorkflow" else "Action"
+    schema = _spec(_document(catalog, kind, operation.get("uses"))).get("outputSchema")
+    return schema if isinstance(schema, dict) else UNRESOLVED
 
 
 def _profile(workflow: JsonObject, step: JsonObject) -> JsonObject | None:
@@ -216,9 +241,8 @@ def agent_turns_target(workflow: JsonObject, step: JsonObject, catalog: CatalogS
     }
 
 
-# The module's own callers keep the short names.
+# The module's own callers keep the short name.
 _step = step_at
-_output = output_target
 
 
 def _framed(workflow: JsonObject, frame: object, catalog: CatalogSnapshot) -> JsonObject | None:
@@ -255,8 +279,7 @@ def _targets(
         schema = spec.get("inputSchema")
         yield "/input", schema if isinstance(schema, dict) else UNRESOLVED, document["input"]["value"]
     for key, pin in cast(dict[str, Any], document.get("pins", {})).items():
-        output: Target = UNRESOLVED if _phase(key) else _output(workflow, _step(workflow, key), catalog)
-        yield f"/pins/{_escape(key)}", output, pin["output"]
+        yield f"/pins/{_escape(key)}", pin_target(workflow, key, catalog), pin["output"]
     for key, signal in cast(dict[str, Any], document.get("signals", {})).items():
         if "outcome" in signal:
             yield f"/signals/{_escape(key)}", _NOTHING, None
@@ -295,9 +318,8 @@ def _targets(
     for reference, callee in cast(dict[str, Any], document.get("workflows", {})).items():
         called = _document(catalog, "Workflow", reference)
         for key, mock in cast(dict[str, Any], callee["mocks"]).items():
-            step = _step(called, key) if called is not None and not _phase(key) else None
             path = f"/workflows/{_escape(reference)}/mocks/{_escape(key)}"
-            yield path, _output(called or {}, step, catalog), mock["output"]
+            yield path, pin_target(called or {}, key, catalog), mock["output"]
 
 
 def check_test_data(

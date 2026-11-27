@@ -150,9 +150,15 @@ export class ParamField {
     const spec = this.spec();
     return !(spec.labelHidden && this.isGroup() && spec.path.length === 0);
   }
-  /** A group of fields introduces its contents: its hint comes before them. */
+  /**
+   * A group of fields introduces its contents: its hint comes before them.
+   * One whose fields all show reads as one field, with its hint under them.
+   */
   introFirst(): boolean {
-    return this.spec().type === "fields" || this.spec().type === "schema";
+    const spec = this.spec();
+    return (
+      (spec.type === "fields" && !spec.expandChildren) || spec.type === "schema"
+    );
   }
   isGroup(): boolean {
     return ["list", "keyValue", "fields", "conditions", "schema"].includes(
@@ -179,49 +185,63 @@ export class ParamField {
   private choicesLoading = false;
   private choicesError = "";
   /**
-   * An emptied number or duration box, while the person retypes it: the
-   * field, session and stored value it belongs to (clearing has already
-   * saved the default). Undo, Redo or another change of the value shows the
-   * value again.
+   * A number or duration box while the person types in it: its text (and a
+   * duration's unit) as typed, until the box is left. Each key saves, and
+   * what is saved can read otherwise: a default can be left out, 60 minutes
+   * is an hour. Undo, Redo or another change of the value shows the value.
    */
-  private emptied: {
+  private typing: {
     session: FormSession;
-    descriptor: string;
+    field: string;
     stored: string;
+    text: string;
+    unit: string | null;
   } | null = null;
+  private typed() {
+    const typing = this.typing;
+    if (
+      typing?.session === this.session() &&
+      typing.field === this.fieldIdentity() &&
+      typing.stored === canonicalJson(this.value())
+    )
+      return typing;
+    return (this.typing = null);
+  }
+  /** The field this is, whatever its hint or limits say now. */
+  private fieldIdentity(): string {
+    const { id, path, scope, type } = this.spec();
+    return canonicalJson([id, path, scope ?? "step", type]);
+  }
+  private keepTyped(text: string, unit: string | null = null): void {
+    this.typing = {
+      session: this.session(),
+      field: this.fieldIdentity(),
+      stored: canonicalJson(this.value()),
+      text,
+      unit,
+    };
+  }
   /**
-   * The text in a number or duration box that isn't the stored value: "" while
-   * an emptied box is retyped, else an entry that doesn't apply (not a
-   * number, or below a minimum the field can't hold), which the session keeps
-   * through closing and reopening; null when the box shows the stored value.
+   * The text in a number or duration box that isn't the stored value: what
+   * is being typed, else an entry that doesn't apply (not a number, or below
+   * a minimum the field can't hold), which the session keeps through closing
+   * and reopening; null when the box shows the stored value.
    */
   get numberText(): string | null {
-    const emptied = this.emptied;
-    if (
-      emptied?.session === this.session() &&
-      emptied.descriptor === canonicalJson(this.spec()) &&
-      emptied.stored === canonicalJson(this.value())
-    )
-      return "";
-    this.emptied = null;
+    const typed = this.typed();
+    if (typed) return typed.text;
     const held = this.session().held(this.spec());
     return held?.kind === "number" ? held.text : null;
   }
-  set numberText(value: string | null) {
-    this.emptied =
-      value === ""
-        ? {
-            session: this.session(),
-            descriptor: canonicalJson(this.spec()),
-            stored: canonicalJson(this.value()),
-          }
-        : null;
-    if (value)
+  /** An entry that doesn't apply (null: none) waits in the box. */
+  private holdNumber(text: string | null): void {
+    this.typing = null;
+    if (text)
       this.session().hold(
         this.spec(),
         "number",
-        value,
-        this.numberMessage(value),
+        text,
+        this.numberMessage(text),
       );
     else this.session().release(this.spec());
   }
@@ -242,7 +262,7 @@ export class ParamField {
       return false;
     event.preventDefault();
     event.stopPropagation();
-    this.emptied = null;
+    this.typing = null;
     this.session().release(this.spec());
     this.session().host.refreshView();
     return true;
@@ -590,8 +610,9 @@ export class ParamField {
           this.focusControl(session, spec);
           return;
         }
+        // Its own control: a row in a group is inside the group's control too.
         const control = this.element.nativeElement.querySelector<HTMLElement>(
-          ".param-control :is(input, textarea, select, button, [tabindex='0'], [contenteditable='true'])",
+          ":scope .param-control :is(input, textarea, select, button, [tabindex='0'], [contenteditable='true'])",
         );
         // A drop that made the text a template: the caret goes after the
         // placeholder in the formula editor (which may still be loading).
@@ -715,23 +736,24 @@ export class ParamField {
   // ---------------------------------------------------------- writing
   left(event?: FocusEvent) {
     this.session().touch(this.spec());
-    // An emptied box only waits for retyping while it has focus; left, it
-    // shows the value it saved. An unfinished entry stays, with its message.
-    if (this.numberText !== "") return;
-    this.numberText = null;
-    // Clearing a box over its default saves nothing new, so nothing redraws
-    // it: put the saved value back in the box that was left.
-    const box = event?.target;
+    // What is typed shows only while its box has focus; left, the box shows
+    // the value it saved. An unfinished entry stays, with its message.
+    const typed = this.typed();
+    this.typing = null;
+    if (!typed || !event) return;
+    const box = event.target;
     if (
-      box instanceof HTMLInputElement &&
-      box.value === "" &&
-      box.closest(".param-control") &&
-      ["number", "duration"].includes(this.spec().type)
+      !(box instanceof HTMLInputElement) ||
+      !box.closest(".param-control") ||
+      !["number", "duration"].includes(this.spec().type)
     )
-      box.value =
-        this.spec().type === "duration"
-          ? this.durationParts().amount
-          : String(this.fixedValue() ?? "");
+      return;
+    // What it saved can read as the box did when it was last drawn (a cleared
+    // or a typed default, or a box left at once), and nothing redraws it then.
+    box.value =
+      this.spec().type === "duration"
+        ? this.durationParts().amount
+        : String(this.fixedValue() ?? "");
   }
   text(event: Event) {
     const value = (event.target as HTMLInputElement).value;
@@ -760,16 +782,18 @@ export class ParamField {
       // The box stays empty while the person retypes, even where clearing
       // writes the field's default.
       this.session().clear(this.spec());
-      this.numberText = "";
+      this.holdNumber(null);
+      this.keepTyped("");
       return;
     }
     const value = Number(text);
     if (!Number.isFinite(value) || this.heldBelowMin(value)) {
-      this.numberText = text;
+      this.holdNumber(text);
       return;
     }
-    this.numberText = null;
-    this.session().write(this.spec(), { mode: "fixed", value });
+    this.holdNumber(null);
+    if (this.session().write(this.spec(), { mode: "fixed", value }))
+      this.keepTyped((event.target as HTMLInputElement).value);
   }
   /** A value under the minimum of a field that can't hold one waits in the box. */
   private heldBelowMin(value: number): boolean {
@@ -794,8 +818,12 @@ export class ParamField {
   }
   durationParts(): { amount: string; unit: string } {
     const seconds = this.fixedValue();
-    const split = splitDuration(seconds);
+    // Empty, it shows its default in the default's own unit ("1 day").
+    const split = splitDuration(
+      typeof seconds === "number" ? seconds : this.spec().default,
+    );
     const unit =
+      this.typed()?.unit ??
       Object.keys(UNIT_CODE).find((u) => UNIT_CODE[u] === split.unit) ??
       "minutes";
     const usable = this.units().includes(unit) ? unit : this.units()[0];
@@ -827,7 +855,8 @@ export class ParamField {
     if (!amountText.trim()) {
       // Like a number's: the box stays empty while the person retypes.
       this.session().clear(this.spec());
-      this.numberText = "";
+      this.holdNumber(null);
+      this.keepTyped("", unit);
       return;
     }
     const seconds = durationSeconds(amountText, UNIT_CODE[unit] ?? "s");
@@ -837,11 +866,12 @@ export class ParamField {
         : seconds;
     if (!Number.isFinite(value)) {
       // Not a number: it waits in the box, Not applied, with its message.
-      this.numberText = amountText.trim();
+      this.holdNumber(amountText.trim());
       return;
     }
-    this.numberText = null;
-    this.session().write(this.spec(), { mode: "fixed", value });
+    this.holdNumber(null);
+    if (this.session().write(this.spec(), { mode: "fixed", value }))
+      this.keepTyped(amountText, unit);
   }
   /** A switch, a presence switch (one choice: on writes it), or Not set / Yes / No for optional booleans. */
   presence(): Choice | null {

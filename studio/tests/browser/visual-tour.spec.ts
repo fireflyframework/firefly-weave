@@ -208,6 +208,24 @@ import {
   type RunsPage,
 } from "./runs-po";
 import {
+  ADD_STEP as MOVE_ADD,
+  executeWorkflow as executeMove,
+  HOLD_STEP as MOVE_HOLD,
+  moveWorkflow,
+  NOTIFY_STEP as MOVE_NOTIFY,
+  openConnectedMove,
+  openInside,
+  openMoveToExecute,
+  step as moveStep,
+  SUBMIT_STEP as MOVE_SUBMIT,
+} from "./transaction-po";
+import {
+  chooseRun as chooseTransactionRun,
+  frameState as recordedFrame,
+  IDS as TRANSACTION_RUNS,
+  openTransactionRuns,
+} from "./transaction-runs-po";
+import {
   EXECUTE_ASKING,
   EXECUTE_CHAIN,
   EXECUTE_ROUTED,
@@ -319,6 +337,15 @@ async function openTableDraft(page: Page, document?: TableDocumentFixture) {
   await grid.open();
   return { details, grid, panes: new TablePanes(page) };
 }
+/** move-between-systems' transaction: hold reserves, add reverses, submit can't be undone. */
+const TRANSACTION_STEPS =
+  MOVE_HOLD() + MOVE_ADD + MOVE_SUBMIT + MOVE_NOTIFY + "  irreversible: true\n";
+/** submit failed, and changed nothing. */
+const REFUSED_SUBMIT = {
+  code: "REQUEST_REFUSED",
+  outcome: "failed",
+  effect: "none",
+};
 /** Scenes the direction asks for at some sizes only. */
 const only = (size: { tag: string }, ...tags: string[]) =>
   test.skip(!tags.includes(size.tag), `Shown at ${tags.join(" and ")}.`);
@@ -6344,6 +6371,117 @@ spec:
       new CanvasPage(page).tile("submit").locator(".tile-badge"),
     ).toHaveAttribute("data-badge", "handled");
     await shot("239-error-recorded", { tabs: 0 });
+  },
+  // Add a step › Flow on a platform with transactions: Transaction is listed.
+  async "transaction-add"({ page, shot }) {
+    await openConnectedMove(page, moveWorkflow(TRANSACTION_STEPS));
+    const canvas = new CanvasPage(page);
+    await canvas.insertTarget("Add a step after move").click();
+    const panel = new AddStepPanel(page);
+    await panel.option("Flow").click();
+    await expect(panel.option("Transaction")).toContainText(
+      "Run steps together; if one fails, undo what's done",
+    );
+    await shot("290-transaction-add", { tabs: 0 });
+  },
+  // The frame: how each step is undone, and the point of no return.
+  async "transaction-frame"({ page, shot }) {
+    await openConnectedMove(page, moveWorkflow(TRANSACTION_STEPS));
+    const canvas = new CanvasPage(page);
+    await expect(canvas.tile("hold").locator(".tile-undo")).toHaveText(
+      "Reserved",
+    );
+    await expect(
+      canvas.root.getByRole("img", {
+        name: "Point of no return, after submit",
+      }),
+    ).toBeVisible();
+    await leaveCanvas(page);
+    await shot("291-transaction-frame", { tabs: 0 });
+  },
+  // Settings › How it's undone on a step that reserves.
+  async "transaction-undo"({ page, shot }) {
+    const details = await openConnectedMove(
+      page,
+      moveWorkflow(TRANSACTION_STEPS),
+    );
+    await openInside(details, "hold");
+    await showParameters(page, details.dialog);
+    await details.tab("Settings").click();
+    const field = details.field("undo");
+    await expect(
+      field.getByRole("combobox", { name: "How it's undone" }),
+    ).toHaveValue("Reserve, then confirm");
+    await field.scrollIntoViewIfNeeded();
+    await shot("292-transaction-undo", { tabs: 0 });
+  },
+  // Publishing a transaction that isn't safe: its problems with their fixes.
+  async "transaction-publish"({ page, shot }) {
+    await openConnectedMove(
+      page,
+      moveWorkflow(
+        MOVE_HOLD() +
+          moveStep("adjust", "target-system.add-quantity@1.0.0") +
+          MOVE_SUBMIT +
+          MOVE_ADD,
+      ),
+    );
+    await command(page, "Publish…");
+    const dialog = page.getByRole("dialog", {
+      name: "Publish move-between-systems 1.0.0",
+    });
+    await expect(dialog).toContainText(
+      "This transaction isn't safe to publish: 3 problems",
+    );
+    await shot("293-transaction-publish", { tabs: 2 });
+  },
+  // Execute workflow after submit failed: what was done is undone, in order.
+  async "transaction-rollback"({ page, shot, size }) {
+    test.skip(!hasPython, "Execute runs on the Studio host's Python.");
+    // At 500 px of height or less the run log leaves the canvas a strip
+    // under its View menu, whatever the workflow.
+    only(size, "360x740", "768x1024", "1280x720", "1440x900", "1920x1080");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openMoveToExecute(page, moveWorkflow(TRANSACTION_STEPS), {
+      errors: { submit: REFUSED_SUBMIT },
+    });
+    await executeMove(page);
+    const canvas = new CanvasPage(page);
+    await expect(canvas.tileBody("move").locator(".frame-state")).toHaveText(
+      "Undone",
+      { timeout: 30_000 },
+    );
+    await shot("294-transaction-rollback", { tabs: 0 });
+  },
+  // An undo that keeps failing: the transaction is in doubt.
+  async "transaction-doubt"({ page, shot, size }) {
+    test.skip(!hasPython, "Execute runs on the Studio host's Python.");
+    only(size, "360x740", "768x1024", "1280x720", "1440x900", "1920x1080");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openMoveToExecute(page, moveWorkflow(TRANSACTION_STEPS), {
+      errors: {
+        submit: REFUSED_SUBMIT,
+        "add#undo": { code: "UNAVAILABLE", outcome: "failed", attempts: 10 },
+      },
+    });
+    await executeMove(page);
+    const canvas = new CanvasPage(page);
+    await expect(canvas.tileBody("move").locator(".frame-state")).toHaveText(
+      "In doubt · action needed",
+      { timeout: 30_000 },
+    );
+    await shot("295-transaction-doubt", { tabs: 0 });
+  },
+  // The Runs tab: a recorded run whose transaction is in doubt.
+  async "transaction-runs"({ page, shot }) {
+    const { runs } = await openTransactionRuns(page);
+    const canvas = await chooseTransactionRun(
+      page,
+      runs,
+      TRANSACTION_RUNS.doubt,
+    );
+    await expect(recordedFrame(canvas)).toHaveText("In doubt · action needed");
+    await shot("296-transaction-runs", { tabs: 0 });
   },
   async "call-step"({ page, shot }) {
     const details = await openCallStep(page);

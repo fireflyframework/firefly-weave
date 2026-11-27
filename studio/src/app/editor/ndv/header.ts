@@ -21,6 +21,7 @@ import { stepSummary } from "../../designer/canvas-summary";
 import { decode, get } from "../../forms/core/binding";
 import { getAt, isJsonObject } from "../../forms/core/json";
 import type { Step } from "../../model";
+import { stepCount } from "../transactions/group";
 import { loopSummary } from "./kinds/forms/flow-forms";
 import {
   EMAIL_CONNECTOR,
@@ -89,6 +90,8 @@ export function headerSubtitle(
     return `${kindLabel} · the first path that applies runs`;
   if (step.kind === "forEach")
     return [kindLabel, loopSummary(step)].filter(Boolean).join(" · ");
+  if ((step.kind as string) === "transaction")
+    return [kindLabel, stepCount(step)].filter(Boolean).join(" · ");
   const slot = step.kind === "action" ? step["connection"] : undefined;
   if (typeof slot === "string" && slot) {
     // A slot's name reads like a protocol ("http"): name the connection chosen for it, or nothing.

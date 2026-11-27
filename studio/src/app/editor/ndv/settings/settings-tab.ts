@@ -16,8 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The Settings tab, in a fixed order: the kind's settings (Retry on fail,
-// Timeout, waits and deadlines), On error with Result on error, Notes,
-// About this step. A section that doesn't apply to the step isn't shown;
+// Timeout, waits and deadlines), How it's undone with the fields of the way
+// chosen, On error with Result on error, Notes, About this step. A section that doesn't apply to the step isn't shown;
 // Notes and About always are.
 import {
   ChangeDetectionStrategy,
@@ -32,6 +32,11 @@ import { AboutSection } from "./about-section";
 import { NotesSection } from "./notes-section";
 import { OnErrorSection } from "./on-error-section";
 import { RetrySection } from "./retry-section";
+import { UndoSection } from "./undo-section";
+
+/** The fields of a way of undoing a step: its operations, their inputs and its hold. */
+const isUndoField = (id: string) =>
+  /^(?:confirm|cancel|compensate|undoHold)(?:\.|$)/.test(id);
 
 @Component({
   selector: "weave-settings-tab",
@@ -41,6 +46,7 @@ import { RetrySection } from "./retry-section";
   imports: [
     ParamField,
     RetrySection,
+    UndoSection,
     OnErrorSection,
     NotesSection,
     AboutSection,
@@ -56,6 +62,13 @@ import { RetrySection } from "./retry-section";
             [session]="session"
             [entry]="entry"
           />
+        } @else if (entry.spec.id === "undo") {
+          <weave-undo-section
+            class="settings-section"
+            [session]="session"
+            [entry]="entry"
+            [fields]="undoFields(state.fields)"
+          />
         } @else if (entry.spec.id === "onError") {
           <weave-on-error-section
             class="settings-section"
@@ -63,7 +76,7 @@ import { RetrySection } from "./retry-section";
             [entry]="entry"
             [result]="resultOnError(state.fields)"
           />
-        } @else if (entry.spec.id !== "resultOnError") {
+        } @else if (!inSection(entry)) {
           <weave-param-field
             class="settings-section"
             [session]="session"
@@ -78,9 +91,22 @@ import { RetrySection } from "./retry-section";
 })
 export class SettingsTab {
   session = input.required<FormSession>();
-  /** Keeps a field's component while its descriptor stays the same. */
+  /**
+   * Keeps a field's component while its descriptor stays the same; How it's
+   * undone for as long as it shows, since choosing changes what it asks.
+   */
   fieldKey(entry: FieldEntry): object {
-    return this.session().fieldKey(entry);
+    return entry.spec.id === "undo"
+      ? this.session()
+      : this.session().fieldKey(entry);
+  }
+  /** The fields How it's undone shows inside it, in their order. */
+  undoFields(fields: readonly FieldEntry[]): FieldEntry[] {
+    return fields.filter((entry) => isUndoField(entry.spec.id));
+  }
+  /** A field another section shows. */
+  inSection({ spec }: FieldEntry): boolean {
+    return spec.id === "resultOnError" || isUndoField(spec.id);
   }
   /** Result on error, shown inside On error while the step continues with error output. */
   resultOnError(fields: readonly FieldEntry[]): FieldEntry | null {

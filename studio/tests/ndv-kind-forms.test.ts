@@ -974,6 +974,7 @@ describe("shared helpers", () => {
         "humanTask",
         "llm",
         "signal",
+        "transaction",
         "transform",
       ].sort(),
     );

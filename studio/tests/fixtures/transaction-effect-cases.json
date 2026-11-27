@@ -1,0 +1,70 @@
+{
+  "description": "Whether a simulated failure of a step in a transaction may have changed anything, when nobody said. tests/unit/test_transaction_corpus.py checks each case against the host's rule (scripted_effect); Studio's default follows the same cases.",
+  "cases": [
+    {
+      "name": "a code the action declares definite",
+      "kind": "action",
+      "definiteFailures": ["VALIDATION"],
+      "code": "VALIDATION",
+      "outcome": "failed",
+      "effect": "none"
+    },
+    {
+      "name": "a code the action doesn't declare",
+      "kind": "action",
+      "definiteFailures": ["VALIDATION"],
+      "code": "UNAVAILABLE",
+      "outcome": "failed",
+      "effect": "unknown"
+    },
+    {
+      "name": "an action with no definite codes",
+      "kind": "action",
+      "definiteFailures": [],
+      "code": "VALIDATION",
+      "outcome": "failed",
+      "effect": "unknown"
+    },
+    {
+      "name": "a step that never started",
+      "kind": "action",
+      "definiteFailures": ["VALIDATION"],
+      "code": "UNAVAILABLE",
+      "outcome": "not_started",
+      "effect": "none"
+    },
+    {
+      "name": "a definite code with an unknown outcome",
+      "why": "The platform's failure_effect counts a definite code whatever the outcome, so it would derive none. Studio always writes the effect it shows, and the host refuses none with an unknown outcome.",
+      "kind": "action",
+      "definiteFailures": ["VALIDATION"],
+      "code": "VALIDATION",
+      "outcome": "unknown",
+      "effect": "unknown"
+    },
+    {
+      "name": "another code with an unknown outcome",
+      "kind": "action",
+      "definiteFailures": ["VALIDATION"],
+      "code": "UNAVAILABLE",
+      "outcome": "unknown",
+      "effect": "unknown"
+    },
+    {
+      "name": "a called workflow that failed",
+      "kind": "callWorkflow",
+      "definiteFailures": [],
+      "code": "VALIDATION",
+      "outcome": "failed",
+      "effect": "unknown"
+    },
+    {
+      "name": "a called workflow that never started",
+      "kind": "callWorkflow",
+      "definiteFailures": [],
+      "code": "UNAVAILABLE",
+      "outcome": "not_started",
+      "effect": "none"
+    }
+  ]
+}

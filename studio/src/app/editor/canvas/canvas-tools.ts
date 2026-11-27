@@ -22,9 +22,11 @@ SPDX-License-Identifier: Apache-2.0
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   input,
   output,
 } from "@angular/core";
+import { zoomPercent } from "../../designer/viewport";
 import { Icon } from "../../icon";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 
@@ -33,7 +35,7 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
   standalone: true,
   imports: [Icon, RowMenu],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `@let percent = (zoom() * 100).toFixed(0) + "%";
+  template: `@let percent = zoomText();
     <div
       class="canvas-tools canvas-v2-tools"
       role="toolbar"
@@ -123,6 +125,8 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
 })
 export class CanvasTools {
   zoom = input.required<number>();
+  /** The zoom level's text, "55%": what the point of no return's label goes by. */
+  protected readonly zoomText = computed(() => `${zoomPercent(this.zoom())}%`);
   zoomIn = output<void>();
   zoomOut = output<void>();
   reset = output<void>();

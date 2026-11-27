@@ -49,6 +49,22 @@ export interface HandledRecord {
   from: string | null;
 }
 
+/** What a run's transactions say in a step's details: a transaction in doubt, or a step it undid. */
+export type RecordedTransactionFacts =
+  | {
+      kind: "in-doubt";
+      /** "In doubt · action needed" */
+      pill: string;
+      title: string;
+      /** Which undo step failed and what stayed applied; null when the run doesn't say. */
+      detail: string | null;
+      /** Said where its result would be. */
+      result: string;
+      /** Its incident, which Open in Operate opens; null when the run names none. */
+      incident: string | null;
+    }
+  | { kind: "undone"; line: string };
+
 /** What a step received, recomputed from the run's data, or why it can't be. */
 export type Received =
   | { ok: true; value: Json }
@@ -89,6 +105,12 @@ export interface RunDataPort {
   label(): string;
   /** The version the run used ("1.2.0"); null when Studio couldn't read it. */
   definitionVersion(): string | null;
+  /**
+   * What the run's transactions say of a step instance: a transaction in
+   * doubt, or a step its transaction undid; null otherwise, and while they
+   * aren't read.
+   */
+  transaction(stepId: string, key: string): RecordedTransactionFacts | null;
 }
 
 /** The Runs tab and the run open in it, as the shell draws them. */

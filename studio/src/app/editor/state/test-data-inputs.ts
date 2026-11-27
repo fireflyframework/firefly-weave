@@ -19,6 +19,8 @@ SPDX-License-Identifier: Apache-2.0
 // the Action documents it calls (published contracts and the actions it
 // owns, both in the editor's contract cache), and, for when the host can't
 // answer, the schema each entry belongs to as Studio knows it.
+import { splitPhase } from "../transactions/phase-keys";
+import { phaseOperation } from "../transactions/phases";
 import { instanceStep } from "./instance-keys";
 import { allSteps } from "../ndv/step-walk";
 import type { Json } from "../ndv/registry";
@@ -40,10 +42,14 @@ export function checkInputsOf(
         return workflow.spec["inputSchema"] as Json | undefined;
       const pin = /^\/pins\/([^/]+)$/.exec(pointer);
       if (!pin) return undefined;
-      const id = instanceStep(unescape(pin[1]!));
+      const key = unescape(pin[1]!);
+      const id = instanceStep(key);
       const step = allSteps(workflow.spec.steps).find((item) => item.id === id);
-      if (step?.kind !== "action") return undefined;
-      const spec = contracts.get(String(step["uses"] ?? ""))?.["spec"] as
+      const phase = splitPhase(key)?.phase;
+      // An undo step returns what its own operation returns.
+      const ran = step && phase ? phaseOperation(step, phase) : step;
+      if (ran?.kind !== "action") return undefined;
+      const spec = contracts.get(String(ran.uses ?? ""))?.["spec"] as
         | Record<string, unknown>
         | undefined;
       return spec?.["outputSchema"] as Json | undefined;

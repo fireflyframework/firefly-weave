@@ -25,6 +25,7 @@ import {
   calledWorkflows,
   calleeDefinitions,
   studioCallees,
+  undoDefinitions,
   type CalleesHost,
 } from "../src/app/editor/calls/callee-drafts";
 import { LocalDrafts, type DraftStorage } from "../src/app/local-drafts";
@@ -169,6 +170,60 @@ describe("the workflows an execution sends right after a workflow opens", () => 
       sources: {},
       references: ["lookup-customer@0.1.0"],
     });
+  });
+
+  it("brings the published action that undoes a step, once, so its test output can be checked", async () => {
+    const action = (name: string) => ({
+      apiVersion: "weave/v1alpha1",
+      kind: "Action",
+      metadata: { name, version: "1.0.0" },
+      spec: { outputSchema: { type: "object" } },
+    });
+    const undo = (name: string) => ({
+      kind: "action",
+      uses: `${name}@1.0.0`,
+      with: { literal: {} },
+    });
+    const opened = {
+      ...host(async () => ({
+        definitions: ["confirm-hold", "release-hold", "remove", "other"].map(
+          (name) => ({ document: action(name), digest: "0".repeat(64) }),
+        ),
+      })),
+      model: {
+        definition: {
+          spec: {
+            steps: [
+              {
+                id: "move",
+                kind: "transaction",
+                steps: [
+                  {
+                    id: "hold",
+                    kind: "action",
+                    uses: "other@1.0.0",
+                    confirm: undo("confirm-hold"),
+                    cancel: undo("release-hold"),
+                  },
+                  {
+                    id: "again",
+                    kind: "action",
+                    uses: "other@1.0.0",
+                    confirm: undo("confirm-hold"),
+                    cancel: { ...undo("remove"), kind: "callWorkflow" },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    };
+    await calleeDefinitions(opened);
+    // What the editor sends already (release-hold) isn't sent again.
+    expect(undoDefinitions(opened, [action("release-hold")])).toEqual([
+      action("confirm-hold"),
+    ]);
   });
 
   it("sends the draft when the project's workflows can't be read within 3 seconds", async () => {

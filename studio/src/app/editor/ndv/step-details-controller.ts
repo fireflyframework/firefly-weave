@@ -47,6 +47,28 @@ import {
   triggerForm,
   workflowSettingsForm,
 } from "./kinds/forms/workflow-forms";
+import { actionSideEffect } from "./kinds/forms/action-forms";
+import { specOf } from "./kinds/shared";
+import { settledPolicy } from "./kinds/forms/transaction-forms";
+import type { LanguageManifest } from "../language-manifest";
+import { enclosingTransaction } from "../transactions/group";
+import { phaseKey, splitPhase, type Phase } from "../transactions/phase-keys";
+import { phaseOperation, transactionHolding } from "../transactions/phases";
+import {
+  PHASE_NOUNS,
+  transactionFailure,
+  type TransactionFailure,
+} from "../transactions/simulate-undo";
+import {
+  UNDO_STEPS,
+  settledHold,
+  settledOperations,
+} from "../transactions/undo";
+import {
+  undoFields,
+  type UndoFieldsContext,
+} from "../transactions/undo-fields";
+import { undoNote, undoTargets } from "../transactions/undo-targets";
 import {
   ownedActionsOf,
   usesOwning,
@@ -110,6 +132,7 @@ import { TestDataService } from "../state/test-data-service";
 import { checkInputsOf } from "../state/test-data-inputs";
 import {
   failureOf,
+  pinOf,
   withFailure,
   withInput,
   withPin,
@@ -223,6 +246,8 @@ import {
  * never the instance key.
  */
 export function pinSubject(key: string): string {
+  const undo = undoSubject(key);
+  if (undo) return undo;
   const item = pinItem(key);
   return item ? `${instanceStep(key)} for item ${item}` : instanceStep(key);
 }
@@ -231,8 +256,18 @@ function answerSubject(key: string): string {
   const item = pinItem(key);
   return item ? `${instanceStep(key)}, item ${item}` : instanceStep(key);
 }
+/** An undo step as toasts name it: "add's undo", or "hold's release for item 3" inside a loop; null for a step. */
+function undoSubject(key: string): string | null {
+  const named = splitPhase(key);
+  if (!named) return null;
+  const item = pinItem(named.key);
+  const step = `${instanceStep(named.key)}'s ${PHASE_NOUNS[named.phase]}`;
+  return item ? `${step} for item ${item}` : step;
+}
 /** Whose simulated failure a toast names: "send", or "item 3 of send" for one item. */
 function failureSubject(key: string): string {
+  const undo = undoSubject(key);
+  if (undo) return undo;
   const item = pinItem(key);
   return item ? `item ${item} of ${instanceStep(key)}` : instanceStep(key);
 }
@@ -300,6 +335,8 @@ export interface ExecuteNotice {
   reason: BlockedReason | null;
   /** "Edit test input" is the way out. */
   input?: boolean;
+  /** The undo step whose test output is asked for, by its key. */
+  undo?: string;
   /** A way out of its own: Open in Operate, Execute previous steps, Fix. */
   action?: { label: string; run: () => void };
 }
@@ -1080,6 +1117,55 @@ export class StepDetailsController {
     return { ok: true };
   }
 
+  /** What Simulate a failure needs of a step inside a transaction; null for one outside. */
+  transactionFailure(stepId: string): TransactionFailure | null {
+    const { model } = this.host;
+    this.testData.version();
+    return transactionFailure(model.definition, stepId, {
+      contract: (uses, kind) => this.undoContract(uses, kind),
+      errors: this.testData.data().errors ?? {},
+    });
+  }
+  /** Whether a transaction holds a step: a failure there is undone, whatever its On error. */
+  inTransaction(stepId: string): boolean {
+    return !!transactionHolding(this.host.model.definition, stepId);
+  }
+  /**
+   * The test output of one of a step's undo steps, for the item picked: its
+   * own, else every item's. Read against what runs the undo step: fields its
+   * schema marks secret are left out.
+   */
+  phasePin(stepId: string, phase: Phase): { key: string; output: Json } | null {
+    this.testData.version();
+    const found = pinOf(
+      this.testData.data(),
+      phaseKey(this.pinKey(stepId), phase),
+    );
+    if (this.viewingRuns() || this.stale() || !found) return null;
+    return {
+      key: found.key,
+      output: safeSample(
+        this.phaseOutput(stepId, phase) ?? {},
+        found.entry.output,
+      ) as Json,
+    };
+  }
+  /** The fields an undo step of a step returns; null when Studio can't read them. */
+  phaseOutput(stepId: string, phase: Phase): Record<string, unknown> | null {
+    const step = this.step(stepId);
+    const operation = step && phaseOperation(step, phase);
+    const contract =
+      operation && this.undoContract(operation.uses, operation.kind);
+    // A workflow's contract holds its schemas itself; an action's document, in its spec.
+    const holder = !contract
+      ? null
+      : operation.kind === "callWorkflow"
+        ? contract
+        : specOf(contract);
+    const schema = isJsonObject(holder) ? holder["outputSchema"] : null;
+    return isJsonObject(schema) ? schema : null;
+  }
+
   /** Whether this step's output can be pinned (actions, AI tasks, Call a workflow that waits…). */
   pinnable(target: string): boolean {
     if (this.viewingRuns()) return false;
@@ -1294,6 +1380,48 @@ export class StepDetailsController {
   onErrorContext(): OnErrorContext {
     return { ...this.kindContext(), onErrorKinds: this.onErrorKinds() };
   }
+  /** The settings several kinds share, as the target's manifest lists them. */
+  readonly manifest = signal<Pick<LanguageManifest, "step_fields"> | null>(
+    null,
+  );
+  /** What decides how a step is undone: its transaction, and what it changes. */
+  undoContext(target: string): UndoFieldsContext {
+    const { model } = this.host;
+    const node = model.nodes().find((found) => found.step.id === target);
+    const kind = this.kindContext();
+    return {
+      ...kind,
+      manifest: this.manifest(),
+      inTransaction: node
+        ? enclosingTransaction(model.definition, node.owner)
+        : null,
+      sideEffect:
+        node?.step.kind === "action" ? actionSideEffect(node.step, kind) : "",
+      undoNote: this.viewingRuns()
+        ? null
+        : undoNote(this.callSources().lock.current()),
+    };
+  }
+  /** What an undo step runs: a published action's document, or a workflow's contract. */
+  private undoContract(
+    uses: string,
+    kind: "action" | "callWorkflow",
+  ): Json | null {
+    if (kind === "callWorkflow") return this.callSources().contract(uses);
+    const known = this.actionContract(uses);
+    if (known) return known;
+    const lock = this.callSources().lock.current();
+    return lock.kind === "ready"
+      ? ((lock.lock.actions.get(uses)?.document as Json | undefined) ?? null)
+      : null;
+  }
+  /** Whether a reference names an action or a workflow; null when Studio knows neither. */
+  private undoKind(uses: string): "action" | "callWorkflow" | null {
+    const lock = this.callSources().lock.current();
+    if (lock.kind === "ready" && lock.lock.actions.has(uses)) return "action";
+    if (this.callSources().contract(uses)) return "callWorkflow";
+    return this.actionContract(uses) ? "action" : null;
+  }
   /** What fields in loop bodies can read, from the Studio host. */
   readonly loopScopes = new LoopScopes(
     (body) => this.host.api.request("/studio/local/scope", "POST", body),
@@ -1432,6 +1560,7 @@ export class StepDetailsController {
       return this.featureLoad.promise;
     this.features.set([]);
     this.onErrorKinds.set(null);
+    this.manifest.set(null);
     const load = { profile, api, promise: Promise.resolve() };
     this.featureLoad = load;
     const current = () =>
@@ -1443,15 +1572,19 @@ export class StepDetailsController {
         const path = profile
           ? `${api.project}/language`
           : "/studio/contracts/language";
-        const manifest = await api.request<{ features?: string[] }>(path);
+        const manifest = await api.request<
+          Pick<LanguageManifest, "step_fields"> & { features?: string[] }
+        >(path);
         if (current()) {
           this.features.set(manifest.features ?? []);
           this.onErrorKinds.set(onErrorKinds(manifest));
+          this.manifest.set(manifest);
         }
       } catch {
         if (current()) {
           this.features.set([]);
           this.onErrorKinds.set(null);
+          this.manifest.set(null);
           this.featureLoad = null;
         }
       }
@@ -1479,6 +1612,7 @@ export class StepDetailsController {
       actionContract: (uses) => this.actionContract(uses),
       tableContract: (uses) => this.tableContract(uses),
       workflowContract: (uses) => this.callSources().contract(uses),
+      undoContract: (uses, kind) => this.undoContract(uses, kind),
       callNote: (uses) =>
         this.viewingRuns() ? null : this.callSources().note(uses),
       viewingRun: this.viewingRuns(),
@@ -1598,11 +1732,14 @@ export class StepDetailsController {
       this.descriptor(target)?.settings?.(step, this.kindContext())) || {
       fields: [],
     };
-    // On error, and Result on error with it, come after the kind's own settings.
-    const onError = step ? onErrorFields(step, this.onErrorContext()) : [];
-    return onError.length
-      ? { ...own, fields: [...own.fields, ...onError] }
-      : own;
+    // How it's undone, then On error with its result, after the kind's own.
+    const shared = step
+      ? [
+          ...undoFields(step, this.undoContext(target)),
+          ...onErrorFields(step, this.onErrorContext()),
+        ]
+      : [];
+    return shared.length ? { ...own, fields: [...own.fields, ...shared] } : own;
   }
 
   private set(map: Map<string, Set<string>>, target: string): Set<string> {
@@ -2184,11 +2321,48 @@ export class StepDetailsController {
       for (const change of hidden.changes)
         settled = applyChange(settled, change);
       ended = settled.step ? endedOnError(settled.step) : null;
-      const endChanges: FormChange[] = (ended?.patch ?? []).map((edit) => ({
+      // A change of one value of a transaction's policy settles the whole.
+      const policy =
+        settled.step &&
+        changes.some(
+          (change) => change.scope === "step" && change.path[0] === "policy",
+        )
+          ? settledPolicy(settled.step)
+          : null;
+      // Hold for, changed to what the transaction holds, is left out.
+      const hold =
+        settled.step &&
+        changes.some(
+          (change) =>
+            change.scope === "step" && change.path[0] === "holdSeconds",
+        )
+          ? settledHold(settled.step, this.undoContext(target).inTransaction)
+          : null;
+      // Another action or workflow in an undo step starts its input over.
+      const operations =
+        settled.step &&
+        env.subject.step &&
+        changes.some(
+          ({ scope, path }) =>
+            scope === "step" &&
+            path[1] === "uses" &&
+            UNDO_STEPS.some((name) => name === path[0]),
+        )
+          ? settledOperations(env.subject.step, settled.step, (uses) =>
+              this.undoKind(uses),
+            )
+          : [];
+      const endChanges: FormChange[] = [
+        ...(ended?.patch ?? []),
+        ...(policy ? [policy] : []),
+        ...(hold ? [hold] : []),
+        ...operations,
+      ].map((edit) => ({
         scope: "step",
         path: edit.path,
         value: edit.value,
       }));
+      for (const change of endChanges) settled = applyChange(settled, change);
       // Changes that leave the step as it is write nothing: the file keeps
       // its bytes (a space typed in a formula, a value set to itself).
       // Key order counts: moving rows reorders an object's keys.
@@ -2196,11 +2370,9 @@ export class StepDetailsController {
         a === b || JSON.stringify(a) === JSON.stringify(b);
       const unchanged =
         !!step &&
-        !hidden.changes.length &&
-        !endChanges.length &&
-        same(subject.step, env.subject.step) &&
-        same(subject.action, env.subject.action) &&
-        same(subject.workflow, env.subject.workflow);
+        same(settled.step, env.subject.step) &&
+        same(settled.action, env.subject.action) &&
+        same(settled.workflow, env.subject.workflow);
       const apply = () => {
         moves = this.write(target, [
           ...changes,
@@ -2677,6 +2849,27 @@ export class StepDetailsController {
           if (host.model !== model || model.opened !== opened) return [];
           return workflowRows(
             sources.list(filter?.callableBy ?? model.definition.metadata.name),
+          );
+        },
+        undoTargets: async () => {
+          const { profile, api, stepDataScope } = host;
+          const sources = this.callSources();
+          const state = await sources.lock.read();
+          // The step, its workflow or the account changed meanwhile.
+          if (
+            host.model !== model ||
+            model.opened !== opened ||
+            host.profile !== profile ||
+            host.api !== api ||
+            host.stepDataScope !== stepDataScope ||
+            !this.step(target)
+          )
+            return [];
+          return undoTargets(state, model.definition.metadata.name, () =>
+            host.actionVersions.map((row) => {
+              const uses = `${String(row["name"])}@${String(row["version"])}`;
+              return { uses, contract: this.actionContract(uses) };
+            }),
           );
         },
         tablesNote: () => (this.tables?.needsSignIn() ? SIGN_IN_TO_LIST : null),

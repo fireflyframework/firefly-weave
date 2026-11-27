@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // A run as the canvas draws it: where it is, what it finished, and whether
 // it is a simulation played back or a real run followed live. Only a real
 // run pulses; a simulated one shows its live border without the pulse.
+import type { TransactionRun } from "../transactions/rollback";
+
 export interface CanvasRun {
   mode: "simulated" | "real";
   status: string;
@@ -48,6 +50,12 @@ export interface CanvasRun {
    * the run is blocked there. Read once the playback ended.
    */
   paused?: Readonly<Record<string, number>>;
+  /** Steps whose failure a transaction was undone for, without stopping the run there. */
+  failed?: readonly string[];
+  /** What became of its transactions by now; absent without any. */
+  transactions?: TransactionRun;
+  /** The step whose undo or release plays now. */
+  undoing?: string;
 }
 /** One step of a simulated run's trace, as the playback reads it. */
 export interface TraceStep {
@@ -220,6 +228,8 @@ export interface RecordedItem {
     | "timed-out";
   /** A failed or handled item's error code. */
   code: string | null;
+  /** The item's transaction left its path: "Undone", "In doubt"; absent otherwise. */
+  transaction?: string;
 }
 /** One run of a loop in a recorded run: once, or once per item of the loops around it. */
 export interface RecordedLoop {
@@ -261,7 +271,7 @@ export interface HandledFailure {
   message: string;
   policy: "continue" | "errorOutput";
 }
-export type EdgeRun = "idle" | "live" | "taken" | "skipped";
+export type EdgeRun = "idle" | "live" | "taken" | "skipped" | "undoing";
 export const ENDED_STATUSES: readonly string[] = [
   "succeeded",
   "failed",
@@ -281,6 +291,7 @@ export function tileRun(id: string, run: CanvasRun | null): TileRun {
     if (runEnded(run)) return finished ? "done" : null;
     return run.status === "waiting" ? "waiting" : "live";
   }
+  if (run.failed?.includes(id)) return "failed";
   return finished ? "done" : null;
 }
 
@@ -298,7 +309,12 @@ export function groupsEntered(
 ): ReadonlySet<string> {
   const groups = new Set<string>();
   if (!run) return groups;
-  for (const id of [...run.current, ...run.active, ...run.done]) {
+  for (const id of [
+    ...run.current,
+    ...run.active,
+    ...run.done,
+    ...(run.failed ?? []),
+  ]) {
     let group = parentOf(id);
     // Stopping at a group already added: the ones above it are in too.
     while (group && !groups.has(group)) {
@@ -321,6 +337,10 @@ export function edgeRun(
   inside: ReadonlySet<string> = NO_GROUPS,
 ): EdgeRun {
   if (!run) return "idle";
+  // While a step is undone, the way into it is drawn back; the rest of the
+  // way there is done with.
+  if (run.undoing && edge.enters === run.undoing) return "undoing";
+  const ended = runEnded(run) || !!run.undoing;
   // A step's Success output: taken when it finished without a failure its
   // error path handled, in any item of the loops around it; when its error
   // path ran every time, the way it didn't take.
@@ -329,7 +349,7 @@ export function edgeRun(
       run.handled?.[edge.success]?.policy === "errorOutput" &&
       !run.alsoCompleted?.includes(edge.success);
     if (!handled && run.done.includes(edge.success))
-      return runEnded(run) ? "taken" : "live";
+      return ended ? "taken" : "live";
     return runEnded(run) && (handled || run.mode === "simulated")
       ? "skipped"
       : "idle";
@@ -341,13 +361,13 @@ export function edgeRun(
     reached(id) ||
     run.current.includes(id) ||
     run.active.includes(id) ||
+    !!run.failed?.includes(id) ||
     inside.has(id);
   const taken =
     (edge.leaves === null || reached(edge.leaves)) &&
     (edge.enters === null || here(edge.enters));
-  const ended = runEnded(run);
   if (taken) return ended ? "taken" : "live";
-  if (!ended) return "idle";
+  if (!runEnded(run)) return "idle";
   // A run that happened marks only the ways a finished step didn't take:
   // edges out of a failed step, or on from a step it never reached, stay
   // plain. A step new in the draft wasn't there to reach: the run went past
@@ -390,11 +410,17 @@ const WIDE_FRAME_ZOOMS = [0.59, 0.58, 0.57, 0.56, 0.55];
  * centered; in a direction where it is larger, `step` is centered and the
  * pan then stops before either edge of the outline comes inside the area,
  * so no room is left empty while the workflow goes on beyond the other edge.
+ * Below 768 px, a step inside a transaction (`frame`) shows the transaction's
+ * header across instead: the frame centered when it fits the width, else its
+ * right end, where the header says how the transaction stands, 16 px inside
+ * the area, even when that leaves the step off screen (the run's header names
+ * it, and how the transaction stands is what a phone shows first).
  */
 export function frameRun(
   workflow: FrameBox | ((zoom: number) => FrameBox),
   step: FrameBox | null,
   area: { width: number; height: number },
+  frame: FrameBox | null = null,
 ): { zoom: number; pan: { x: number; y: number } } {
   const outlineAt = typeof workflow === "function" ? workflow : () => workflow;
   const zooms =
@@ -435,10 +461,28 @@ export function frameRun(
   return {
     zoom,
     pan: {
-      x: axis(outline.x, outline.width, focus.x, focus.width, area.width),
+      x:
+        frame && area.width < 768
+          ? acrossFrame(outline, frame, area.width, zoom)
+          : axis(outline.x, outline.width, focus.x, focus.width, area.width),
       y: axis(outline.y, outline.height, focus.y, focus.height, area.height),
     },
   };
+}
+/** The pan across that shows a transaction's header on a phone (see frameRun). */
+function acrossFrame(
+  outline: FrameBox,
+  frame: FrameBox,
+  room: number,
+  zoom: number,
+): number {
+  const width = frame.width * zoom;
+  const placed =
+    width <= room
+      ? (room - width) / 2 - frame.x * zoom
+      : room - 16 - (frame.x + frame.width) * zoom;
+  // No room left empty before the workflow's first step.
+  return Math.min(-outline.x * zoom, placed);
 }
 
 /** The zooms Execute workflow frames at: 100% down to 55%, in 2% steps, then 55%. */

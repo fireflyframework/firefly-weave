@@ -250,6 +250,53 @@ describe("how the Runs tab frames a run", () => {
     expect(framed.pan.x).toBeCloseTo(8);
   });
 
+  describe("a step inside a transaction, on a phone", () => {
+    const long = { x: 0, y: 0, width: 1600, height: 200 };
+    // 967 wide: 580 px at 60%, wider than a 360 px phone.
+    const move = { x: 300, y: 0, width: 967, height: 160 };
+    const submit = { x: 1100, y: 40, width: 120, height: 100 };
+    const phone = { width: 360, height: 700 };
+
+    it("opens on the transaction's right end, where its header says how it stands", () => {
+      const framed = frameRun(long, submit, phone, move);
+      expect(framed.zoom).toBe(0.6);
+      // The frame ends 16 px inside the canvas: 1,267 × 0.6 - 416.2 = 344.
+      expect((move.x + move.width) * 0.6 + framed.pan.x).toBeCloseTo(344);
+      // The step stays in view.
+      expect(submit.x * 0.6 + framed.pan.x).toBeGreaterThanOrEqual(8);
+      // Down, as before: the outline is centered.
+      expect(framed.pan.y).toBe(frameRun(long, submit, phone).pan.y);
+    });
+
+    it("shows the transaction's end even when its step is further left", () => {
+      // How the transaction stands comes first on a phone; the run's header names the step.
+      const hold = { x: 320, y: 40, width: 120, height: 100 };
+      const framed = frameRun(long, hold, phone, move);
+      expect((move.x + move.width) * 0.6 + framed.pan.x).toBeCloseTo(344);
+      expect((hold.x + hold.width) * 0.6 + framed.pan.x).toBeLessThan(0);
+    });
+
+    it("leaves no room empty before the workflow's first step", () => {
+      // A transaction that starts the workflow: centered, 30 px before it would stay empty.
+      const first = { x: 0, y: 0, width: 500, height: 160 };
+      expect(frameRun(long, submit, phone, first).pan.x).toBeCloseTo(0);
+    });
+
+    it("centers a transaction that fits the phone's width", () => {
+      const narrow = { x: 300, y: 0, width: 500, height: 160 };
+      const framed = frameRun(long, submit, phone, narrow);
+      // 300 px at 60%: 30 px on each side.
+      expect(narrow.x * 0.6 + framed.pan.x).toBeCloseTo(30);
+    });
+
+    it("frames a wide canvas as before", () => {
+      const wide = { width: 900, height: 700 };
+      expect(frameRun(long, submit, wide, move)).toEqual(
+        frameRun(long, submit, wide),
+      );
+    });
+  });
+
   it("keeps 60% and the framed step below 768 px, where 55% would read too small", () => {
     // 680 wide would fit a 400 px column at 56%, but a phone keeps 60%.
     const short = { x: 0, y: 0, width: 680, height: 200 };

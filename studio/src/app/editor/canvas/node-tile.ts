@@ -16,8 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // One tile: its card (shape by role, icon, corner badge) and its label
-// block. A loop's tile is the header band of its frame, and draws the frame
-// around its body too. The canvas places it and handles its clicks; the
+// block. A loop's or a transaction's tile is the header band of its frame,
+// and draws the frame around its steps too. The canvas places it and handles its clicks; the
 // tile only draws.
 import {
   ChangeDetectionStrategy,
@@ -38,13 +38,16 @@ import {
   type Point,
   type TileShape,
 } from "./layout-ltr";
+import type { Tone } from "../transactions/transaction-words";
 import { frameHeaderHeight } from "./loop-frame";
 import type { TileBadge, TileBorders } from "./tile-facts";
 
-/** A loop's frame: its tile is the header band at the frame's top. */
+/** A loop's or a transaction's frame: its tile is the header band at the frame's top. */
 export interface FrameView {
   /** The whole frame's height, in canvas units. */
   height: number;
+  /** A transaction's: what it promises, after "Transaction". A loop's says the rest. */
+  promise?: string;
   /** The list as a formula prints it; "…" until it is chosen. */
   items: string;
   /** No list yet: "loop-1 For each item in …" stays whole. */
@@ -57,6 +60,13 @@ export interface FrameView {
     /** "handled": done, and items went on after failures their On error handled. */
     tone: "live" | "done" | "failed" | "stopped" | "handled";
     progress: number | null;
+  } | null;
+  /** A transaction's, while a run shows: "Undone", "Undoing · 1 of 2", "In doubt · action needed". */
+  state?: {
+    text: string;
+    tone: Tone;
+    /** Null while it runs: the live dot. */
+    icon: string | null;
   } | null;
 }
 
@@ -79,21 +89,31 @@ export interface TileView {
   note: string;
   /** What its data holds, under the label ("3 fields"); "" when it has none. */
   output: string;
-  /** On the Runs tab, the line names the run's fact: a failure's code in danger ink, a change in info ink. */
-  outputTone?: "danger" | "warning" | "info" | null;
+  /**
+   * In a run, the line names its fact: a failure's code in danger ink, a
+   * change in info ink, what a transaction made of the step in its own.
+   */
+  outputTone?: "danger" | "warning" | "info" | "success" | null;
   /** From the card's top to its label block. */
   labelTop: number;
   paintMargin: number;
   name: string;
   tooltip: string;
   badge: TileBadge | null;
+  /** How a step of a transaction is undone, while no run shows; its word only while no run line takes its place. */
+  undo?: {
+    icon: string;
+    label: string;
+    warning: boolean;
+    word: boolean;
+  } | null;
   borders: TileBorders;
   pulse: boolean;
   /** A webhook listening for its test event: its border pulses until it stops. */
   listening?: boolean;
   selected: boolean;
   tabIndex: 0 | -1;
-  /** Set on a loop's tile. */
+  /** Set on a loop's or a transaction's tile. */
   frame?: FrameView | null;
 }
 
@@ -103,12 +123,13 @@ export interface TileView {
   imports: [Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `@let v = view();
-    <!-- A loop's header shows its whole sentence in the canvas's own tooltip, on hover and on keyboard focus. -->
+    <!-- A frame's header shows its whole sentence in the canvas's own tooltip, on hover and on keyboard focus. -->
     <button
       type="button"
       class="tile-body f-drag-blocker"
       data-action="tile"
       [class.frame-header]="!!v.frame"
+      [class.frame-transaction]="!!v.frame?.promise"
       [class.frame-pending]="!!v.frame?.pending"
       [class.frame-tight]="tight()"
       [class.frame-crowded]="crowded()"
@@ -132,10 +153,18 @@ export interface TileView {
       ></span>
       @if (v.frame; as frame) {
         <span class="frame-title" #frameTitle>
-          <weave-icon class="frame-icon" name="forEach" />
+          <weave-icon
+            class="frame-icon"
+            [name]="frame.promise ? 'transaction' : 'forEach'"
+          />
           <span class="frame-name">{{ v.title }}</span>
-          <span class="frame-lead">For each item in</span>
-          <span class="frame-items">{{ frame.items }}</span>
+          @if (frame.promise) {
+            &ngsp;<span class="frame-kind">Transaction</span>&ngsp;
+            <span class="frame-promise">{{ frame.promise }}</span>
+          } @else {
+            <span class="frame-lead">For each item in</span>
+            <span class="frame-items">{{ frame.items }}</span>
+          }
           <!-- A run's status takes the at-a-time suffix's place and never shortens. -->
           @if (frame.run; as run) {
             <span class="frame-run" [attr.data-tone]="run.tone"
@@ -147,6 +176,16 @@ export interface TileView {
             >
           } @else if (frame.suffix) {
             <span class="frame-suffix">{{ frame.suffix }}</span>
+          }
+          @if (frame.state; as state) {
+            <span class="frame-state" [attr.data-tone]="state.tone">
+              @if (state.icon; as icon) {
+                <weave-icon [name]="icon" />
+              } @else {
+                <span class="frame-live-dot" aria-hidden="true"></span>
+              }
+              {{ state.text }}</span
+            >
           }
         </span>
         @if (frame.run; as run) {
@@ -160,6 +199,16 @@ export interface TileView {
         }
       } @else if (v.kind !== "end") {
         <weave-icon class="tile-icon" [name]="v.icon" />
+      }
+      @if (v.undo; as undo) {
+        <!-- Never in the status badge's place: the card's other corner. -->
+        <span
+          class="undo-badge"
+          [attr.data-tone]="undo.warning ? 'warning' : null"
+          [attr.title]="undo.label"
+        >
+          <weave-icon [name]="undo.icon" [size]="16" />
+        </span>
       }
       @if (!issueBadge() && v.badge; as badge) {
         <span
@@ -210,13 +259,13 @@ export interface TileView {
     @if (v.kind !== "trigger" && !v.frame) {
       <span class="handle handle-in" aria-hidden="true"></span>
     }
-    <!-- A loop's name and list are in its header: under the frame, only what its data holds and its note. -->
+    <!-- A frame's name is in its header: under the frame, only what its data holds and its note. -->
     @if (v.frame ? v.output || v.note : v.title) {
       <div
         class="tile-label"
         [class.frame-label]="!!v.frame"
         [class.has-note]="!!v.note"
-        [class.has-output]="!!v.output"
+        [class.has-output]="!!v.output || !!v.undo?.word"
         [style.top.px]="v.labelTop"
         [style.--label-scale]="labelScale()"
         [style.--label-width.px]="v.shape === 'end' ? null : labelWidth()"
@@ -227,6 +276,13 @@ export interface TileView {
           @if (v.subtitle) {
             <span [attr.title]="v.subtitle">{{ v.subtitle }}</span>
           }
+        }
+        @if (v.undo?.word) {
+          <span
+            class="tile-undo"
+            [attr.data-tone]="v.undo!.warning ? 'warning' : null"
+            >{{ v.undo!.label }}</span
+          >
         }
         @if (v.output) {
           <span
@@ -262,7 +318,7 @@ export class NodeTile {
   focusWidth() {
     return Math.ceil(2 / this.zoom());
   }
-  /** A loop's header band keeps 24 px on screen as the canvas zooms out. */
+  /** A frame's header band keeps 24 px on screen as the canvas zooms out. */
   readonly frameBand = computed(() => frameHeaderHeight(this.zoom()));
   /**
    * A loop's whole header doesn't fit its band: "For each item in" leaves

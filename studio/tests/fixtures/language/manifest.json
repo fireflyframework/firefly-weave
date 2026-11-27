@@ -634,7 +634,7 @@
           }
         ],
         "scope_roots": [],
-        "studio": "pending"
+        "studio": "ready"
       },
       {
         "kind": "wait",
@@ -700,7 +700,7 @@
           ]
         },
         "only_inside": "transaction",
-        "studio": "pending"
+        "studio": "ready"
       },
       {
         "name": "onError",

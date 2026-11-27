@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // picker, "Move to…", deleting and duplicating, the workflow settings,
 // undo and saving.
 import type { Signal } from "@angular/core";
+import type { Profile, StudioApi } from "../../api";
 import type { AnchorRect } from "../../designer/popover-placement";
 import type { StructuredCanvasAdapter, Workflow } from "../../model";
 import type { ErrorEntry, PinEntry } from "../state/test-data";
@@ -39,6 +40,9 @@ export interface CanvasHost {
   readonly tick: Signal<number>;
   /** True while a simulation runs: the workflow can't change. */
   readonly editingLocked: boolean;
+  /** Where the target's language is read from: its platform, or this computer. */
+  readonly api: StudioApi;
+  readonly profile: Profile | null;
   /**
    * The Runs tab: the canvas draws runs that happened, read-only, without
    * the draft's handles, editing tools or setup badges.
@@ -101,6 +105,15 @@ export interface CanvasHost {
   removeSteps(ids: readonly string[]): Promise<void>;
   /** Copies a step, or a run of steps, right after itself. */
   duplicateSteps(ids: readonly string[]): Promise<void>;
+  /** Settles unapplied edits (the inspector, Source); false when the person kept them. */
+  ensureApplied(): Promise<boolean>;
+  /** Runs a model edit and records it; `error` then says why it failed, or is "". */
+  perform(edit: () => void): void;
+  readonly error: string;
+  /** Undoes the last step while `still()` holds; says how it went. */
+  undoIfUnchanged(
+    still: () => boolean,
+  ): Promise<"undone" | "changed" | "kept" | "locked">;
   /** Adds a decision with one path per answer after a human task. */
   branchOnDecision(id: string): Promise<void>;
   /** A dragged step kind may drop here. */

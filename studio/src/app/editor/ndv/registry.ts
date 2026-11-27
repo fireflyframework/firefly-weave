@@ -51,6 +51,7 @@ export type NodeRole =
   | "decision"
   | "parallel"
   | "loop"
+  | "group"
   | "sub-workflow"
   | "transform"
   | "human"
@@ -83,6 +84,11 @@ export interface KindContext {
   ownedAction?(uses: string): Json | null;
   /** The draft of a published action's next version kept on this computer, or null. */
   actionDraft?(uses: string): Json | null;
+  /**
+   * What an undo step runs: the document of a published action, or the
+   * contract of a workflow as `workflowContract` gives it; null when unknown.
+   */
+  undoContract?(uses: string, kind: "action" | "callWorkflow"): Json | null;
   /** On the Runs tab: the step is read from a run, so notes about editing it say nothing. */
   viewingRun?: boolean;
 }
@@ -206,9 +212,16 @@ export interface ParamSpec {
   };
   /** Text fields that become templates with text.concat. */
   templateCapable?: boolean;
+  /**
+   * Never shows what a mapping resolves to, in a run or with test data: no
+   * "= value" line and no Result panel value. A transaction's business key.
+   */
+  withholdsValue?: boolean;
   choices?: Choice[] | ((ctx: NdvContext) => Promise<Choice[]>);
   /** resource only: what an empty list says instead of "Nothing to choose from yet". */
   emptyChoices?(ctx: NdvContext): string | null;
+  /** resource only: what the open list's box says before anything is typed. */
+  searchText?: string;
   /** resource only: a line at the top of the open list, not a choice (why some choices are missing). */
   listNote?: string;
   /** What the field says while it is required and empty, in the words of its kind. */
@@ -219,6 +232,8 @@ export interface ParamSpec {
   actionsBeside?: boolean;
   min?: number;
   max?: number;
+  /** number only: 2.5 isn't one (tries). */
+  whole?: boolean;
   /**
    * number only: a value typed below `min` is an entry to finish. It stays
    * in the box with its message and isn't saved (Max tries, where one try
@@ -432,6 +447,23 @@ export interface NdvContext {
         description?: string;
         note?: string;
         aside?: string;
+      }[]
+    >;
+    /**
+     * What may undo a step in a transaction: the project's published actions,
+     * then its workflows, with the fact a row ends with and why one can't be
+     * chosen. An answer that arrives after the step, the workflow or the
+     * account changed is empty.
+     */
+    undoTargets(): Promise<
+      {
+        uses: string;
+        title: string;
+        kind: "action" | "callWorkflow";
+        group: "Actions" | "Workflows";
+        aside?: string;
+        note?: string;
+        disabled?: string;
       }[]
     >;
     /** Published decision tables, newest version first, then those on this computer. */

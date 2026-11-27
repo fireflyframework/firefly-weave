@@ -33,6 +33,7 @@ from firefly_weave.contracts.step_errors import StepError, StepOutcome
 from firefly_weave.contracts.studio_documents import (
     ERROR_CODE_PATTERN,
     MAX_SIMULATED_ATTEMPTS,
+    NOTHING_APPLIED,
     REFERENCE_PATTERN,
     AiTurnsEntry,
     CalleeReference,
@@ -40,6 +41,14 @@ from firefly_weave.contracts.studio_documents import (
     HumanEntry,
     SignalEntry,
     StudioTestData,
+)
+from firefly_weave.contracts.transactions import (
+    PHASE_SEGMENTS,
+    Effect,
+    ParticipantStatus,
+    TransactionState,
+    UndoMode,
+    split_phase,
 )
 from firefly_weave.contracts.values import JsonData, JsonObjectData
 
@@ -50,6 +59,12 @@ MOCK_KEY_PATTERN = (
 )
 
 type MockKey = Annotated[str, Field(max_length=1024, pattern=MOCK_KEY_PATTERN)]
+# The most transactions, and the most confirms, releases and undos, one answer reports.
+MAX_TRANSACTION_ENTRIES = 1000
+# The longest code of a failure, simulated or answered.
+ERROR_CODE_LENGTH = 128
+# An in-doubt incident: the instance key it is at, and its generation ("add#undo:10").
+INCIDENT_KEY_PATTERN = rf"^(?:{INSTANCE_KEY_PATTERN}):(?:0|[1-9][0-9]{{0,15}})$"
 type TraceStatus = Literal["running", "waiting", "completed", "failed"]
 type CheckCode = Literal[
     "WV-SCHEMA-SECRET_VALUE", "WV-SCHEMA-CLASSIFICATION", "WV-STUDIO-TESTDATA-SCHEMA", "WV-STUDIO-TESTDATA-UNRESOLVED"
@@ -105,12 +120,20 @@ class ExecuteTarget(_HostBody):
 class ScriptedFailure(_HostBody):
     """A failure a step reports in place of its result in this simulation; real runs never see one.
 
-    ``outcome`` and ``attempts`` are what the platform would report after the step's own retries.
+    ``outcome`` and ``attempts`` are what the platform would report after the step's own retries. ``effect`` says
+    whether a step inside a transaction may have applied anything; omitted, it follows from the code and the outcome.
     """
 
-    code: str = Field(min_length=1, max_length=128, pattern=ERROR_CODE_PATTERN)
+    code: str = Field(min_length=1, max_length=ERROR_CODE_LENGTH, pattern=ERROR_CODE_PATTERN)
     outcome: StepOutcome = "failed"
     attempts: int = Field(default=1, ge=0, le=MAX_SIMULATED_ATTEMPTS)
+    effect: Effect | None = None
+
+    @model_validator(mode="after")
+    def effect_rule(self) -> Self:
+        if self.effect == "none" and self.outcome == "unknown":
+            raise ValueError(NOTHING_APPLIED)
+        return self
 
 
 class SimulationRequest(_HostBody):
@@ -204,6 +227,61 @@ class Blocked(_HostBody):
     frame: FrameKey | None = None
 
 
+class TransactionCause(_HostBody):
+    """Why a transaction left its normal path: a code, the step instance and what it may have applied. A fail step's
+    code in its author's own spelling, or a longer one, is left out."""
+
+    code: str | None = Field(default=None, max_length=ERROR_CODE_LENGTH, pattern=ERROR_CODE_PATTERN)
+    instanceKey: InstanceKeyText
+    effect: Effect
+
+
+class ParticipantTrace(_HostBody):
+    """One step of a transaction: how it is undone and where it stands. No values."""
+
+    nodeId: ResourceName
+    instanceKey: InstanceKeyText
+    mode: UndoMode
+    status: ParticipantStatus
+    effect: Effect
+    attempts: int | None = Field(default=None, ge=0)
+
+
+class TransactionTrace(_HostBody):
+    """One transaction of the simulated workflow. It carries keys, states, codes and counts only: no value, and no
+    business key or anything derived from one."""
+
+    instanceKey: InstanceKeyText
+    nodeId: ResourceName
+    state: TransactionState
+    cause: TransactionCause | None = None
+    # A cancel or a failure that waits for the step that can't be undone.
+    pendingAbort: TransactionCause | None = None
+    incidentKey: str | None = Field(default=None, max_length=600, pattern=INCIDENT_KEY_PATTERN)
+    reconciledAs: Literal["completed", "compensated"] | None = None
+    participants: list[ParticipantTrace] = Field(max_length=1000)
+
+
+class PhaseEntry(_HostBody):
+    """One confirm, release or undo of a step of a transaction, in the order they ended."""
+
+    # The last trace entry before it; -1 before any.
+    afterIndex: int = Field(ge=-1)
+    nodeId: ResourceName
+    instanceKey: InstanceKeyText
+    phase: Literal["confirm", "cancel", "undo"]
+    status: Literal["completed", "failed", "waiting"]
+    input: JsonData = None
+    output: JsonData = None
+
+    @model_validator(mode="after")
+    def key_of_phase(self) -> Self:
+        found = split_phase(self.instanceKey)
+        if found is None or (node_of(found[0]), PHASE_SEGMENTS[found[1]]) != (self.nodeId, self.phase):
+            raise ValueError("instanceKey is this phase of an instance of nodeId")
+        return self
+
+
 class ExecuteResponse(_HostBody):
     status: Literal["completed", "blocked", "failed", "limit"]
     compile: CompileSummary
@@ -215,6 +293,9 @@ class ExecuteResponse(_HostBody):
     variables: JsonObjectData = Field(default_factory=dict)
     # Debugger errors, such as a missing mock; problems with the definition are in compile.diagnostics.
     diagnostics: list[Diagnostic] = Field(default_factory=list)
+    # The simulated workflow's own transactions and their confirms, releases and undos; both are left out when empty.
+    transactions: list[TransactionTrace] = Field(default_factory=list, max_length=MAX_TRANSACTION_ENTRIES)
+    phases: list[PhaseEntry] = Field(default_factory=list, max_length=MAX_TRANSACTION_ENTRIES)
 
     @model_validator(mode="after")
     def status_rules(self) -> Self:

@@ -34,6 +34,7 @@ import {
   untracked,
   inject,
   input,
+  signal,
   viewChild,
   type DoCheck,
   type OnInit,
@@ -62,9 +63,15 @@ import { Modal } from "../../dialog";
 import { durationText } from "../../format";
 import { Icon } from "../../icon";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
-import type { Step, Workflow } from "../../model";
+import {
+  nextFreeId,
+  type Step,
+  type StructuredCanvasAdapter,
+  type Workflow,
+} from "../../model";
 import { loadKindRegistrations } from "../ndv/kinds";
 import { memo } from "../memo";
+import { moveRefusal } from "../transactions/points";
 import { ndvRegistry, type KindContext } from "../ndv/registry";
 import {
   canvasCommand,
@@ -93,6 +100,7 @@ import { formatCombo, type KeymapCommand } from "../state/keymap";
 import {
   NO_SELECTION,
   blockedReason,
+  contiguity,
   covered,
   extended,
   moveAllowed,
@@ -120,6 +128,7 @@ import {
   type Insertion,
   type LtrBounds,
   type LtrFrame,
+  type LtrHandle,
   type LtrLayout,
   type LtrTile,
   type Point,
@@ -137,11 +146,30 @@ import {
 } from "./loop-frame";
 import { neighbor, placesOf, type Direction } from "./navigation";
 import { toolbarSpot } from "./toolbar-spot";
+import {
+  TRANSACTION_PROMISE,
+  pointOfNoReturnText,
+  showsPointLabel,
+  stateIcon,
+  stateText,
+  stepsInTransactions,
+  transactionFacts,
+  undoBadge,
+  undoText,
+} from "./transaction-frame";
+import {
+  frameState,
+  stepState,
+  type FrameState,
+  type StepState,
+} from "../transactions/rollback";
+import type { Tone } from "../transactions/transaction-words";
 import { NodeTile, type FrameView, type TileView } from "./node-tile";
 import {
   edgeRun,
   groupsEntered,
   pulses,
+  runEnded,
   tileRun,
   type CanvasRun,
   type HandledFailure,
@@ -170,6 +198,14 @@ import {
   type Box,
 } from "./tidy";
 import { CANVAS_MAX_BYTES } from "../state/test-data";
+import {
+  applyGroup,
+  groupInTransaction,
+  nestedReason,
+  type GroupRun,
+  type GroupedSteps,
+} from "../transactions/group";
+import { GroupDialog } from "../transactions/group-dialog";
 import { ownedActionsOf } from "../ndv/owned/owned-store";
 import {
   CLIPBOARD_WEB_FORMAT,
@@ -191,10 +227,12 @@ import {
   type TileBorders,
   type TileFacts,
 } from "./tile-facts";
+import { stepBadge, transactionTileRun } from "./transaction-tile";
 import { failureText } from "./error-lane";
 
 const NO_FACTS: StepFacts = { errors: [], warnings: [], setup: [] };
 const NO_STEP_FACTS: ReadonlyMap<string, StepFacts> = new Map();
+const NONE: ReadonlySet<string> = new Set();
 const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
 const NO_BORDERS: TileBorders = {
   selected: false,
@@ -208,12 +246,29 @@ const activatedIntent = (intent: TriggerIntent | null) =>
 const LISTENING_BORDERS: TileBorders = { ...NO_BORDERS, live: true };
 const LISTENING = "Listening for test event";
 
-/** What a loop's frame draws around its body, from its layout. */
+/** What a frame draws around its steps, from its layout. */
 function frameView(
   step: Step,
   frame: LtrFrame,
-  run: FrameView["run"] = null,
+  run: FrameView["run"],
+  state: FrameState | null | undefined,
 ): FrameView {
+  if (frame.transaction)
+    return {
+      height: frame.height,
+      promise: TRANSACTION_PROMISE,
+      items: "",
+      pending: false,
+      suffix: "",
+      // An open one has no words: its live border shows it runs.
+      state: state?.text
+        ? {
+            text: state.text + state.item,
+            tone: state.tone,
+            icon: stateIcon(state.facts.state),
+          }
+        : null,
+    };
   const { items, suffix } = loopHeaderParts(step);
   return {
     height: frame.height,
@@ -222,6 +277,17 @@ function frameView(
     suffix,
     run,
   };
+}
+/** A frame's facts for the badge on its header. */
+function frameFacts(
+  tile: LtrTile,
+  frame: LtrFrame | undefined,
+  facts: StepFacts,
+): StepFacts {
+  if (!tile.step || !frame) return facts;
+  return frame.transaction
+    ? transactionFacts(tile.step, facts)
+    : loopFacts(tile.step, facts);
 }
 /** A loop's run, as its header says it: its words, its tone and how far it is. */
 function frameRunOf(loop: LoopRun): NonNullable<FrameView["run"]> {
@@ -248,6 +314,23 @@ const LOOP_TILE_RUN: Readonly<Record<LoopRun["status"], TileRun>> = {
   done: "done",
   paused: null,
 };
+
+/** The ink of the line that says what a transaction made of a step; "Done" reads as any result does. */
+const STEP_INK: Readonly<Record<Tone, TileView["outputTone"]>> = {
+  live: "info",
+  success: "success",
+  warning: "warning",
+  danger: "danger",
+  muted: null,
+};
+/** That line: "Undone", "Still reserved", "Confirmed". */
+const transactionFact = ({ status, text, tone }: StepState) =>
+  text
+    ? {
+        text,
+        tone: status === "done" && tone === "success" ? null : STEP_INK[tone],
+      }
+    : null;
 
 const modified = (event: KeyboardEvent) =>
   event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
@@ -286,6 +369,20 @@ interface ToolbarView {
   trigger: { intent: string | null; label: string; execute: boolean } | null;
 }
 
+/** Steps waiting to be grouped, in the workflow as it was when they were asked about. */
+interface GroupRequest {
+  model: StructuredCanvasAdapter;
+  opened: number;
+  revision: number;
+  workflow: Workflow;
+  run: GroupRun;
+  count: number;
+  grouped: GroupedSteps;
+}
+const GROUP_CHANGED = "The workflow changed since. Select the steps again.";
+const TARGET_UNREAD =
+  "Studio couldn't read what this platform runs. Press Group in a transaction again.";
+
 /** Ruling 19: the canvas never makes data, so a step without output says how to pin it. */
 export const NO_PIN_YET = "Set test output or generate a sample to pin it.";
 
@@ -304,6 +401,7 @@ export const NO_PIN_YET = "Set test output or generate a sample to pin it.";
     SelectionToolbar,
     NotesLayer,
     ItemChip,
+    GroupDialog,
   ],
   // A drag on empty canvas draws a selection box; Space, Ctrl or Command
   // with a drag, or the middle button, pans; the canvas handles the wheel.
@@ -375,6 +473,8 @@ export class CanvasView implements OnInit, DoCheck {
   private suppressClick = false;
   /** The selected steps and the one with focus. */
   selection: Selection = NO_SELECTION;
+  /** More than one step is selected: the selection toolbar shows. */
+  private several = false;
   /** The editor's selected step when the canvas last looked. */
   private seenSelected = "";
   /** Space is held: a drag pans. */
@@ -546,6 +646,9 @@ export class CanvasView implements OnInit, DoCheck {
     }
     this.syncSelection();
     this.sayLoopProgress();
+    const several = this.selectedCount() > 1;
+    if (several && !this.several) this.askTarget();
+    this.several = several;
     const selected = h.model.selected;
     if (selected !== this.revealed) {
       this.revealed = selected;
@@ -677,7 +780,12 @@ export class CanvasView implements OnInit, DoCheck {
       const places = this.places();
       const frames = new Map(layout.frames.map((frame) => [frame.id, frame]));
       // A selected decision or parallel step shows every step inside it as
-      // selected; a selected loop's frame says its steps come with it.
+      // selected; a selected frame says its steps come with it.
+      // How a step of a transaction is undone shows while no run does.
+      const undone =
+        run || this.viewingRuns()
+          ? NONE
+          : stepsInTransactions(layout.tiles, layout.frames);
       const chosen = drawnSelected(
         covered(selection, places),
         selection.ids,
@@ -686,12 +794,23 @@ export class CanvasView implements OnInit, DoCheck {
       );
       // In a simulation played back, each loop's progress at this frame.
       const progress = this.loopRuns(layout, run);
+      const transactions = run?.transactions;
+      const going = !!run && !runEnded(run);
       return layout.tiles.map((tile) => {
         const loopRun = progress?.filter((each) => each.id === tile.id).at(-1);
+        // Where its transaction left a step, and where a transaction stands.
+        const left =
+          transactions && tile.step
+            ? stepState(transactions, tile.id, going)
+            : null;
+        const stands =
+          transactions && frames.get(tile.id)?.transaction
+            ? frameState(transactions, tile.id, going)
+            : null;
         const state = loopRun
           ? LOOP_TILE_RUN[loopRun.status]
           : tile.step
-            ? tileRun(tile.id, run)
+            ? transactionTileRun(tileRun(tile.id, run), stands ?? left)
             : null;
         return this.tileView(
           tile,
@@ -700,10 +819,13 @@ export class CanvasView implements OnInit, DoCheck {
             tile,
             this.withPasteGaps(
               tile,
-              // A loop without a list says it needs one on its header.
-              tile.step?.kind === "forEach"
-                ? loopFacts(tile.step, facts.get(tile.id) ?? NO_FACTS)
-                : (facts.get(tile.id) ?? NO_FACTS),
+              // A loop without a list, or a transaction without steps, says
+              // what it needs on its header.
+              frameFacts(
+                tile,
+                frames.get(tile.id),
+                facts.get(tile.id) ?? NO_FACTS,
+              ),
             ),
           ),
           {
@@ -726,6 +848,9 @@ export class CanvasView implements OnInit, DoCheck {
             frame: tile.step ? frames.get(tile.id) : undefined,
             loop: loopRun,
             ended: !!run?.ended,
+            undone: undone.has(tile.id),
+            left,
+            stands,
           },
         );
       });
@@ -777,12 +902,18 @@ export class CanvasView implements OnInit, DoCheck {
       handled?: HandledFailure;
       /** The run drawn happened (the Runs tab): tiles show it, not the draft's state. */
       recorded?: RecordedRun | null;
-      /** A loop's frame: the tile is its header band. */
+      /** A loop's or a transaction's frame: the tile is its header band. */
       frame?: LtrFrame;
       /** A loop's progress in the simulation played back. */
       loop?: LoopRun;
       /** The simulation's playback has ended: the whole run has played. */
       ended?: boolean;
+      /** A step of a transaction, while no run shows: it says how it is undone. */
+      undone?: boolean;
+      /** In a run: where its transaction left the step. */
+      left?: StepState | null;
+      /** In a run: where the transaction stands. */
+      stands?: FrameState | null;
     },
   ): TileView {
     const h = this.host();
@@ -882,17 +1013,19 @@ export class CanvasView implements OnInit, DoCheck {
               }
             : null;
     const frame = state.frame
-      ? frameView(tile.step, state.frame, frameRun)
+      ? frameView(tile.step, state.frame, frameRun, state.stands)
       : null;
-    const summary = frame
-      ? `For each item in ${frame.items}${
-          frameRun
-            ? ` · ${frameRun.text}`
-            : frame.suffix
-              ? ` ${frame.suffix}`
-              : ""
-        }`
-      : (descriptor?.summary(tile.step, ctx) ?? "");
+    const summary = frame?.promise
+      ? frame.promise
+      : frame
+        ? `For each item in ${frame.items}${
+            frameRun
+              ? ` · ${frameRun.text}`
+              : frame.suffix
+                ? ` ${frame.suffix}`
+                : ""
+          }`
+        : (descriptor?.summary(tile.step, ctx) ?? "");
     // A run that happened shows what it did, not the draft's errors, setup or pins.
     const shown = recorded
       ? {
@@ -926,13 +1059,20 @@ export class CanvasView implements OnInit, DoCheck {
           selected: state.selected,
           simulated: !!state.simulated,
         };
-    // A loop's header shows what the loop needs, not how its items ran.
-    const badge = state.frame ? frameBadge(tileBadge(shown)) : tileBadge(shown);
+    // A frame's header shows what the block needs, not how its steps ran. A
+    // transaction that failed says how it ended in its header.
+    const own = stepBadge(shown, state.left);
+    const badge = !state.frame
+      ? own
+      : state.stands && own?.kind === "failed"
+        ? null
+        : frameBadge(own, state.frame.transaction);
     // Where the simulated run stopped: what it needs ("Step check needs test data.").
     const note = state.run && !recorded ? (h.runNote?.(tile.id) ?? "") : "";
     // A loop the run finished says how many items it had under its frame;
     // a failed one says it in its header, and its failed step shows the code.
     // Under the frame once the whole playback has ended, not while later steps play.
+    // A transaction that shows how it stands says it in its header, in a recorded run too.
     const finishedLoop =
       state.loop?.status === "done" && state.ended && state.loop.count !== null
         ? state.loop
@@ -946,16 +1086,19 @@ export class CanvasView implements OnInit, DoCheck {
         }
       : state.run === "handled"
         ? runFact(shown)
-        : recordedRun
-          ? null
-          : recorded
-            ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
-            : null;
+        : state.left
+          ? transactionFact(state.left)
+          : recordedRun || (state.frame && state.stands)
+            ? null
+            : recorded
+              ? recordedFact(shown, tile.kind, recorded.runningFor?.[tile.id])
+              : null;
     // The Runs tab draws the run only: nothing from the editor's executions.
-    // A loop's frame says nothing under it while its playback runs.
+    // A frame says nothing under it while its playback runs.
     const runLine = fact
       ? fact.text
-      : this.viewingRuns() || (state.frame && state.loop && !state.ended)
+      : this.viewingRuns() ||
+          (state.frame && (state.loop || state.stands) && !state.ended)
         ? ""
         : (h.summaryOf?.(tile.id) ?? "");
     // A call that doesn't wait says so on its own line while no run line shows.
@@ -967,6 +1110,11 @@ export class CanvasView implements OnInit, DoCheck {
     // continues on error while no run line shows (its outputs say the rest).
     const failure = failureText(tile.step);
     const continues = !runLine && tile.step["onError"] === "continue";
+    const undo = state.undone ? undoBadge(tile.step) : null;
+    // What a transaction does now is its own word, not "Running".
+    const lives =
+      (!!frame?.state && frame.state.tone === "live") ||
+      (state.left?.tone === "live" && !!state.left.text);
     return {
       ...common,
       step: true,
@@ -980,32 +1128,50 @@ export class CanvasView implements OnInit, DoCheck {
           : runLine,
       outputTone: fact?.tone ?? (detached ? "info" : null),
       name: tileName({
-        id: failure ? `${tile.id}, ${failure}` : tile.id,
+        // A transaction's name holds its header's words as they show: the rest comes after them.
+        id: failure && !frame?.promise ? `${tile.id}, ${failure}` : tile.id,
         kindLabel,
-        // A loop's summary under its frame is in its name, whole.
-        summary:
-          state.frame && fact
-            ? `${summary}, ${fact.text}`
-            : detached
-              ? `${summary}, doesn't wait`
-              : summary,
-        status:
+        // A frame's summary under it is in its name, whole.
+        summary: [
+          summary,
+          frame?.promise ? failure : "",
+          state.frame && fact ? fact.text : "",
+          detached ? "doesn't wait" : "",
+        ]
+          .filter(Boolean)
+          .join(", "),
+        status: [
           note ||
-          runText(state.run, tile.kind) ||
-          handledStatus(shown) ||
-          badge?.text ||
-          "",
+            (lives ? "" : runText(state.run, tile.kind)) ||
+            handledStatus(shown) ||
+            badge?.text,
+          lives || state.stands || state.left?.status === "unknown"
+            ? (frame?.state?.text ?? state.left?.text)
+            : "",
+        ]
+          .filter(Boolean)
+          .join(", "),
         index: tile.index,
         count: tile.count,
-        place: tile.place,
+        place: undo ? `${tile.place}, ${undoText(tile.step)}` : tile.place,
       }),
       tooltip: [
-        frame ? `${tile.id}: ${summary}` : `${tile.id}, ${kindLabel}`,
+        frame?.promise
+          ? `${tile.id}: ${kindLabel} · ${summary}`
+          : frame
+            ? `${tile.id}: ${summary}`
+            : `${tile.id}, ${kindLabel}`,
         note || badge?.text,
+        state.stands ? stateText(state.stands) : "",
       ]
         .filter(Boolean)
         .join(". "),
       badge,
+      undo: undo && {
+        ...undo,
+        warning: undo.icon === "critical",
+        word: !runLine,
+      },
       borders: tileBorders(shown),
       selected: state.selected,
       frame,
@@ -1071,11 +1237,18 @@ export class CanvasView implements OnInit, DoCheck {
       active: string,
     ) => {
       /** While a step moves: only where it can go, named for the move. */
+      const refusal = this.refusalOf(layout, moving);
       const offer = (target: InsertView): InsertView | null => {
         if (!moving) return target;
         if (places.has(moving) && !moveAllowed(places, moving, target.insert))
           return null;
-        return { ...target, name: moveName(target.name, moving), moving: true };
+        const refused = refusal(target.insert);
+        return {
+          ...target,
+          name: moveName(target.name, moving),
+          moving: !refused,
+          refused,
+        };
       };
       const tab = (tile: string): 0 | -1 => (tile === active ? 0 : -1);
       const pluses = layout.handles.flatMap((handle) => {
@@ -1141,11 +1314,80 @@ export class CanvasView implements OnInit, DoCheck {
           moving: false,
           tabIndex: tab(handle.tile),
         });
-        if (view) outputs.set(handle.key, view);
+        if (view && !view.refused) outputs.set(handle.key, view);
       }
       return { pluses, slots, onEdges, outputs };
     },
   );
+  /** Why the step being moved can't go to a place, because of a transaction there. */
+  private refusalOf(layout: LtrLayout, moving: string) {
+    const step = moving
+      ? layout.tiles.find((tile) => tile.id === moving)?.step
+      : null;
+    if (!step || !layout.frames.some((frame) => frame.transaction))
+      return () => null;
+    const definition = this.host().model.definition;
+    return (insert: Insertion) => moveRefusal(definition, step, insert);
+  }
+  /** The place refused to the step being moved that the pointer or focus is on. */
+  private refusedAt = "";
+  private refusedKey({ owner, index }: Insertion): string {
+    return `${this.moving()} ${owner} ${index}`;
+  }
+  refusedOver(insert: Insertion): boolean {
+    return !!this.refusedAt && this.refusedKey(insert) === this.refusedAt;
+  }
+  /** Says why that place is refused, under it, at screen size. */
+  moveReason(): { x: number; y: number; text: string } | null {
+    if (!this.moving() || !this.refusedAt) return null;
+    const { pluses, slots, onEdges } = this.targets();
+    const at = [...pluses, ...slots, ...onEdges.values()].find(
+      (view) => view?.refused && this.refusedOver(view.insert),
+    );
+    if (!at?.refused) return null;
+    const size = slots.includes(at) ? LTR.slot : 24;
+    return { x: at.x + size / 2, y: at.y + size, text: at.refused };
+  }
+  /** Why the places refused to the step being moved are: one reason for them all. */
+  refusedReason(): string {
+    if (!this.moving()) return "";
+    const { pluses, slots, onEdges } = this.targets();
+    return (
+      [...pluses, ...slots, ...onEdges.values()].find((view) => view?.refused)
+        ?.refused ?? ""
+    );
+  }
+  /**
+   * Follows the pointer or focus onto a refused place, or off it. Only a
+   * place there reads what moves: the canvas's first events may come before
+   * its data does.
+   */
+  private markRefused(element: Element | null) {
+    const control = element?.closest?.("[data-refused]");
+    const insert = control ? this.insertOf(control) : null;
+    const key = insert ? this.refusedKey(insert) : "";
+    if (key === this.refusedAt) return;
+    this.refusedAt = key;
+    this.cdr.markForCheck();
+  }
+  private readonly dividersMemo = memo((layout: LtrLayout) =>
+    layout.dividers.map((divider) => ({
+      ...divider,
+      ...pointOfNoReturnText(divider.stepId),
+    })),
+  );
+  /** The points of no return, drawn in runs too. */
+  dividers() {
+    return this.dividersMemo(this.layout());
+  }
+  /** The points of no return are labeled from 55% up, as the zoom control reads the zoom. */
+  pointLabels() {
+    return showsPointLabel(this.view.zoom);
+  }
+  /** Draws the line's label at 11 px or more on screen. */
+  pointScale() {
+    return Math.max(1, 11 / (12 * this.view.zoom));
+  }
   private targets() {
     return this.targetsMemo(
       this.layout(),
@@ -1203,14 +1445,14 @@ export class CanvasView implements OnInit, DoCheck {
       // A run records a decision or parallel step only when it finishes, so
       // the way into one counts once the run is at a step inside it.
       const inside = groupsEntered(run, (id) => places.get(id)?.parent ?? null);
-      const loops = new Set(layout.frames.map((frame) => frame.id));
+      const frames = this.framesMemo(layout);
       return layout.edges.map((edge) => ({
         edge,
         d: edgePath(edge),
         state: edgeRun(edge, run, inside),
         shown: hovered === edge.key,
         plus: locked ? null : (onEdges.get(edge.key) ?? null),
-        arrow: !endsAtFrame(edge, loops),
+        arrow: !endsAtFrame(edge, frames),
       }));
     },
   );
@@ -1224,12 +1466,21 @@ export class CanvasView implements OnInit, DoCheck {
       this.places(),
     );
   }
-  private readonly loopsMemo = memo(
-    (layout: LtrLayout) => new Set(layout.frames.map((frame) => frame.id)),
+  private readonly framesMemo = memo(
+    (layout: LtrLayout) =>
+      new Map(layout.frames.map((frame) => [frame.id, frame])),
   );
-  /** The loops around each step, outermost first, read from the layout. */
-  private loopsAroundOf(layout: LtrLayout) {
-    const loops = this.loopsMemo(layout);
+  private readonly loopsMemo = memo(
+    (layout: LtrLayout) =>
+      new Set(
+        layout.frames.flatMap((frame) => (frame.transaction ? [] : [frame.id])),
+      ),
+  );
+  /** The frames (by default, the loops) around each step, outermost first, read from the layout. */
+  private loopsAroundOf(
+    layout: LtrLayout,
+    frames: { has(id: string): boolean } = this.loopsMemo(layout),
+  ) {
     const places = this.places();
     return (id: string): readonly string[] => {
       const around: string[] = [];
@@ -1238,7 +1489,7 @@ export class CanvasView implements OnInit, DoCheck {
         parent;
         parent = places.get(parent)?.parent ?? null
       )
-        if (loops.has(parent)) around.unshift(parent);
+        if (frames.has(parent)) around.unshift(parent);
       return around;
     };
   }
@@ -1280,9 +1531,17 @@ export class CanvasView implements OnInit, DoCheck {
       this.loopSaidAt = now;
     }
   }
-  /** A loop's output dot sits 8 units out from its frame, clear of the body's last "+". */
-  handleOffset(tile: string): number {
-    return this.loopsMemo(this.layout()).has(tile) ? 8 : 0;
+  /** A frame's one output dot sits 8 units out from it, clear of its last "+". */
+  handleOffset(output: LtrHandle): number {
+    return this.atFrame(output) && !output.label ? 8 : 0;
+  }
+  /** A transaction's Success and Error outputs sit on its frame's border. */
+  onFrame(output: LtrHandle): boolean {
+    return this.atFrame(output) && !!output.label;
+  }
+  private atFrame({ tile, x }: LtrHandle): boolean {
+    const frame = this.framesMemo(this.layout()).get(tile);
+    return !!frame && x === frame.x + frame.width;
   }
   /**
    * A loop's run in a recorded run: the one in the items picked on the
@@ -1484,6 +1743,8 @@ export class CanvasView implements OnInit, DoCheck {
   private insertAt(control: HTMLElement) {
     const h = this.host();
     const insert = this.insertOf(control);
+    const refused = control.getAttribute("data-refused");
+    if (refused) return h.notify(refused);
     if (!insert || control.getAttribute("aria-disabled") === "true") return;
     const moving = this.moving();
     if (moving) return h.moveStep(moving, insert);
@@ -1502,6 +1763,7 @@ export class CanvasView implements OnInit, DoCheck {
   }
   hover(event: PointerEvent) {
     const target = event.target as Element;
+    this.markRefused(target);
     const edge =
       target.closest?.("[data-edge]")?.getAttribute("data-edge") ?? "";
     if (edge !== this.hoveredEdge) this.hoveredEdge = edge;
@@ -1520,10 +1782,12 @@ export class CanvasView implements OnInit, DoCheck {
     this.hoveredEdge = "";
     this.hoveredTile = "";
     this.hoveredHeader = "";
+    this.refusedAt = "";
   }
   /** Focus on a step, or in its toolbar, shows that step's toolbar. */
   focusIn(event: FocusEvent) {
     const target = event.target as Element;
+    this.markRefused(target);
     this.focusTile = this.toolbarStep(target);
     this.reached(this.focusTile);
     // Keyboard focus on a loop's header shows its whole sentence; a click's doesn't.
@@ -1811,6 +2075,16 @@ export class CanvasView implements OnInit, DoCheck {
       ? descriptor.pinnable(step)
       : descriptor.pinnable;
   }
+  /** Group in a transaction in a selected step's menu: it groups the selection. */
+  private groupItem(): RowMenuItem {
+    const reason = this.lockedReason() ?? this.groupBlocked();
+    return {
+      label: "Group in a transaction",
+      blocked: !!reason,
+      ...(reason ? { detail: reason } : {}),
+      run: () => void this.groupSelection(),
+    };
+  }
   private menuFor(tile: LtrTile, locked: boolean): RowMenuItem[] {
     const h = this.host();
     const id = tile.id;
@@ -1839,6 +2113,10 @@ export class CanvasView implements OnInit, DoCheck {
         disabled: locked,
         run: () => void h.duplicateSteps([id]),
       },
+      ...(this.selectedCount() > 1 &&
+      covered(this.selection, this.places()).has(id)
+        ? [this.groupItem()]
+        : []),
       { label: "Move to…", disabled: locked, run: () => h.startMove(id) },
       ...(tile.kind === "humanTask"
         ? [
@@ -1979,7 +2257,11 @@ export class CanvasView implements OnInit, DoCheck {
         from: { x: port.x, y: port.y },
         to: this.toWorld(event.clientX, event.clientY),
       };
-    } else this.draggingStep = press.key;
+    } else {
+      this.draggingStep = press.key;
+      // The step keeps the pointer while it is dragged: what is under it is asked.
+      this.markRefused(document.elementFromPoint(event.clientX, event.clientY));
+    }
     this.cdr.markForCheck();
   }
   pointerUp(event: PointerEvent) {
@@ -2053,10 +2335,13 @@ export class CanvasView implements OnInit, DoCheck {
       this.draggingStep = "";
       const over = document
         .elementFromPoint(event.clientX, event.clientY)
-        ?.closest("[data-insert]");
+        ?.closest("[data-insert], [data-refused]");
+      const refused = over?.getAttribute("data-refused");
       const insert = over ? this.insertOf(over) : null;
       const places = this.places();
-      if (
+      this.refusedAt = "";
+      if (refused) h.notify(refused);
+      else if (
         insert &&
         (!places.has(press.key) || moveAllowed(places, press.key, insert))
       )
@@ -2080,6 +2365,7 @@ export class CanvasView implements OnInit, DoCheck {
     this.press = null;
     this.band = null;
     this.draggingStep = "";
+    this.refusedAt = "";
     if (panned) this.showWhilePanning();
     this.cdr.markForCheck();
   }
@@ -2237,9 +2523,9 @@ export class CanvasView implements OnInit, DoCheck {
     return { width, height };
   }
   /**
-   * Frames the run Execute workflow plays back in a workflow with loops: the
-   * whole workflow at 55% or more; else the loop holding the step it failed
-   * or is at (else the last it finished); else that step at 60%.
+   * Frames the run Execute workflow plays back in a workflow with loops or
+   * transactions: the whole workflow at 55% or more; else the one holding the
+   * step it failed or is at (else the last it finished); else that step at 60%.
    */
   private frameExecution() {
     const run = this.host().canvasRun();
@@ -2247,19 +2533,20 @@ export class CanvasView implements OnInit, DoCheck {
     if (run?.mode !== "simulated" || !run.trace) return;
     if (!this.ready || !root.clientWidth) return;
     const layout = this.layout();
-    // Workflows without loops keep their steps in sight as before (keepRunInView).
+    // Workflows without frames keep their steps in sight as before (keepRunInView).
     if (!layout.frames.length) return;
+    const frames = this.framesMemo(layout);
     const order = layout.tiles.map((tile) => tile.id);
     const at =
       run.current.find((id) => order.includes(id)) ??
       [...order].reverse().find((id) => run.done.includes(id)) ??
       null;
-    const loopId = at
-      ? layout.frames.some((frame) => frame.id === at)
+    const around = at
+      ? frames.has(at)
         ? at
-        : this.loopsAroundOf(layout)(at).at(-1)
+        : this.loopsAroundOf(layout, frames)(at).at(-1)
       : undefined;
-    const loop = layout.frames.find((frame) => frame.id === loopId);
+    const frame = around ? frames.get(around) : undefined;
     const tile = layout.tiles.find((item) => item.id === at);
     const halves = this.labelTextHalves(layout);
     const outlineAt = (zoom: number) => {
@@ -2274,8 +2561,8 @@ export class CanvasView implements OnInit, DoCheck {
     this.framedView = this.frameView(
       frameExecuted(
         outlineAt,
-        loop
-          ? { x: loop.x, y: loop.y, width: loop.width, height: loop.height }
+        frame
+          ? { x: frame.x, y: frame.y, width: frame.width, height: frame.height }
           : null,
         tile
           ? {
@@ -2307,6 +2594,19 @@ export class CanvasView implements OnInit, DoCheck {
     if (key === this.framed) return;
     this.framed = key;
     const tile = layout.tiles.find((item) => item.id === focus);
+    // The transaction the step sits in, the innermost: its header says how it stands.
+    const frame = tile
+      ? (layout.frames
+          .filter(
+            (one) =>
+              one.transaction &&
+              one.x <= tile.x &&
+              tile.x + tile.width <= one.x + one.width &&
+              one.y <= tile.y &&
+              tile.y + tile.height <= one.y + one.height,
+          )
+          .sort((a, b) => b.depth - a.depth)[0] ?? null)
+      : null;
     const halves = this.labelTextHalves(layout);
     const outlineAt = (zoom: number) => {
       const bounds = runOutline(layout, zoom, (id) => halves.get(id));
@@ -2338,6 +2638,7 @@ export class CanvasView implements OnInit, DoCheck {
           // The band at the bottom that holds the canvas tools.
           height: Math.max(1, root.clientHeight - (16 + tools + 8)),
         },
+        frame,
       ),
     );
   }
@@ -2401,7 +2702,7 @@ export class CanvasView implements OnInit, DoCheck {
     const root = this.root().nativeElement;
     if (this.lifetime.destroyed || !root.clientWidth || !root.clientHeight)
       return;
-    // A run of a workflow with loops is framed as Execute workflow frames it.
+    // A run of a workflow with frames is framed as Execute workflow frames it.
     if (h.canvasRun()?.trace && this.layout().frames.length) return;
     const frame = root.getBoundingClientRect();
     // Tiles as drawn (body, label, summary line), in world units.
@@ -2563,7 +2864,7 @@ export class CanvasView implements OnInit, DoCheck {
     const root = this.root().nativeElement;
     if (!tile || !root.clientWidth) return;
     const size = { width: root.clientWidth, height: root.clientHeight };
-    // A loop shows its whole frame; where that misses with the usual
+    // A frame shows whole; where that misses with the usual
     // margin, with less, and else from its header's start.
     const frame = layout.frames.find((item) => item.id === id);
     const rect = frame
@@ -2639,6 +2940,155 @@ export class CanvasView implements OnInit, DoCheck {
     const reason = this.lockedReason() ?? this.duplicateBlocked();
     if (reason) return this.host().notify(reason);
     await this.host().duplicateSteps(topLevel(this.selection, this.places()));
+  }
+  /** Why Group in a transaction can't run on a selection, or null. */
+  groupBlocked(chosen: Selection = this.selection): string | null {
+    const h = this.host();
+    const places = this.places();
+    const run = contiguity(chosen, places);
+    return (
+      this.targetLacks ??
+      blockedReason("group", chosen, places) ??
+      (run.ok
+        ? this.nestedMemo(
+            h.tick(),
+            h.model.definition,
+            run.owner,
+            run.from,
+            run.to,
+          )
+        : null)
+    );
+  }
+  private readonly nestedMemo = memo(
+    (
+      _tick: number,
+      workflow: Workflow,
+      owner: string,
+      from: number,
+      to: number,
+    ) => nestedReason(workflow, { owner, from, to }),
+  );
+  /** Why the target can't run transactions, once it is known. */
+  private targetLacks: string | null = null;
+  /** What the target runs couldn't be read: no reason, and not known to run them. */
+  private targetUnread = false;
+  private targetRead: Promise<void> | null = null;
+  /**
+   * Asks what the target runs, once for each selection of several steps: a
+   * read that failed is asked again with the next one or with a press, never
+   * by drawing.
+   */
+  private askTarget() {
+    const h = this.host();
+    this.targetRead = Promise.all([
+      import("../add-step/catalog-sources"),
+      import("../add-step/entries"),
+    ])
+      .then(async ([{ loadLanguage }, { gateReason }]) => {
+        const language = await loadLanguage(h.api, !!h.profile);
+        this.targetUnread = !language;
+        this.targetLacks =
+          language &&
+          gateReason(
+            "flow.transaction",
+            "transaction",
+            true,
+            language,
+            "transactions",
+          );
+      })
+      .catch(() => {
+        this.targetUnread = true;
+        this.targetLacks = null;
+      })
+      .then(() => this.cdr.markForCheck());
+  }
+  /** The steps waiting for an answer about the later reads grouping would break. */
+  readonly grouping = signal<GroupRequest | null>(null);
+  /**
+   * Groups the selected steps in a transaction as one undo step. Later reads
+   * of their data would break, so those are listed first, with Cancel ahead.
+   */
+  async groupSelection() {
+    // A second press while the platform is asked adds nothing.
+    if (this.groupAsked) return;
+    this.groupAsked = true;
+    try {
+      await this.askAndGroup();
+    } finally {
+      this.groupAsked = false;
+    }
+  }
+  private groupAsked = false;
+  private async askAndGroup() {
+    const h = this.host();
+    const model = h.model;
+    const opened = model.opened;
+    // The steps asked about: an answer that arrives after they changed groups none.
+    const chosen = this.selection;
+    const ids = topLevel(chosen, this.places()).join();
+    const here = () => h.model === model && model.opened === opened;
+    if (!this.targetRead || this.targetUnread) this.askTarget();
+    await this.targetRead;
+    if (!here()) return;
+    const reason =
+      this.lockedReason() ??
+      this.groupBlocked(chosen) ??
+      (this.targetUnread ? TARGET_UNREAD : null);
+    if (reason) return h.notify(reason);
+    if (!(await h.ensureApplied()) || !here()) return;
+    const run = contiguity(chosen, this.places());
+    if (!run.ok || run.ids.join() !== ids) return h.notify(GROUP_CHANGED);
+    const grouped = groupInTransaction(
+      model.definition,
+      run,
+      nextFreeId("transaction", model.stepIdSet()),
+    );
+    if ("refused" in grouped) return h.notify(grouped.refused);
+    const request: GroupRequest = {
+      model,
+      opened,
+      revision: model.revision,
+      workflow: model.definition,
+      run,
+      count: run.ids.length,
+      grouped,
+    };
+    if (grouped.outsideReads.length) this.grouping.set(request);
+    else this.applyGrouping(request);
+  }
+  groupAnswered(anyway: boolean) {
+    const request = this.grouping();
+    this.grouping.set(null);
+    if (request && anyway) this.applyGrouping(request);
+  }
+  private applyGrouping({
+    model,
+    opened,
+    revision,
+    run,
+    count,
+    grouped,
+  }: GroupRequest) {
+    const h = this.host();
+    const here = (at: number) =>
+      h.model === model && model.opened === opened && model.revision === at;
+    if (!here(revision)) return h.notify(GROUP_CHANGED);
+    h.perform(() => applyGroup(model, run, grouped));
+    if (h.error) return;
+    const id = model.selected;
+    const after = model.revision;
+    this.choose(only(id));
+    this.focusTileLater(id);
+    h.notify(`Grouped ${count} ${count === 1 ? "step" : "steps"} in ${id}.`, {
+      label: "Undo",
+      run: async () => {
+        const done = await h.undoIfUnchanged(() => here(after));
+        if (done === "changed")
+          h.notify("The workflow changed since. Use Undo in the toolbar.");
+      },
+    });
   }
   async removeSelection() {
     const reason = this.lockedReason();
@@ -2773,19 +3223,19 @@ export class CanvasView implements OnInit, DoCheck {
     const pending = this.pendingFocus;
     const slotFor = pending
       ? pending.slot
-        ? pending.id
-        : undefined
-      : target.closest<HTMLElement>("[data-slot-for]")?.dataset["slotFor"];
+        ? this.bodySlot(pending.id)
+        : ""
+      : target.closest<HTMLElement>("[data-slot-for]")?.dataset["insertOwner"];
     if (slotFor && this.slotKey(event, slotFor)) {
       event.preventDefault();
       event.stopPropagation();
       return;
     }
-    // On its way to an empty loop's Add a step, keys act on that slot:
+    // On its way to an empty frame's Add a step, keys act on that slot:
     // Enter opens it, and the commands about steps wait for it.
     if (pending?.slot && event.key === "Enter" && !modified(event)) {
       const slot = this.root().nativeElement.querySelector<HTMLElement>(
-        this.slotSelector(pending.id),
+        this.slotSelector(this.bodySlot(pending.id)),
       );
       this.pendingFocus = null;
       if (slot) this.insertAt(slot);
@@ -2879,6 +3329,9 @@ export class CanvasView implements OnInit, DoCheck {
         else void h.duplicateSteps(topLevel(chosen, places));
         return true;
       }
+      case "groupInTransaction":
+        void this.groupSelection();
+        return true;
       case "deleteSelection": {
         const chosen = focus.startsWith("$trigger:")
           ? this.intentOf(focus)
@@ -2987,13 +3440,14 @@ export class CanvasView implements OnInit, DoCheck {
   private moveFocus(
     from: string,
     direction: Direction,
-    /** From an empty loop's slot: on past the loop. */
+    /** From an empty frame's slot: on past the frame. */
     pastBody = false,
   ): boolean {
     const start = from || this.active();
-    // An empty loop's "Add a step" is the way into its body.
-    if (direction === "next" && !pastBody && this.emptyLoop(start)) {
-      this.focusLater(start, this.slotSelector(start), true);
+    // An empty frame's "Add a step" is the way into it.
+    const slot = direction === "next" && !pastBody && this.bodySlot(start);
+    if (slot) {
+      this.focusLater(start, this.slotSelector(slot), true);
       return true;
     }
     const next = neighbor(this.layout(), start, direction);
@@ -3031,28 +3485,31 @@ export class CanvasView implements OnInit, DoCheck {
   private focusTileLater(id: string) {
     this.focusLater(id, `[data-tile="${CSS.escape(id)}"] .tile-body`);
   }
-  /** A loop whose body is empty: its frame holds an "Add a step" slot. */
-  private emptyLoop(id: string): boolean {
-    return this.layout().slots.some(
-      (slot) => slot.tile === id && slot.owner === `${id}/body`,
+  /** The sequence a loop's or a transaction's "Add a step" slot adds to, while its frame is empty; else "". */
+  private bodySlot(id: string): string {
+    return (
+      this.layout().slots.find(
+        ({ owner }) => owner === `${id}/body` || owner === `${id}/steps`,
+      )?.owner ?? ""
     );
   }
-  private slotSelector(loop: string): string {
-    return `.lane-slot[data-slot-for="${CSS.escape(loop)}"]`;
+  private slotSelector(owner: string): string {
+    return `.lane-slot[data-insert-owner="${CSS.escape(owner)}"]`;
   }
   /**
-   * ← and → on an empty loop's "Add a step": back to the loop's header, or
-   * on past the loop, as from a body's last step. Enter is the button's own.
+   * ← and → on an empty frame's "Add a step": back to the frame's header, or
+   * on past it, as from its last step. Enter is the button's own.
    */
-  private slotKey(event: KeyboardEvent, loop: string): boolean {
+  private slotKey(event: KeyboardEvent, owner: string): boolean {
     if (modified(event)) return false;
-    if (!this.emptyLoop(loop)) return false;
+    const id = owner.slice(0, owner.indexOf("/"));
+    if (!id || this.bodySlot(id) !== owner) return false;
     if (event.key === "ArrowLeft") {
-      if (this.places().has(loop)) this.choose(only(loop));
-      this.focusTileLater(loop);
+      if (this.places().has(id)) this.choose(only(id));
+      this.focusTileLater(id);
       return true;
     }
-    if (event.key === "ArrowRight") return this.moveFocus(loop, "next", true);
+    if (event.key === "ArrowRight") return this.moveFocus(id, "next", true);
     return false;
   }
   /**
@@ -3093,7 +3550,10 @@ export class CanvasView implements OnInit, DoCheck {
     const h = this.host();
     const reason = this.lockedReason();
     if (reason) return h.notify(reason);
-    const control = target.closest<HTMLElement>("[data-insert]");
+    // A place refused to the step being moved says why, as a click on it does.
+    const control = target.closest<HTMLElement>(
+      "[data-insert], [data-refused]",
+    );
     if (control) return this.insertAt(control);
     const root = this.root().nativeElement;
     if (!h.model.definition.spec.steps.length) {
@@ -3429,7 +3889,8 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** At the focused "+", else after the focused or selected step, else at the end. */
   private pastePlace(target: HTMLElement): Insertion {
-    const control = target.closest?.("[data-insert]");
+    // One refused to the step being moved takes other steps as any does.
+    const control = target.closest?.("[data-insert], [data-refused]");
     const insert = control ? this.insertOf(control) : null;
     if (insert) return insert;
     const id =

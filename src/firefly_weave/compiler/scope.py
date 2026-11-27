@@ -26,7 +26,7 @@ from typing import Final, Literal, cast
 
 from pydantic import Field
 
-from firefly_weave.compiler.analyzer import analyze_scope
+from firefly_weave.compiler.analyzer import PARTICIPANT_SCHEMA, TRANSACTION_SCHEMA, analyze_scope
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.loops import LoopScope
 from firefly_weave.compiler.parser import ParseFailure, parse_source
@@ -42,7 +42,7 @@ from firefly_weave.contracts.definitions import (
 from firefly_weave.contracts.step_errors import STEP_ERROR_SCHEMA
 from firefly_weave.contracts.values import JsonObject, JsonObjectData, JsonValue
 
-type ScopeSource = Literal["input", "step", "item", "index", "error"]
+type ScopeSource = Literal["input", "step", "item", "index", "error", "undo"]
 type JsonType = Literal["array", "boolean", "integer", "null", "number", "object", "string"]
 
 # Deepest property path expanded below a root, and the most suggestions returned, roots included.
@@ -107,7 +107,8 @@ def scope_at(document: JsonObject, path: JsonPointer, *, catalog: CatalogSnapsho
     Without a catalog, resources resolve as in offline authoring and their outputs stay unconstrained.
     ``found`` is false when ``path`` is not inside an expression the compiler analyzes, including documents it
     rejects before flow analysis. Entries list the workflow input, the current loop's item and position, enclosing
-    loops (inner to outer), then visible step outputs in execution order, each followed by its fields.
+    loops (inner to outer), inside an undo step the step's operation key and outcome and its transaction, then
+    visible step outputs in execution order, each followed by its fields.
     """
     try:
         capture = analyze_scope(parse_source(document, format="object"), path, catalog)
@@ -118,14 +119,25 @@ def scope_at(document: JsonObject, path: JsonPointer, *, catalog: CatalogSnapsho
     roots: list[JsonObject] = [_root("/input", "input", "Workflow input", "Workflow input", capture.input_schema)]
     for depth, loop in enumerate(reversed(capture.loops)):
         roots.extend(_loop_roots(loop, innermost=depth == 0))
+    phase, settled = capture.undo or (None, None)
+    if settled is not None:
+        roots.extend(_undo_roots(settled))
     errors = {identifier: (kind, always) for identifier, kind, always in capture.errors}
     # Inside an error path, the failed step's error comes first: the step has no output there.
     for identifier, (kind, always) in errors.items():
         if always:
             roots.append(_error_root(identifier, kind, optional=False))
     for identifier, kind, schema in capture.steps:
+        own = identifier == settled
+        # A cancel must work when its step's outcome is unknown, so it never reads that step (TXN_CANCEL_OUTPUT).
+        if own and phase == "cancel":
+            continue
         step = _root(f"/steps/{_escape(identifier)}/output", "step", identifier, identifier, schema)
-        roots.append(step | {"stepId": identifier, "stepKind": kind})
+        step |= {"stepId": identifier, "stepKind": kind}
+        if own and phase == "compensate":
+            # A compensate also runs when its step's outcome is unknown, so the step may have no output.
+            step["optional"] = True
+        roots.append(step)
         if identifier in errors and not errors[identifier][1]:
             roots.append(_error_root(identifier, kind, optional=True))
     entries, truncated = _expand(roots)
@@ -149,6 +161,22 @@ def _error_root(identifier: str, kind: str, *, optional: bool) -> JsonObject:
     """The error object of a step that handles its failures; optional after the step, where it may have succeeded."""
     root = _root(f"/steps/{_escape(identifier)}/error", "error", "Error", f"{identifier} › Error", STEP_ERROR_SCHEMA)
     return root | {"stepId": identifier, "stepKind": kind, "optional": optional}
+
+
+def _undo_roots(step: str) -> list[JsonObject]:
+    """What only an undo step reads: its step's operation key and outcome, and its transaction's ID and business key."""
+    participant = cast(JsonObject, PARTICIPANT_SCHEMA["properties"])
+    transaction = cast(JsonObject, TRANSACTION_SCHEMA["properties"])
+    roots = [
+        ("/participant/operationKey", "Operation key", participant["operationKey"]),
+        ("/participant/outcome", f"Outcome of {step}", participant["outcome"]),
+        ("/transaction/id", "Transaction ID", transaction["id"]),
+        ("/transaction/businessKey", "Business key", transaction["businessKey"]),
+    ]
+    return [
+        _root(ref, "undo", label, f"This step's undo › {label}", cast(JsonObject, schema))
+        for ref, label, schema in roots
+    ]
 
 
 def _loop_roots(loop: LoopScope, *, innermost: bool) -> list[JsonObject]:

@@ -109,7 +109,9 @@ let sequence = 0;
         [disabled]="disabled()"
         [value]="open() ? query() : (selected()?.label ?? '')"
         [placeholder]="
-          open() && searchable() ? 'Search choices…' : placeholder()
+          open() && searchable()
+            ? (searchText() ?? 'Search choices…')
+            : placeholder()
         "
         [attr.aria-label]="label()"
         [attr.data-value]="value()"
@@ -477,6 +479,8 @@ export class Select {
   note = input<string | null>(null);
   value = input("");
   placeholder = input("Choose an option");
+  /** What the box of an open list that searches says before anything is typed. */
+  searchText = input<string | null>(null);
   disabled = input(false);
   hideLabel = input(false);
   controlId = input("");

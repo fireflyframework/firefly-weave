@@ -236,10 +236,10 @@ weave-canvas-view,
   pointer-events: none;
 }
 
-/* A loop: a frame around the steps it repeats, whose header band is the
-   loop's tile: the loop has no tile of its own. The frame has no fill, so
+/* A loop or a transaction: a frame around its steps, whose header band is
+   its tile: the block has no tile of its own. The frame has no fill, so
    the canvas shows through, and its border is the edges' dim stroke; only
-   selected, live and error color it. The header names the loop and its list
+   selected, live and error color it. A loop's header names it and its list
    on one line and shortens instead of wrapping: "For each item in" goes
    first (from sight only), then the at-a-time suffix, then the list down to
    2.5 em; the name keeps at most 40% and never goes. Its text draws larger
@@ -396,6 +396,60 @@ weave-canvas-view,
   .canvas-v2 .frame-progress::after {
     transition: none;
   }
+}
+/* A transaction's header: its promise shortens first, then its name; the
+   word "Transaction" never does. The promise takes so much of the shrinking
+   that the name loses nothing of a pixel, which would draw as an ellipsis. */
+.canvas-v2 .frame-transaction .frame-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.canvas-v2 .frame-kind {
+  flex: none;
+  font-weight: 600;
+  color: var(--text);
+}
+.canvas-v2 .frame-promise {
+  flex: 0 1000000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Drawn, not said: the header's name holds its words alone. */
+.canvas-v2 .frame-promise::before {
+  content: "\00a0· ";
+}
+/* While a run shows, how the transaction stands, at the band's right end: its
+   words keep their room, and the header's text shortens before them. */
+.canvas-v2 .frame-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.33em;
+  margin-left: auto;
+  padding-left: 0.75em;
+  font-weight: 600;
+  color: var(--text);
+}
+.canvas-v2 .frame-state weave-icon {
+  width: 1.2em;
+  height: 1.2em;
+}
+.canvas-v2 .frame-state .frame-live-dot {
+  width: 0.583em;
+  height: 0.583em;
+}
+.canvas-v2 .frame-state[data-tone="success"] {
+  color: var(--success-ink);
+}
+.canvas-v2 .frame-state[data-tone="warning"] {
+  color: var(--warning-ink);
+}
+.canvas-v2 .frame-state[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+.canvas-v2 .frame-state[data-tone="muted"] {
+  color: var(--muted);
 }
 /* No list yet: "loop-1 For each item in …" stays whole. */
 .canvas-v2 .frame-pending .frame-items {
@@ -589,6 +643,85 @@ weave-canvas-view,
   color: var(--text);
 }
 
+/* How a step of a transaction is undone: an icon on the card's lower left
+   corner, never in the status badge's place, and its word in the label. */
+.canvas-v2 .undo-badge {
+  position: absolute;
+  left: -10px;
+  top: 66px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--neutral-bd);
+  border-radius: var(--radius-pill);
+  background: var(--neutral-bg);
+  color: var(--neutral-ink);
+}
+.canvas-v2 .undo-badge weave-icon {
+  width: 14px;
+  height: 14px;
+}
+.canvas-v2 .undo-badge[data-tone="warning"] {
+  border-color: var(--warning-bd);
+  background: var(--warning-bg);
+  color: var(--warning-ink);
+}
+.canvas-v2 .tile-label span.tile-undo[data-tone="warning"] {
+  color: var(--warning-ink);
+  font-weight: 600;
+}
+/* The point of no return: a 1.5 px line at any zoom (--zoom is the canvas's),
+   across the row of the step it follows, in a 12 px area that keeps its
+   tooltip. Under the edges, so the "+" it crosses keeps the pointer. */
+.canvas-v2 .point-line {
+  position: absolute;
+  z-index: 0;
+  width: calc(12px / var(--zoom, 1));
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+.canvas-v2 .point-line::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: calc(50% - 0.75px / var(--zoom, 1));
+  width: calc(1.5px / var(--zoom, 1));
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--warning) 0 calc(5px / var(--zoom, 1)),
+    transparent 0 calc(9px / var(--zoom, 1))
+  );
+}
+/* Its label, centered on the line above the row, on the canvas's own color;
+   further left when a frame starts right after the line (--point-room), as
+   it draws larger than that column when zoomed out. */
+.canvas-v2 .point-label {
+  position: absolute;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.33em;
+  padding: 0 0.33em;
+  background: var(--canvas);
+  font: var(--type-caption);
+  font-weight: 600;
+  color: var(--warning-ink);
+  white-space: nowrap;
+  pointer-events: auto;
+  transform: translate(
+      min(-50%, var(--point-room, 1000px) - (var(--point-scale, 1) + 1) * 50%),
+      -100%
+    )
+    scale(var(--point-scale, 1));
+  transform-origin: bottom center;
+}
+.canvas-v2 .point-label weave-icon {
+  width: 14px;
+  height: 14px;
+}
+
 /* Handles: drawn 12 px, hit area 24 × 24 */
 .canvas-v2 .handle {
   position: absolute;
@@ -627,6 +760,11 @@ weave-canvas-view,
      below. */
   .canvas-v2 .handle[data-tap="success"]::before {
     inset-block: calc(4px - var(--hit) / 4) calc(4px - var(--hit) * 0.75);
+  }
+  /* On a frame's border the area starts 12 units in, where the last "+"
+     inside the frame ends. */
+  .canvas-v2 .handle[data-tap].on-frame::before {
+    inset-inline: -8px calc(16px - var(--hit));
   }
   .canvas-v2 .lane-slot::before {
     content: "";
@@ -677,6 +815,34 @@ weave-canvas-view,
 .canvas-v2 :is(.insert-plus, .lane-slot).move-target {
   border-color: var(--border-hover);
   color: var(--text);
+}
+/* A place refused to it: crossed out, and it says why under the pointer. */
+.canvas-v2 :is(.insert-plus, .lane-slot).move-refused {
+  border-color: var(--danger-bd);
+  background: var(--danger-bg);
+  color: var(--danger-ink);
+  cursor: not-allowed;
+}
+.canvas-v2 :is(.insert-plus, .lane-slot).move-refused:is(:hover, .over) {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 4px var(--danger-bg);
+}
+.canvas-v2 .move-reason {
+  position: absolute;
+  z-index: 8;
+  width: max-content;
+  max-width: 300px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  box-shadow: var(--shadow-2);
+  color: var(--text);
+  font: var(--type-small);
+  pointer-events: none;
+  transform: translateX(-50%) scale(var(--tip-scale, 1)) translateY(8px);
+  transform-origin: top center;
 }
 .canvas-v2 .lane-slot {
   position: absolute;
@@ -881,6 +1047,14 @@ weave-canvas-view,
 .canvas-v2 svg.edges .edge-arrow.skipped {
   fill: var(--flow-line-dim);
 }
+/* The way into a step while it is undone: its arrow points back. */
+.canvas-v2 .edge.undoing {
+  stroke: var(--live);
+  stroke-dasharray: 6 4;
+}
+.canvas-v2 svg.edges .edge-arrow.undoing {
+  fill: var(--live);
+}
 .canvas-v2 .edge-hit {
   fill: none;
   stroke: transparent;
@@ -1019,11 +1193,19 @@ weave-canvas-view,
   min-height: 0;
   padding: 0;
 }
+/* It measures the canvas, not the window: beside the inspector, or on a
+   phone, there is no room for every button in one row. */
+.canvas-v2 > weave-selection-toolbar {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  container: selection-toolbar / inline-size;
+  pointer-events: none;
+}
 .canvas-v2 .selection-toolbar {
   position: absolute;
   top: 12px;
   left: 50%;
-  z-index: 4;
   width: max-content;
   max-width: calc(100% - 24px);
   box-sizing: border-box;
@@ -1038,16 +1220,26 @@ weave-canvas-view,
   border-radius: var(--radius-md);
   background: var(--surface);
   box-shadow: var(--shadow-2);
+  pointer-events: auto;
 }
-/* Copy and Duplicate move into More where the toolbar would wrap. */
-.canvas-v2 .selection-toolbar .selection-narrow {
+/* Commands move into More where the toolbar would wrap: Group first, then
+   Copy and Duplicate. */
+.canvas-v2 .selection-toolbar :is(.selection-medium, .selection-narrow) {
   display: none;
 }
-@media (max-width: 479px) {
+@container selection-toolbar (max-width: 599px) {
   .canvas-v2 .selection-toolbar {
     flex-wrap: nowrap;
   }
-  .canvas-v2 .selection-toolbar .selection-wide {
+  .canvas-v2 .selection-toolbar .selection-roomy {
+    display: none;
+  }
+  .canvas-v2 .selection-toolbar .selection-medium {
+    display: inline-flex;
+  }
+}
+@container selection-toolbar (max-width: 439px) {
+  .canvas-v2 .selection-toolbar :is(.selection-wide, .selection-medium) {
     display: none;
   }
   .canvas-v2 .selection-toolbar .selection-narrow {
@@ -1154,6 +1346,7 @@ weave-canvas-view,
     .join-label,
     .lane-slot-label,
     .tile-badge,
+    .undo-badge,
     .tile-issue,
     .handle,
     .sub-node-chip,
@@ -1381,6 +1574,9 @@ weave-canvas-view,
 }
 .canvas-v2 .tile-label span.tile-output[data-tone="info"] {
   color: var(--info-ink);
+}
+.canvas-v2 .tile-label span.tile-output[data-tone="success"] {
+  color: var(--success-ink);
 }
 .canvas-v2 .canvas-read-only {
   position: absolute;

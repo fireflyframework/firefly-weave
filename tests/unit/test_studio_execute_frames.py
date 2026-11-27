@@ -272,3 +272,78 @@ def test_a_step_two_calls_deep_without_test_data_blocks_in_the_inner_frame():
     workflows["customer-profile@2.1.0"] = local(deep, {"node:audit": {"kept": True}})
     fixed = run(*CALLER_STEPS, workflows=workflows, definitions=[NOTIFY, deep, audit])
     assert fixed["status"] == "completed", fixed
+
+
+def wait(step_id: str, seconds: int) -> dict[str, Any]:
+    return {"id": step_id, "kind": "wait", "durationSeconds": seconds}
+
+
+def test_the_clock_moves_to_the_waits_inside_a_called_workflow():
+    # Two calls deep, the caller first waiting longer than the workflow it calls.
+    profile = document("customer-profile", "2.1.0", wait("rest", 30), value("look", {"ok": True}), output="look")
+    notify = document(
+        "notify-customer", "1.0.0", wait("settle", 100), call("enrich", "customer-profile@2.1.0"), output="enrich"
+    )
+    answer = run(
+        call("notify", "notify-customer@1.0.0"),
+        wait("later", 10),
+        value("end", {"done": 1}),
+        definitions=[notify, profile],
+        workflows={"notify-customer@1.0.0": local(notify), "customer-profile@2.1.0": local(profile)},
+    )
+    assert answer["status"] == "completed"
+    assert [(entry.get("frame"), entry["nodeId"], entry["status"]) for entry in answer["trace"]] == [
+        (None, "notify", "completed"),
+        ("notify", "settle", "completed"),
+        ("notify", "enrich", "completed"),
+        ("notify/enrich", "rest", "completed"),
+        ("notify/enrich", "look", "completed"),
+        (None, "later", "completed"),
+        (None, "end", "completed"),
+    ]
+    assert answer["trace"][0]["output"] == {"ok": True}
+    assert [(frame["key"], frame["status"]) for frame in answer["frames"]] == [
+        ("notify", "completed"),
+        ("notify/enrich", "completed"),
+    ]
+
+
+def test_the_clock_never_moves_to_the_time_limit_of_a_called_workflow_held_on_an_incident():
+    # A person resolves it: the clock moves for the other called workflow only, and never on to the limit of these two.
+    loop = {
+        "id": "orders",
+        "kind": "forEach",
+        "items": {"literal": [1, 2, 3]},
+        "maxItems": 2,
+        "body": {"steps": [value("item", 1)], "output": {"literal": None}},
+    }
+    profile = document("customer-profile", "2.1.0", loop, value("look", {"ok": True}), output="look")
+    notify = document("notify-customer", "1.0.0", call("enrich", "customer-profile@2.1.0"), output="enrich")
+    for called in (profile, notify):
+        called["spec"]["timeoutSeconds"] = 300
+    slow = document("slow-report", "1.0.0", wait("rest", 200), value("look", {"ok": True}), output="look")
+    branches = {
+        "id": "both",
+        "kind": "parallel",
+        "concurrency": 2,
+        "branches": {
+            "held": {"steps": [call("notify", "notify-customer@1.0.0")], "output": {"literal": None}},
+            "slow": {"steps": [call("report", "slow-report@1.0.0")], "output": {"literal": None}},
+        },
+    }
+    answer = run(
+        branches,
+        value("end", {"done": 1}),
+        definitions=[notify, profile, slow],
+        workflows={
+            f"{called['metadata']['name']}@{called['metadata']['version']}": local(called)
+            for called in (notify, profile, slow)
+        },
+    )
+    assert answer["status"] == "failed"
+    assert [item["code"] for item in answer["diagnostics"]] == ["WV-RUNTIME-LOOP-LIMIT"]
+    assert {frame["key"]: frame["status"] for frame in answer["frames"]} == {
+        "notify": "waiting",
+        "notify/enrich": "failed",
+        "report": "completed",
+    }

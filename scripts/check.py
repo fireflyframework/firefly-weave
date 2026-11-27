@@ -217,9 +217,9 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
                     *("--dist", "load", "--tx", "popen", "--max-worker-restart", "0"),
                     *("-o", f"faulthandler_timeout={TEST_TIMEOUT_SECONDS}", "-o", "faulthandler_exit_on_timeout=true"),
                 ],
-                # About 12,300 tests: 25 to 45 minutes on a shared CI runner, so the limit leaves room for a slow
+                # About 13,600 tests: 35 to 60 minutes on a shared CI runner, so the limit leaves room for a slow
                 # runner and then for one hung test to reach its own limit.
-                3600,
+                5400,
             ),
             *worker_stages(),
             ("prepare", [python, "scripts/prepare_release.py", "--output", str(evidence / "release")], 300),

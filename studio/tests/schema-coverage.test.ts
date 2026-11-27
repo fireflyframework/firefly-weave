@@ -26,6 +26,8 @@ import {
   onErrorFields,
   onErrorKinds,
 } from "../src/app/editor/ndv/settings/on-error";
+import { undoFields } from "../src/app/editor/transactions/undo-fields";
+import { writeUndo } from "../src/app/editor/transactions/undo";
 import {
   pendingStepFields,
   readyKinds,
@@ -96,6 +98,24 @@ const onErrorPaths = (step: Step, ctx: KindContext): string[] =>
     .filter((spec) => !spec.readOnly)
     .map((spec) => String(spec.path[0]));
 
+/**
+ * How it's undone: step details' Settings adds it to every kind the language
+ * lets declare it, inside a transaction. Each way shows its own fields.
+ */
+const undoPaths = (step: Step, ctx: KindContext): string[] =>
+  (["reserve", "compensate", "irreversible"] as const).flatMap((way) => {
+    const chosen = structuredClone(step) as Record<string, unknown>;
+    for (const { path, value } of writeUndo(step, way).patch)
+      chosen[String(path[0])] = value;
+    return undoFields(chosen as unknown as Step, {
+      ...ctx,
+      features: ["flow.transaction"],
+      manifest: manifest as unknown as LanguageManifest,
+      inTransaction: createStep("transform", "move"),
+      sideEffect: "non_idempotent",
+    }).map((spec) => String(spec.path[0]));
+  });
+
 describe.skipIf(!available)(
   "editor coverage of the real Python contracts",
   () => {
@@ -111,11 +131,19 @@ describe.skipIf(!available)(
       ).toEqual([...schema.workflow].sort());
     });
     it("covers every ready step kind and its configuration fields", async () => {
-      // Kinds the palette doesn't list come with their own descriptor (Call a workflow).
+      // Kinds the palette doesn't list come with their own descriptor; a kind
+      // still marked pending may have one already.
       await loadKindRegistrations();
       const own = ndvRegistry
         .kinds()
-        .filter((d) => !(kinds as readonly string[]).includes(d.kind));
+        .filter((d) => !(kinds as readonly string[]).includes(d.kind))
+        .filter((d) =>
+          ready(manifest.step_kinds).some((entry) => entry.kind === d.kind),
+        );
+      expect(own.map((d) => d.kind).sort()).toEqual([
+        "callWorkflow",
+        "transaction",
+      ]);
       expect([...kinds, ...own.map((d) => d.kind)].sort()).toEqual(
         ready(manifest.step_kinds)
           .map((entry) => entry.kind)
@@ -145,6 +173,11 @@ describe.skipIf(!available)(
             ...allParams(descriptor.settings?.(step, ctx), step, ctx),
           ].map(({ spec }) => String(spec.path[0])),
           ...onErrorPaths(step, ctx),
+          ...undoPaths(step, ctx),
+          // The canvas edits a kind's own steps (a transaction's).
+          ...(descriptor.containers?.(step) ?? []).map(({ path }) =>
+            String(path[0]),
+          ),
         ]);
         fields.add("id");
         fields.add("kind");
@@ -164,15 +197,17 @@ describe.skipIf(!available)(
         const step = createStep(kind, "step");
         const workflow = freshWorkflow();
         workflow.spec.steps.push(step);
+        const ctx: KindContext = {
+          workflow,
+          features: [],
+          actionContract: () => null,
+          tableContract: () => null,
+          workflowContract: () => null,
+        };
         const fields = new Set([
           ...propertyFields(step).map((f) => f.path[0]),
-          ...onErrorPaths(step, {
-            workflow,
-            features: [],
-            actionContract: () => null,
-            tableContract: () => null,
-            workflowContract: () => null,
-          }),
+          ...onErrorPaths(step, ctx),
+          ...undoPaths(step, ctx),
         ]);
         // Identity is displayed separately; branch steps are managed on canvas.
         fields.add("id");

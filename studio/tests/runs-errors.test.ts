@@ -785,4 +785,19 @@ describe("Debug in editor carries handled failures", () => {
       ),
     ).toBe("send");
   });
+
+  it("a step that needs test output opens; an undo step's is asked for over the canvas", () => {
+    const stopped = (nodeId: string, instanceKey: string) =>
+      stopOf({
+        kind: "done",
+        response: {
+          status: "blocked",
+          trace: [],
+          blocked: { reason: "missing_mock", nodeId, instanceKey, message: "" },
+        },
+      } as unknown as Parameters<typeof stopOf>[0]);
+    expect(stopped("hold", "hold[2]")).toBe("hold[2]");
+    expect(stopped("hold", "")).toBe("hold");
+    expect(stopped("hold", "hold[2]#confirm")).toBeNull();
+  });
 });

@@ -173,8 +173,10 @@ export class RunsList {
     const items = this.state()?.items() ?? [];
     const now = new Date(this.rowsNow());
     const draft = this.workflow().version;
+    // A run in doubt whose transactions were read names the step and the transaction.
+    const captions = this.state()?.captions() ?? new Map<string, string>();
     return items.map((item) => {
-      const row = runRow(item, now);
+      const row = runRow(item, now, captions.get(item.id) ?? null);
       const version = shortVersion(row.version);
       return {
         ...row,

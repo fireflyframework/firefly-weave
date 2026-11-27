@@ -297,9 +297,7 @@ STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
         scope_roots=["/item", "/index", "/loops"],
     ),
     _kind("callWorkflow", "CallWorkflowStep", "flow", "Call a workflow"),
-    _kind(
-        "transaction", "TransactionStep", "flow", "Transaction", blocks=[("body", "", "Transaction")], studio="pending"
-    ),
+    _kind("transaction", "TransactionStep", "flow", "Transaction", blocks=[("body", "", "Transaction")]),
     _kind("wait", "WaitStep", "wait", "Wait for time"),
     _kind("signal", "SignalStep", "wait", "Wait for signal"),
     _kind("humanTask", "HumanTaskStep", "human", "Human task"),
@@ -320,7 +318,7 @@ STEP_FIELDS: Final[tuple[ManifestStepField, ...]] = (
             "irreversible": ["/irreversible"],
         },
         only_inside="transaction",
-        studio="pending",
+        studio="ready",
     ),
     ManifestStepField(
         name="onError",

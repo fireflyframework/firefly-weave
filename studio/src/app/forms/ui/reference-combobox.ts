@@ -31,7 +31,7 @@ import {
   signal,
 } from "@angular/core";
 import { isPointer, parsePointer } from "../core/json";
-import { compatibility, type Schema } from "../core/scope";
+import { compatibility, type Schema, type UndoPlace } from "../core/scope";
 import { stepKindLabels } from "../../designer/step-kinds";
 import { Icon } from "../../icon";
 import {
@@ -44,8 +44,8 @@ import {
 export interface ReferenceOption {
   /** RFC 6901 pointer written as `{ref}`, for example `/steps/check/output/eligible`. */
   ref: string;
-  /** "error": a failed step's error, `/steps/<id>/error`. */
-  source: "input" | "step" | "error";
+  /** "error": a failed step's error, `/steps/<id>/error`; "undo": what only a step's undo reads. */
+  source: "input" | "step" | "error" | "undo";
   stepId?: string;
   stepKind?: string;
   label: string;
@@ -72,8 +72,10 @@ export interface ViewGroup {
   kind?: string;
   /** Plain step kind, for example "Call an integration". */
   detail?: string;
-  /** "danger": a failed step's error, its header in the danger ink. */
-  tone?: "danger";
+  /** "danger": a failed step's error, its header in the danger ink; "own": this step's undo. */
+  tone?: "danger" | "own";
+  /** A sentence under the group: what isn't offered here, or when it is empty. */
+  note?: string;
   options: ViewOption[];
 }
 export interface ReferenceView {
@@ -83,16 +85,46 @@ export interface ReferenceView {
 
 const kindLabels: Record<string, string> = stepKindLabels;
 
+/** This step's undo: the data only it reads, and why a release reads nothing of its step. */
+const undoGroup = (id: string, undo: UndoPlace | null): ViewGroup => ({
+  id,
+  label: "This step's undo",
+  kind: "undo",
+  tone: "own",
+  ...(undo?.phase === "cancel"
+    ? {
+        note: `${undo.step}'s own output isn't offered here: Release must work even if the hold didn't go through.`,
+      }
+    : {}),
+  options: [],
+});
+/** The step whose undo it is: its own output, empty when its outcome is unknown. */
+const ownGroup = (
+  id: string,
+  option: ReferenceOption,
+  undo: UndoPlace,
+): ViewGroup => ({
+  id,
+  label: `${undo.step} · this step's output`,
+  kind: option.stepKind,
+  ...(undo.phase === "compensate"
+    ? { note: `Empty when ${undo.step} failed with an unknown outcome.` }
+    : {}),
+  options: [],
+});
+
 /**
- * Filters and groups suggestions: the workflow input first, then each step in
- * scope order. Every query word must appear in the path, label, breadcrumb or
- * type. With a target schema, values that fit come first within a group and
- * the others are marked "incompatible".
+ * Filters and groups suggestions: inside a step's undo, what only it reads
+ * and the step's own output; then the workflow input and each step in scope
+ * order. Every query word must appear in the path, label, breadcrumb or type.
+ * With a target schema, values that fit come first within a group and the
+ * others are marked "incompatible".
  */
 export function referenceView(
   options: readonly ReferenceOption[],
   query: string,
   target?: Schema | null,
+  undo: UndoPlace | null = null,
 ): ReferenceView {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const groups = new Map<string, ViewGroup>();
@@ -118,15 +150,19 @@ export function referenceView(
                 tone: "danger",
                 options: [],
               }
-            : {
-                id,
-                label: option.stepId ?? "Step",
-                kind: option.stepKind,
-                detail: option.stepKind
-                  ? (kindLabels[option.stepKind] ?? option.stepKind)
-                  : undefined,
-                options: [],
-              };
+            : option.source === "undo"
+              ? undoGroup(id, undo)
+              : undo && option.stepId === undo.step
+                ? ownGroup(id, option, undo)
+                : {
+                    id,
+                    label: option.stepId ?? "Step",
+                    kind: option.stepKind,
+                    detail: option.stepKind
+                      ? (kindLabels[option.stepKind] ?? option.stepKind)
+                      : undefined,
+                    options: [],
+                  };
       groups.set(id, group);
     }
     const fit: Fit =
@@ -142,8 +178,12 @@ export function referenceView(
     item.option.schema?.["type"] === "array"
       ? 1
       : 0);
+  // This step's undo first, then the step's own output, whatever they hold.
+  const rank = (group: ViewGroup) =>
+    group.tone === "own" ? 0 : undo && group.id === `step:${undo.step}` ? 1 : 2;
   const ordered = [...groups.values()].sort(
     (a, b) =>
+      rank(a) - rank(b) ||
       Math.min(...a.options.map(score)) - Math.min(...b.options.map(score)),
   );
   for (const group of ordered) {
@@ -197,7 +237,11 @@ export function referenceHint(
         : known.typeLabel,
     };
   const segments = parsePointer(text) ?? [];
-  if (segments[0] !== "input" && segments[0] !== "steps")
+  if (
+    segments[0] !== "input" &&
+    segments[0] !== "steps" &&
+    !options.some(({ ref }) => ref.startsWith(`/${segments[0]}/`))
+  )
     return {
       tone: "warning",
       message: "Data references start with /input or /steps/<step ID>/output.",
@@ -377,6 +421,18 @@ let sequence = 0;
                 }
               </div>
             }
+            @if (group.note) {
+              <p
+                class="ref-combo-group-note"
+                role="presentation"
+                [attr.data-tone]="group.tone ?? null"
+              >
+                @if (group.tone) {
+                  <weave-icon name="info" [size]="16" />
+                }
+                {{ group.note }}
+              </p>
+            }
           </div>
         }
         @if (!view().flat.length) {
@@ -520,6 +576,25 @@ let sequence = 0;
         font-size: 12px;
         color: var(--muted);
       }
+      .ref-combo-group-note {
+        display: flex;
+        gap: 6px;
+        margin: 0;
+        padding: 4px 6px;
+        font-size: 12px;
+        color: var(--muted);
+        overflow-wrap: anywhere;
+      }
+      .ref-combo-group-note[data-tone="own"] {
+        margin: 4px 6px;
+        padding: 8px;
+        border-radius: var(--radius-sm);
+        background: var(--sunken);
+      }
+      .ref-combo-group-note weave-icon {
+        flex: none;
+        color: var(--info-ink);
+      }
       .ref-combo-option {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
@@ -576,6 +651,24 @@ let sequence = 0;
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      /* On a phone what is said of a field goes under its name when both don't fit. */
+      @media (max-width: 479px) {
+        .ref-combo-option {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: space-between;
+        }
+        .ref-combo-name {
+          max-width: 100%;
+        }
+        .ref-combo-meta {
+          flex-wrap: wrap;
+          justify-content: flex-start;
+        }
+        .ref-combo-path {
+          flex-basis: 100%;
+        }
+      }
       .ref-combo-empty {
         font-size: 12px;
         color: var(--muted);
@@ -604,6 +697,8 @@ export class ReferenceCombobox {
   options = input<readonly ReferenceOption[]>([]);
   /** Schema of the field being bound; fitting values come first. */
   target = input<Schema | null>(null);
+  /** The step's undo the field is in, whose own data comes first. */
+  undo = input<UndoPlace | null>(null);
   /** Accessible name. Leave empty when a `<label for>` names `inputId`. */
   ariaLabel = input("Data reference");
   /** Id for the text box, so a visible `<label for>` can name it. */
@@ -645,7 +740,7 @@ export class ReferenceCombobox {
   /** Filtering applies only after the person types; opening shows everything. */
   private readonly query = signal("");
   readonly view = computed(() =>
-    referenceView(this.options(), this.query(), this.target()),
+    referenceView(this.options(), this.query(), this.target(), this.undo()),
   );
   /** Shown once the list is closed: while it is open, typing is a search. */
   readonly hint = computed(() =>
