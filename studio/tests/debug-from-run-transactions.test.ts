@@ -52,6 +52,20 @@ from firefly_weave.definitions.studio_documents import run_data
 documents = [StudioTestData.model_validate_json(json.dumps(item)) for item in json.loads(sys.stdin.buffer.read().decode("utf-8"))]
 print("ok", *[str(run_data(document)[0]).lower() for document in documents])
 `;
+/**
+ * Whether the repository's Python has the platform's server modules. The
+ * desktop installers' jobs install Studio's Python alone (`--extra studio`),
+ * without SQLAlchemy, so the platform's own reading of test data can't load there.
+ */
+function hasServerModules(): boolean {
+  if (!pythonAvailable()) return false;
+  try {
+    execFileSync(python, ["-c", "import sqlalchemy"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 const RUN = "1c0d7f8a-4d66-4e7c-8b62-5a2c1d3e8f12";
 const ENV = "4a1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
 const NOW = "2026-11-25T12:00:00Z";
@@ -435,7 +449,7 @@ describe("Debug in editor on a run whose transaction was undone", () => {
     expect(Object.keys(data.errors ?? {})).toEqual(["submit"]);
   });
 
-  it.skipIf(!pythonAvailable())(
+  it.skipIf(!hasServerModules())(
     "is test data the platform keeps, its run data marked",
     () => {
       const stuck = view(
