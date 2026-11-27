@@ -1097,6 +1097,24 @@ describe("Cancel without undoing", () => {
     expect(s.actions.withoutUndoing()).toBeNull();
   });
 
+  it("isn't offered for a run whose read answers 429 with another code, and sends nothing", async () => {
+    const s = shell();
+    // A page too large to send is a 429 too, though the platform can read the run.
+    const refusal = refused(429, "WV-PAGE-LIMIT", "Page too large");
+    s.actions.unreadable(first, describeError(refusal));
+    expect(s.actions.withoutUndoing()).toBeNull();
+    s.platform.refusal = refusal;
+    await s.actions.cancelWithoutUndoing();
+    expect(s.actions.cancelDialog).toBeNull();
+    expect(s.calls.sent).toEqual([]);
+    expect(s.calls.notices).toEqual([
+      {
+        text: "Run 5e6f7a8b was not canceled. Studio couldn't read its transactions, so it can't list what stays done.",
+        tone: "danger",
+      },
+    ]);
+  });
+
   it("refuses in Studio when pages remain past the ones it reads, and sends nothing", async () => {
     const s = shell();
     s.actions.know(first, [open], true);
