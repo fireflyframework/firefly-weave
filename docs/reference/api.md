@@ -1154,11 +1154,12 @@ section in the same transaction that reloads those grants.
   last hour. Within a kind, items come oldest first, then by ID, except that
   incidents of transactions in doubt come before the other incidents, titled
   `Transaction in doubt: CODE at STEP` (just `Transaction in doubt` when the
-  run's metadata is withheld), never with a business key. Each kind
-  needs the capability that reads its records: `deployment.read` on the target
-  for jobs and runners, `deployment.read` and `deployment.approve` on the same
-  target for approvals, `incident.read` for incidents, and `run.read` for
-  failed runs. Items you may not read are left out; test runs never appear.
+  run's metadata is withheld or the incident has no step), never with a
+  business key. Each kind needs the capability that reads its records:
+  `deployment.read` on the target for jobs and runners, `deployment.read` and
+  `deployment.approve` on the same target for approvals, `incident.read` for
+  incidents, and `run.read` for failed runs. Items you may not read are left
+  out; test runs never appear.
 - A section you may not read is `{"state": "forbidden"}`; none of its queries
   run, and leaving it out records no authorization denial. Each section has two
   seconds of database time in all (or a stricter statement timeout already in
@@ -1172,8 +1173,8 @@ section in the same transaction that reloads those grants.
   runs left out. Servers without run statistics leave it out.
 - `transactions` needs `run.read`: `in_doubt` (transactions waiting for a
   person), `undoing` (transactions being undone), and
-  `oldest_undoing_seconds`, how long the oldest transaction still undoing has
-  been open since it opened. That age is left out while nothing is undoing.
+  `oldest_undoing_seconds`, how long ago the oldest transaction still undoing
+  opened. That age is left out while nothing is undoing.
   Transactions of test runs are left out, and so are the records that an
   earlier version left unsettled in ended runs. Servers without transactions
   leave the section out.
@@ -1276,11 +1277,11 @@ work, and a resolution that ends the run is a stop. `GET …/runs/{identifier}/t
 (`instance_key`, `node_id`, `iteration`, `state`, `business_key`, `cause`,
 `opened_at`, `decided_at`, `ended_at`, `participants`, `incident_id`,
 `resolution`), never business values. A participant that is a called step adds
-`child_run_id`: the run of its latest call, its undo, release, or confirm call
-when one ran, otherwise its own, as incident views' `transaction` does too.
-Run summaries carry `transaction_state`
-(the worst state of the run's transactions) and `run-summaries` filters on up to
-ten `transaction_state` values. Incident views of `WV-TXN-*` codes carry
+`child_run_id`, the run of its latest call: its undo, release, or confirm call
+when one ran, otherwise its own call. Incident views' `transaction` carries the
+same field. Run summaries carry `transaction_state` (the worst state of the
+run's transactions) and `run-summaries` filters on up to ten
+`transaction_state` values. Incident views of `WV-TXN-*` codes carry
 `priority: "high"` and `transaction`. `POST …/activations/{identifier}/retire`
 refuses an activation a running transaction may still need to undo a step
 (HTTP 409 `WV-TXN-UNDO-PINNED`) unless it has `?force=true`, a `reason` in its
@@ -1373,9 +1374,9 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 
 Some requests need more than their row's capability. Creating, updating, or
 previewing an alert rule on `incidents.active` also needs `incident.read`, a
-rule on `transactions.in_doubt` or `transactions.undo_age_seconds` needs
-`run.read`, and a rule on a target signal without a `target_id` needs at least one deployment
-target you may read (otherwise `422 WV-ALERT-SIGNAL`). An update that only
+rule on `transactions.in_doubt` or `transactions.undo_age_seconds` also needs
+`run.read`, and a rule on a target signal without a `target_id` needs at least one
+deployment target you may read (otherwise `422 WV-ALERT-SIGNAL`). An update that only
 switches a rule off needs neither.
 
 | Operation | Method and canonical path | Required authority |

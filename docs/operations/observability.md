@@ -359,9 +359,9 @@ each one needs.
   worker, outbox, incident, target, and platform health signals read the
   current value, as the environment summary shows it.
 - **Transactions.** `transactions.in_doubt` counts the transactions that wait
-  for a person, and `transactions.undo_age_seconds` reads how long the oldest
-  transaction still being undone has been open since it opened; it has no data
-  while nothing is being undone. Both count the whole environment, with no
+  for a person, and `transactions.undo_age_seconds` reads how long ago the
+  oldest transaction still being undone opened; it has no data while nothing is
+  being undone. Both count the whole environment, with no
   workflow to choose. They leave out test runs, and the records that an
   earlier version left unsettled in ended runs
   ([Records of transactions in loops](upgrades.md#records-of-transactions-in-loops)).

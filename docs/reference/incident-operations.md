@@ -63,11 +63,11 @@ nobody knows), and the run's last engine events (their types only). Then select
 verified result, also give its evidence reference and the result as JSON.
 Studio sends the incident's revision and a new receipt, and reuses that receipt
 if you send the same decision again after a lost answer. If someone changed the
-incident first, it asks you to refresh it and decide again. The steps below do
-the same from the CLI. Transactions in doubt come first, under **High
-priority**, and offer their own decisions instead of **Resolve incident**;
+incident first, it asks you to refresh it and decide again. Transactions in
+doubt come first, under **High priority**, and offer their own decisions instead
+of **Resolve incident**;
 [See and resolve transactions in Operations](../guides/transactions.md#see-and-resolve-transactions-in-operations)
-describes them.
+describes them. The steps below do the same from the CLI.
 
 Run the commands with a saved platform and workspace from `weave auth setup` (see
 [how remote commands choose a platform](../guides/connect-to-api.md#how-remote-commands-choose-a-platform)).

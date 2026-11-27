@@ -34,7 +34,8 @@ You need a platform that lists `flow.transaction` in its language manifest
 `deployer`, and `operator` roles in an environment, and a signed-in CLI
 ([Connect the CLI to a platform](connect-to-api.md)). Resolving a transaction
 in doubt by saying how it ended, or ending it by force, also needs the
-`transaction_reconciler` role.
+`transaction_reconciler` role. To follow along in **Operate**, also hold
+`viewer`.
 
 ## 1. Say how each step is undone
 
@@ -162,9 +163,9 @@ weave runs cancel "$RUN_ID" --request cancel.json   # {"reason": "...", "skip_un
 ```
 
 A refused cancel answers HTTP 409 `WV-TXN-IN-DOUBT` and changes nothing. A run
-that Weave can't read whole, because it is too large or withheld, takes no
-decision on its incidents, so this cancel isn't refused for it: it is the way
-out. See
+that Weave can't read whole, because it is too large or withheld, is the
+exception: its incidents can't be resolved, so this cancel isn't refused, and it
+is the way out. See
 [what refuses a cancel](../reference/incident-operations.md#transactions-in-doubt).
 
 ## 6. React to a transaction
@@ -321,21 +322,22 @@ The `weave.event_starts` metric counts starts by status (`ok`, `rejected`,
 
 ## See and resolve transactions in Operations
 
-Studio's **Operate** pages show every transaction of the environment and offer
-the decisions of steps 4 and 5. Each needs its own permission:
+Studio's **Operate** pages show the environment's transactions and offer the
+decisions of steps 4 and 5. Each needs its own permission:
 
 | To | You need | Roles that hold it |
 | --- | --- | --- |
 | See transactions in **Runs** and in a run's detail | `run.read` | `viewer`, `execution_manager` |
-| See their counts in **Overview** | `status.read`, as the whole page, and `run.read` | `viewer` |
+| See their counts in **Overview** | `status.read` for the page, and `run.read` for its **Transactions** panel | `viewer` |
 | See the transactions in doubt in **Incidents** | `incident.read` | `operator` |
-| Retry, or wait again | `incident.resolve` | `operator` |
+| Retry, **Wait again**, or **Continue the run** | `incident.resolve` | `operator` |
 | Make any other decision on a transaction in doubt | `incident.resolve` and `transaction.reconcile` | `operator` with `transaction_reconciler` |
 | **Cancel run** | `run.cancel`, and `run.read` for the run's detail | `operator` with `viewer` |
 | **Cancel without undoing** | `run.cancel` and `transaction.reconcile`, and `run.read` for the run's detail | `operator` with `viewer` and `transaction_reconciler` |
 
-An incident's decision that you may not make stays in view, disabled, with the
-role it needs.
+A decision you may not make stays in the incident's drawer but can't be chosen,
+and says what it needs: permission to resolve incidents, or the transaction
+reconciler role.
 
 A business key shows as text on these pages. It never enters an address, a page
 title, a notice, the name of an exported file, or a request to Weave AI.
@@ -347,19 +349,22 @@ worst transaction: **Open**, **Deciding**, **Finishing**, **Completed**,
 **Undoing**, **Undone**, **Canceled**, **In doubt**, **Reconciled**, or **Force
 ended**. A run without transactions has none.
 
-Check **Needs attention** to list only the runs with a transaction in doubt, or
-choose any states under **More filters › Transaction**. Both look in the time
-range you chose, and the list says which when it finds none.
+Select **Needs attention** to list only the runs with a transaction in doubt, or
+choose any states under **More filters › Transaction**. Both list the runs
+started in the time range you chose. When **Needs attention** finds none, the
+list names that range and says that a run whose transactions are held is in
+**Incidents**.
 
 ### Read what a transaction did
 
 A run's detail has a **Transactions** section after its graph. Each transaction
-shows its state, its business key, and why it left its normal path, and then a
-row per step: how it is undone, what happened forward and in its undo or
-confirm, how many tries that took, the run it called, and its operation key to
-copy into the other system. Below them are the moments of the transaction and,
-once someone resolved it, how, why, and with what evidence. A transaction that
-completed with nothing to resolve folds to one line.
+shows its state, its business key, and why it left its normal path, then a row
+per step: **How it's undone**, **Forward**, and **Undo or confirm**, with the
+tries each took, the run it called, and its **Operation key** to copy into the
+other system. Below the steps, a timeline shows when the transaction opened,
+decided to finish, and ended. Once someone resolved it, **Resolved**, **By**,
+**Reason**, and **Evidence** say how, who, why, and with what proof. A
+transaction that completed with nothing to resolve folds to one line.
 
 In a transaction in doubt or force ended, look for these two words first. They
 mark what other systems still hold:
@@ -368,30 +373,33 @@ mark what other systems still hold:
   it.
 - **Not undone**: the step went through, and nothing reversed it.
 
-### Resolve a transaction in doubt
+### Decide on a transaction in doubt in Incidents
 
-**Operate › Incidents** lists the transactions in doubt first, under **High
-priority**, each with its business key. When a run waits for a called run that
-is in doubt, both incidents are one **case** that names the one to resolve
-first: the called run's. Its drawer names the waiting run under **Held by**, and
-the waiting run's names the called one under **Waits on**.
+**Operate › Incidents** lists the active transactions in doubt first, under
+**High priority**, each with its business key; the rest follow under **Other
+incidents**. A code filter, or a status other than active, shows one list. When
+a run waits for a called run that is in doubt, both incidents form one case,
+headed **Case:** and the waiting step, with **Resolve first** on the called
+run's incident. Its drawer names the waiting run under **Held by**, and the
+waiting run's drawer names the called one under **Waits on**.
 
 The notice of a run that stopped for a transaction leads there too. **Open
 incident** opens the incident of the transaction in doubt, and **Go to the
-transaction** shows its record in the run; of several in doubt, both lead to the
-first. When Studio can't tell which incident that is (the run is held, its
-transactions couldn't be read, or the one in doubt isn't listed yet), **Show in
-Incidents** lists the active incidents with its code, those of test runs too.
+transaction** shows its record in the run. With more than one in doubt, they
+read **Open first incident** and **Go to the first transaction in doubt**. When
+Studio can't tell which incident that is (the run is held, its transactions
+couldn't be read, or the one in doubt isn't listed yet), **Show in Incidents**
+lists the active incidents with its code, test runs included.
 
 Open an incident to read its record and choose among the decisions that fit it:
 
 | Decision | Offered when | Asks for |
 | --- | --- | --- |
-| **Retry the undo**, **the release**, **the confirm**, or **the step** | That is what couldn't finish | A reason |
+| **Retry the undo**, **Retry the release**, **Retry the confirm**, or **Retry the step** | That is what couldn't finish | A reason |
 | **Wait again** | Steps were still running when the time to undo ran out | A reason |
-| **Mark as reconciled** | Any of those | How it ended, the steps you checked, the transaction's result when it finished, a reason, and an evidence reference |
+| **Mark as reconciled** | Any of those, when the incident shows its transaction's record | How it ended, the steps you checked, the transaction's result when it finished, a reason, and an evidence reference |
 | **It happened** or **It didn't happen** | Nobody knows whether the step that can't be undone went through | The step's result (only when it happened), a reason, and an evidence reference |
-| **Continue the run** | A person already ended the transaction, so the incident has nothing left to decide; it replaces the others but Force end, and runs nothing again | A reason |
+| **Continue the run** | A person already ended the transaction, so the incident has nothing left to decide. Only this and **Force end** are offered; it closes the incident, runs nothing again, and lets the run go on | A reason |
 | **Force end** | Always; it is the only one for a run too large to undo | A reason, and the run's short ID typed |
 
 **Mark as reconciled** lists every step whose end Weave doesn't know for the
@@ -399,41 +407,47 @@ ending you choose, with its operation key. Check each one in its own system
 before you tick it. With **Undone**, you confirm that each step was reversed, was
 released, or has nothing left to undo, and that a step still running is stopped;
 with **Finished**, that each one was confirmed or went through. Weave then stops
-whatever is left and takes your word, so a step you didn't check stays as that
-system has it. **Finished** is refused when every way through the transaction
-reaches a Fail step and the run would go on after it: choose **Undone** if
-everything was undone, or **Force end**.
+what is still running and takes your word, so a step you tick without checking
+stays as that system has it. **Finished** is refused when every way through the
+transaction reaches a Fail step and the run would go on after it: choose
+**Undone** if everything was undone, or **Force end**.
 
 **Force end** first lists what **stays done in other systems**.
 
-If someone changed the incident meanwhile, Studio asks you to refresh it. When a
-step changed too, you tick the steps again; what you typed stays. If the answer
-to your decision was lost, send it again unchanged: the same receipt makes that
-safe.
+If someone changed the incident meanwhile, the platform refuses your decision
+and Studio offers **Refresh incident**. When the incident comes back changed,
+Studio clears the ticks, so tick the steps again; what you typed stays. If
+Studio says it didn't get an answer, send the decision again unchanged: the same
+receipt makes that safe.
 
 ### Stop a run from its detail
 
 **Cancel run** on a run with a transaction that isn't finished undoes it before
 the run ends. **Cancel without undoing** lists what stays done in other systems
-and asks for a reason and the run's short ID. While a transaction is in doubt,
-neither is sent: **Open incident** takes you to the decision it waits for. A run
-held because it grew too large to undo its transactions can't be canceled either
-way: force end it from its incident. When the platform can't read the run,
-because it is too large or withheld, its incidents take no decision, so
-**Cancel without undoing** is offered as the way out, without a list of what
-stays done. For a run too large to read, its dialog says Weave won't undo the
-steps already done and the run's transactions end Force ended. For a withheld
-run, it says only that Weave won't undo them and Studio can't read the run's
-transactions.
+and asks for a reason and the run's short ID. Three cases change what you can
+send:
+
+- **A transaction is in doubt.** Neither cancel is sent: **Open incident** takes
+  you to the decision it waits for.
+- **The run is held** because it grew too large to undo its transactions.
+  Neither cancel is sent: force end it from its incident.
+- **The platform can't read the run**, because it is too large or withheld. Its
+  incidents can't be resolved, so **Cancel without undoing** is the way out. Its
+  dialog says that Weave won't undo the steps already done and that Studio can't
+  list them, so check the other systems after the run ends. For a run too large
+  to read, it also says that the run's transactions end **Force ended**.
 
 ### Know when a transaction is in doubt
 
-**Operate › Overview** counts the transactions in doubt and those being undone,
-with the age of the oldest, and lists in-doubt incidents first among the
-incidents that need attention. **Show runs that need attention** opens the runs
-of the last 400 days with a transaction in doubt. The counts leave out the
-records that an earlier release left unsettled in ended runs; **Needs attention**
-in Runs, and so that list, still includes those runs.
+**Operate › Overview** has a **Transactions** panel under **Capacity and
+incidents**. **Transactions in doubt** counts those that wait for a person, and
+**Undoing now** counts those being undone, with the age of the oldest one. While
+any is in doubt, **Show runs that need attention** opens **Runs** on the last 400
+days, filtered to runs with a transaction in doubt. The Overview's **Needs
+attention** lists in-doubt incidents first among the incidents. The counts leave
+out the records that an earlier release left unsettled in runs that already
+ended, but **Runs** still lists those runs, so the list can be longer than the
+count.
 
 Every environment has the alert rule **Transactions in doubt** (critical, at
 once). See [Alerts](../operations/observability.md#alerts) for the rule and the

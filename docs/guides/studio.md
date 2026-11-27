@@ -2481,7 +2481,10 @@ longer, up to a minute.
   backlog.
 - **Capacity and incidents** counts online, offline and draining workers, free
   task slots against ready tasks, runners, busy targets, targets that need
-  reconciliation and plans waiting for approval, and active incidents.
+  reconciliation and plans waiting for approval, and active incidents. With
+  `run.read`, its **Transactions** panel counts the transactions in doubt and
+  those being undone; see
+  [Know when a transaction is in doubt](transactions.md#know-when-a-transaction-is-in-doubt).
 - **Needs attention** lists up to 20 items, most urgent first: jobs that need
   reconciliation, plans you may approve, offline workers that still hold work,
   active incidents, targets without an online runner, a restricted
@@ -2500,21 +2503,30 @@ with **Try again**, while the rest of the page stays usable.
 says which order is in use): each run's status (a run that succeeded after handling errors reads "Succeeded
 with errors"), its workflow and version, how it started (**Retry of** and
 **Called by** open the run it came from), when it started, how long it ran
-(counting up while it runs), its active incidents, its business key and its
-short run ID with **Copy**. On a wide screen each run is one line: a long
+(counting up while it runs), its active incidents, the state of its worst
+transaction (**Transaction**), its business key and its short run ID with
+**Copy**. On a wide screen each run is one line: a long
 workflow name or business key ends in "…", and pointing at it shows the whole
 value, as the run's detail does.
 
 - **Find runs** with the filters above the list: **Time range** (the last 15
   minutes, hour, 24 hours, 7 days or 30 days, or a custom range; the last 24
   hours by default), **Workflow** and **Version**, **Origin**, an exact
-  **Business key**, one or more statuses, and **Include test runs**. **More
+  **Business key**, one or more statuses, **Include test runs**, and **Needs
+  attention**, which lists only the runs with a transaction in doubt. **More
   filters** adds an exact **Correlation key**, **Handled errors**, **Order**,
-  **Has active incident**, **Top-level runs only** and **Include archived
-  runs**. The list updates as you change a filter, and **Clear filters** resets
-  them all. The address keeps every filter except the business and correlation
-  keys, so you can share a view without sharing business data. In a narrow
+  **Has active incident**, **Top-level runs only**, **Include archived runs**,
+  and **Transaction**, any states of a run's worst transaction. The list
+  updates as you change a filter, and **Clear filters** resets them all. The
+  address keeps every filter except the business and correlation keys, so you
+  can share a view without sharing business data. In a narrow
   window, the filters fold behind a button such as "Filters (2)".
+- **Follow a run's transactions.** A run's detail has a **Transactions** section
+  after its graph, with each transaction's state and what each of its steps did
+  and how it's undone. A run whose transaction isn't finished also offers
+  **Cancel without undoing**, which leaves what its steps did in other systems.
+  [See and resolve transactions in Operations](transactions.md#see-and-resolve-transactions-in-operations)
+  describes the column, the filters, the section, and both cancels.
 - **Keep the list current.** With **Auto-refresh** on (the default), the list
   reads its first page again every 10 seconds while the page is visible; a
   relative time range then ends at that moment. **Refresh** does the same at
